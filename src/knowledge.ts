@@ -73,6 +73,44 @@ export function loadKnowledge(rootDir: string): KnowledgeDoc[] {
   return docs.sort((a, b) => a.id.localeCompare(b.id));
 }
 
+/**
+ * Platform values that mean "applies everywhere". A doc marked `cross-platform`
+ * (design-tokens-theming, fluent-2) must not disappear when a caller filters by
+ * a concrete platform — it applies to that platform too.
+ */
+const UNIVERSAL_PLATFORMS = new Set(["both", "cross-platform", "all", "any", ""]);
+
+export function platformMatches(docPlatform: string, want?: string): boolean {
+  if (!want) return true;
+  const p = (docPlatform ?? "").trim().toLowerCase();
+  if (UNIVERSAL_PLATFORMS.has(p)) return true;
+  return p === want.trim().toLowerCase();
+}
+
+/**
+ * Pattern docs carry platform-prefixed ids (`mobile-onboarding-paywall`,
+ * `web-hero-sections`) while prose and cross-links inside the knowledge base
+ * refer to the bare name (`[[onboarding-paywall]]`). Resolve both, in either
+ * direction, so a caller never gets a spurious "no such document".
+ */
+const ID_PREFIXES = ["mobile-", "web-", "ios-", "android-", "macos-"];
+
+export function findDoc(docs: KnowledgeDoc[], id: string): KnowledgeDoc | undefined {
+  const key = id.trim().toLowerCase();
+  if (!key) return undefined;
+  const exact = docs.find((d) => d.id.toLowerCase() === key);
+  if (exact) return exact;
+  const prefixed = docs.find((d) => ID_PREFIXES.some((p) => d.id.toLowerCase() === p + key));
+  if (prefixed) return prefixed;
+  const worn = ID_PREFIXES.find((p) => key.startsWith(p));
+  if (worn) {
+    const bare = key.slice(worn.length);
+    const unprefixed = docs.find((d) => d.id.toLowerCase() === bare);
+    if (unprefixed) return unprefixed;
+  }
+  return docs.find((d) => d.title.trim().toLowerCase() === key);
+}
+
 function tokenize(text: string): string[] {
   return text
     .toLowerCase()
@@ -111,7 +149,7 @@ export function searchKnowledge(
 
   for (const doc of docs) {
     if (opts.category && doc.category !== opts.category) continue;
-    if (opts.platform && doc.platform !== "both" && doc.platform !== opts.platform) continue;
+    if (!platformMatches(doc.platform, opts.platform)) continue;
 
     const titleTokens = new Set(tokenize(doc.title + " " + doc.id));
     const tagTokens = new Set(doc.tags.flatMap(tokenize));

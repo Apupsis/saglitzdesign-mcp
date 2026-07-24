@@ -7,7 +7,7 @@ description: Add motion and animation that feels great, not like slop. Use when 
 
 Motion exists to explain (where did this come from?), confirm (did that work?), and occasionally delight. If an animation does none of those, delete it. The details compound — wrong easing or a scale(0) pop is the difference between "premium" and "cheap."
 
-> Full depth is in the **SaglitzDesign MCP** (`npx saglitzdesign-mcp`): docs `animation-craft`, `motion-microinteractions`, `wwdc-design-principles`.
+> Full depth is in the **SaglitzDesign MCP** (`npx saglitzdesign-mcp`): docs `animation-craft`, `motion-microinteractions`, `wwdc-design-principles`; tools `generate_motion` (easing/duration tokens + ready keyframes in CSS, Framer Motion or SwiftUI, reduced-motion included) and `compare_design_languages("motion")` for per-platform physics.
 
 ## Easing — the rule agents get wrong
 

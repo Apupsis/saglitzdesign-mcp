@@ -21,7 +21,7 @@ The PDP has to sell the item and pre-answer every hesitation before the cart.
 - **Add-to-cart**: one unmistakable primary button, sticky on mobile scroll. After add, confirm with an inline toast or slide-in mini-cart — never bounce the user to a full cart page and break browsing momentum. See [[buttons]].
 - **Variant selection**: use swatches/segmented controls, not tiny dropdowns, for color/size. Show which variants are out of stock (disabled, not hidden) and reflect the selected variant in the image and price. Block add-to-cart until required variants are chosen, with an inline prompt ("Select a size").
 - **Trust signals**: shipping estimate ("Free delivery, arrives Tue 28th"), returns window, stock status, and a size guide where relevant — placed near the buy button, not buried in tabs.
-- **Reviews**: aggregate star rating near the title; full reviews lower down with rating distribution, verified-purchase badges, helpfulness sorting, and photos. Show the count honestly; do not fabricate or filter negatives (see [[trust]]).
+- **Reviews**: aggregate star rating near the title; full reviews lower down with rating distribution, verified-purchase badges, helpfulness sorting, and photos. Show the count honestly; do not fabricate or filter negatives (see [[ethical-design]]).
 - **Answer objections in place**: delivery speed, return ease, sizing/fit, materials, and compatibility are the questions that stall a purchase. Surface them near the buy box or in a Q&A block rather than forcing a support ticket.
 
 ## Cart

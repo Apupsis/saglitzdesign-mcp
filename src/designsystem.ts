@@ -9,6 +9,33 @@ import { suggestIconLibrary, type IconLibrary } from "./icons.js";
 import { buildTypeScale } from "./typescale.js";
 import { buildElevation } from "./elevation.js";
 import { generateTokens, DEFAULT_SPACING, DEFAULT_RADII, type TokenSpec, type TokenFormat } from "./tokens.js";
+import { generateLayoutSystem } from "./layout.js";
+
+/**
+ * The layout layer of the foundation. Web gets a real grid; native platforms
+ * get the constraints that matter there instead of a column count, because a
+ * 12-column grid is not how an iOS or Android screen is actually laid out.
+ */
+function layoutSummary(platform: DSPlatform): string[] {
+  if (platform === "ios" || platform === "android") {
+    const isIOS = platform === "ios";
+    return [
+      `- **Margins:** ${isIOS ? "16pt screen margins (20pt on regular width)" : "16dp screen margins"}; respect safe areas / insets on every edge.`,
+      `- **Touch targets:** minimum ${isIOS ? "44×44pt" : "48×48dp"}, with ≥8${isIOS ? "pt" : "dp"} between adjacent targets.`,
+      "- **Spacing scale:** the 8pt scale in the tokens below — every gap is a step on it, never a hand-picked number.",
+      `- **Adaptivity:** support ${isIOS ? "Dynamic Type (including accessibility sizes) and size classes" : "font scaling (sp) and compact/medium/expanded window classes"}; nothing may have a fixed height around text.`,
+      "- Thumb-zone the primary action; keep destructive actions out of it.",
+    ];
+  }
+  const l = generateLayoutSystem({ preset: "marketing-site" });
+  return [
+    `- **Breakpoints:** ${l.breakpoints.map((b) => `${b.name} ${b.px}px`).join(" · ")} — starting points; add one where *your* content breaks, never per device.`,
+    `- **Grid:** ${l.columns} columns · ${l.gutter}px gutter · content capped at ${l.maxWidth}px · edge padding 16→48px.`,
+    `- **Measure:** cap prose at 65ch (45ch for narrow columns) regardless of container width.`,
+    `- **Section rhythm:** ${l.sectionRhythm.map((r) => `${r.name} ${r.min}→${r.max}px`).join(" · ")} (fluid).`,
+    "- Full CSS variables, Tailwind theme, intrinsic grid and container queries: `generate_layout_system`.",
+  ];
+}
 
 export type DSPlatform = "web" | "ios" | "android" | "all";
 
@@ -83,6 +110,7 @@ export function createDesignSystem(
     `| Type | ${font.heading.family} / ${font.body.family} · modular ratio ${ratio} |`,
     `| Icons | ${icon.name} (${icon.license}) |`,
     `| Elevation | 5-level layered shadow ramp |`,
+    `| Layout | ${platform === "web" || platform === "all" ? "12-col grid · 1200px cap · fluid section rhythm" : "native layout — safe areas, adaptive sizes"} |`,
     `| Contrast | ${color.checks.length - colorFails}/${color.checks.length} WCAG checks pass${colorFails ? ` (${colorFails} need a look)` : " ✅"} |`,
     "",
     "## 2. Color",
@@ -110,20 +138,25 @@ export function createDesignSystem(
     "```",
     "- Full ramp + dark-mode guidance: `generate_elevation_system`.",
     "",
-    "## 6. Tokens (ready to paste)",
+    "## 6. Layout",
+    ...layoutSummary(platform),
+    "",
+    "## 7. Tokens (ready to paste)",
     tokens,
     "",
-    "## 7. Components to build",
+    "## 8. Components to build",
     `Grab production-ready, accessible code for each with \`get_component_recipe\`:`,
     comps.map((c) => `\`${c}\``).join(" · "),
     "",
-    "## 8. Build checklist",
+    "## 9. Build checklist",
     "- [ ] Drop the tokens above into your project as the single source of truth.",
     "- [ ] Install the icon library; use one family, one weight.",
     "- [ ] Load the two fonts (self-host or link); set display vs body roles.",
+    "- [ ] Lay the page out on the layout system; cap prose at 65ch.",
     "- [ ] Build core components from `get_component_recipe` using the tokens.",
     "- [ ] Verify contrast on any custom pairs with `audit_accessibility`; fix with `fix_contrast`.",
     "- [ ] Add motion from `generate_motion`; honor reduced-motion.",
+    "- [ ] Run `design_lint` and `audit_design_system` on the result — the system you just generated should score inside every budget.",
     "- [ ] Run `design_review_checklist` before ship.",
     "",
     colorFails

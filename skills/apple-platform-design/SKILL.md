@@ -7,7 +7,7 @@ description: Design iOS, iPadOS, and macOS apps that feel native, in the Liquid 
 
 Apple apps feel native because they respect platform conventions, use system materials and motion, and get the small physical details right. Copying a web or Android design onto iOS/macOS reads as foreign instantly.
 
-> Full depth is in the **SaglitzDesign MCP** (`npx saglitzdesign-mcp`): docs `apple-hig-liquid-glass`, `ios-app-design`, `macos-app-design`, `wwdc-design-principles`, and `get_design_language`.
+> Full depth is in the **SaglitzDesign MCP** (`npx saglitzdesign-mcp`): docs `apple-hig-liquid-glass`, `ios-app-design`, `macos-app-design`, `wwdc-design-principles`, `apple-intelligence-design`; tools `get_design_language`, `compare_design_languages` (what to port from Android and what not to), `get_component_recipe(component, "swiftui")` for real SwiftUI code, and the `/build_mobile_app_ui` and `/port_to_platform` workflows.
 
 ## Core HIG principles
 

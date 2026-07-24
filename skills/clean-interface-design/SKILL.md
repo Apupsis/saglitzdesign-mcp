@@ -7,7 +7,7 @@ description: Design clean, calm, uncluttered interfaces that don't read as templ
 
 Most "AI-looking" UI fails the same way: too many colors, too many type sizes, inconsistent radii, no clear primary action, and no breathing room. Fix those and almost anything looks intentional.
 
-> Full depth (specs, contrast math, tokens, real screenshots) is available via the **SaglitzDesign MCP** (`npx saglitzdesign-mcp`) — tools `search_design_knowledge`, `generate_design_tokens`, `audit_accessibility`, and docs `clean-app-design`, `color-systems`, `typography`, `spacing-layout`, `visual-craft-standards`.
+> Full depth (specs, contrast math, tokens, real examples) is available via the **SaglitzDesign MCP** (`npx saglitzdesign-mcp`) — docs `clean-app-design`, `color-systems`, `typography`, `spacing-layout`, `visual-craft-standards`; tools `create_design_system` (one call → the whole foundation), `generate_layout_system`, `generate_design_tokens`, `audit_accessibility`, and `audit_design_system` to measure whether the restraint below actually held.
 
 ## The rules that do most of the work
 

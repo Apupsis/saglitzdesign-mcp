@@ -1,11 +1,12 @@
 #!/usr/bin/env node
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
-import { loadKnowledge, searchKnowledge, sections, type KnowledgeDoc } from "./knowledge.js";
+import { loadKnowledge, searchKnowledge, sections, findDoc, platformMatches, type KnowledgeDoc } from "./knowledge.js";
+import { CATEGORIES, PLATFORMS, DESIGN_LANGUAGES, REVIEW_MAP, FOCUS_MAP, ROADMAPS, STALE_DAYS } from "./catalog.js";
 import { loadExamples, searchExamples, imageMime } from "./examples.js";
 import { registerPrompts } from "./prompts.js";
 import {
@@ -22,6 +23,9 @@ import { elevationReport } from "./elevation.js";
 import { motionReport, MOTION_IDS, type MotionStack } from "./motion.js";
 import { designLintReport } from "./lint.js";
 import { uxCopyReport } from "./uxcopy.js";
+import { designSystemAuditReport } from "./dsaudit.js";
+import { layoutSystemReport, type LayoutPreset } from "./layout.js";
+import { compareDesignLanguages, COMPARE_TOPICS, COMPARE_PLATFORMS, type CompareTopic, type ComparePlatform } from "./compare.js";
 import { createDesignSystem, type DSPlatform } from "./designsystem.js";
 import { normalizeHex } from "./tokens.js";
 
@@ -38,9 +42,22 @@ const examples = loadExamples(examplesDir);
 const repoRoot = join(knowledgeDir, "..");
 const recipes = loadRecipes(join(repoRoot, "recipes"));
 
+/** Single source of truth for the version: package.json ships in every install. */
+function packageVersion(): string {
+  for (const candidate of [join(here, "..", "package.json"), join(here, "..", "..", "package.json")]) {
+    try {
+      const v = JSON.parse(readFileSync(candidate, "utf8"))?.version;
+      if (typeof v === "string" && v) return v;
+    } catch {
+      /* try the next candidate */
+    }
+  }
+  return "0.0.0";
+}
+
 const server = new McpServer({
   name: "saglitzdesign",
-  version: "0.14.0",
+  version: packageVersion(),
 });
 
 function docHeader(d: KnowledgeDoc): string {
@@ -56,8 +73,6 @@ function text(s: string) {
   return { content: [{ type: "text" as const, text: s }] };
 }
 
-const CATEGORIES = ["design-language", "component", "ux", "seo", "geo", "pattern", "craft", "book", "process", "marketing"] as const;
-const PLATFORMS = ["mobile", "web", "macos"] as const;
 
 // Every tool here is read-only, deterministic (same input → same output), and
 // closed-world (reads only bundled local files; no network/external calls).
@@ -89,9 +104,7 @@ tool(
   },
   async ({ category, platform }) => {
     const filtered = docs.filter(
-      (d) =>
-        (!category || d.category === category) &&
-        (!platform || d.platform === "both" || d.platform === platform),
+      (d) => (!category || d.category === category) && platformMatches(d.platform, platform),
     );
     const byCategory = new Map<string, KnowledgeDoc[]>();
     for (const d of filtered) {
@@ -140,7 +153,7 @@ tool(
     id: z.string().describe("Exact document id, e.g. 'buttons', 'material-3', 'accessibility', 'geo-tactics-checklist'. Get ids from list_design_knowledge or search results."),
   },
   async ({ id }) => {
-    const doc = docs.find((d) => d.id === id);
+    const doc = findDoc(docs, id);
     if (!doc) {
       const near = searchKnowledge(docs, id, { limit: 3 }).map((r) => r.doc.id);
       return text(`No document with id "${id}".${near.length ? ` Did you mean: ${near.join(", ")}?` : ""} Use list_design_knowledge to browse.`);
@@ -184,61 +197,17 @@ tool(
   "Fetch the full reference document for one modern design language or platform design system (Material 3, Apple HIG/Liquid Glass, iOS/Android/macOS, Apple Intelligence, visionOS, Fluent 2, 2026 web trends, design tokens). Returns the complete spec — rules, do/don't lists, numbers, and examples — for the chosen system. Use when you need the authoritative platform baseline before designing; for a specific component use get_component_guidance, and to plan a whole project use get_design_roadmap.",
   {
     language: z
-      .enum(["material-3", "apple-hig-liquid-glass", "ios-app-design", "android-app-design", "macos-app-design", "apple-intelligence-design", "visionos-spatial-design", "wwdc-design-principles", "fluent-2", "web-trends-2026", "design-tokens-theming"])
+      .enum(DESIGN_LANGUAGES)
       .describe("Which reference to fetch. e.g. 'material-3' (Android/Material), 'apple-hig-liquid-glass' or 'ios-app-design' (iOS), 'macos-app-design', 'visionos-spatial-design' (Vision Pro), 'web-trends-2026', 'design-tokens-theming'."),
   },
   async ({ language }) => {
-    const doc = docs.find((d) => d.id === language);
+    const doc = findDoc(docs, language);
     if (!doc) return text(`Reference "${language}" is not loaded in the knowledge base yet.`);
     return text(fullDoc(doc));
   },
 );
 
 // ── Tool 6: design review checklist ─────────────────────────────────────────
-const REVIEW_MAP: Record<string, string[]> = {
-  "mobile-app": [
-    "mobile-ux", "ios-app-design", "android-app-design", "android-patterns", "apple-intelligence-design",
-    "buttons", "forms-inputs", "navigation", "cards-lists-modals",
-    "principles-heuristics", "accessibility", "typography", "color-systems",
-    "spacing-layout", "motion-microinteractions", "animation-craft", "wwdc-design-principles", "visual-craft-standards",
-    "clean-app-design", "iconography", "interaction-design-classics", "ux-writing",
-    "onboarding-permission-priming", "app-store-optimization", "ethical-design", "fintech-trust",
-  ],
-  "macos-app": [
-    "macos-app-design", "apple-hig-liquid-glass", "apple-intelligence-design", "buttons", "forms-inputs",
-    "cards-lists-modals", "principles-heuristics", "accessibility", "typography",
-    "color-systems", "spacing-layout", "wwdc-design-principles", "animation-craft", "visual-craft-standards", "ux-writing",
-  ],
-  website: [
-    "conversion-ux", "storybrand-copywriting", "value-proposition-jtbd", "buttons", "forms-inputs", "navigation",
-    "principles-heuristics", "accessibility", "typography", "color-systems", "spacing-layout",
-    "motion-microinteractions", "animation-craft", "visual-craft-standards", "clean-app-design", "iconography", "ux-writing",
-    "technical-seo", "on-page-seo", "seo-for-designers", "geo-tactics-checklist", "analytics-experimentation",
-    "ethical-design", "ecommerce-checkout",
-  ],
-  "landing-page": [
-    "conversion-ux", "storybrand-copywriting", "value-proposition-jtbd", "influence-persuasion", "buttons",
-    "typography", "color-systems", "spacing-layout", "visual-craft-standards", "clean-app-design", "iconography",
-    "seo-for-designers", "on-page-seo", "geo-tactics-checklist", "accessibility", "ethical-design",
-  ],
-  dashboard: [
-    "navigation", "cards-lists-modals", "data-visualization", "design-systems-methodology",
-    "principles-heuristics", "typography", "color-systems", "spacing-layout", "accessibility",
-    "buttons", "forms-inputs", "visual-craft-standards", "clean-app-design", "iconography", "ux-writing", "ethical-design",
-  ],
-};
-
-const FOCUS_MAP: Record<string, (d: KnowledgeDoc) => boolean> = {
-  all: () => true,
-  ui: (d) => ["component", "design-language", "craft"].includes(d.category) || ["typography", "color-systems", "spacing-layout", "motion-microinteractions"].includes(d.id),
-  ux: (d) => ["ux", "component"].includes(d.category) || d.id === "ux-writing",
-  accessibility: (d) => d.id === "accessibility",
-  seo: (d) => d.category === "seo",
-  geo: (d) => d.category === "geo",
-  conversion: (d) => ["conversion-ux", "storybrand-copywriting", "influence-persuasion", "positioning-messaging"].includes(d.id) || d.category === "pattern",
-  copywriting: (d) => ["ux-writing", "storybrand-copywriting", "positioning-messaging"].includes(d.id),
-};
-
 tool(
   "design_review_checklist",
   "Generate a structured design-review checklist for a project type (mobile app, website, landing page, dashboard), assembled from the knowledge base: key rules and anti-patterns per area. Use it to audit an existing design or as acceptance criteria for a new one.",
@@ -249,7 +218,7 @@ tool(
   async ({ project_type, focus }) => {
     const focusFn = FOCUS_MAP[focus ?? "all"];
     const ids = REVIEW_MAP[project_type];
-    const picked = ids.map((id) => docs.find((d) => d.id === id)).filter((d): d is KnowledgeDoc => !!d && focusFn(d));
+    const picked = ids.map((id) => findDoc(docs, id)).filter((d): d is KnowledgeDoc => !!d && focusFn(d));
     if (picked.length === 0) return text("No checklist sections available for that combination.");
 
     const lines: string[] = [
@@ -273,96 +242,6 @@ tool(
 );
 
 // ── Tool 7: design roadmap ───────────────────────────────────────────────────
-interface RoadmapPhase {
-  title: string;
-  goal: string;
-  docs: string[];
-}
-interface Roadmap {
-  intro: string;
-  fullGuides: string[];
-  phases: RoadmapPhase[];
-}
-
-const CORE_FOUNDATION = ["typography", "color-systems", "spacing-layout", "design-tokens-theming"];
-const CORE_CRAFT = ["visual-craft-standards", "typography-craft", "animation-craft", "refactoring-ui"];
-const CORE_VALIDATE = ["design-critique-scoring", "accessibility", "principles-heuristics", "dont-make-me-think"];
-
-const ROADMAPS: Record<string, Roadmap> = {
-  website: {
-    intro: "Marketing/company website. Order matters: positioning → copy → structure/SEO → design → CRO loop. Upstream fixes beat downstream polish.",
-    fullGuides: ["marketing-website-roadmap", "product-design-roadmap"],
-    phases: [
-      { title: "1. Positioning & strategy", goal: "One positioning statement, one conversion goal, clear value prop", docs: ["positioning-messaging", "value-proposition-jtbd", "marketing-website-roadmap"] },
-      { title: "2. Message & copy", goal: "Homepage narrative + proof inventory before wireframes", docs: ["storybrand-copywriting", "influence-persuasion", "ux-writing"] },
-      { title: "3. Architecture & SEO/GEO foundations", goal: "Page map by search intent; rendering, schema, llms.txt planned", docs: ["on-page-seo", "technical-seo", "geo-tactics-checklist", "navigation"] },
-      { title: "4. Wireframe & visual design", goal: "Real copy in layouts; conversion patterns; clean craft pass", docs: ["conversion-ux", "hero-sections", "pricing-sections", "landing-signup", "ecommerce-checkout", "clean-app-design", "design-engineering", ...CORE_FOUNDATION, ...CORE_CRAFT] },
-      { title: "5. Build & performance", goal: "CWV budget met; semantic, extractable HTML", docs: ["seo-for-designers", "design-engineering", "accessibility", "motion-microinteractions"] },
-      { title: "6. Launch & growth loop", goal: "Instrumented funnel; growth loops; one-variable tests; GEO visibility; honest conversion", docs: ["marketing-website-roadmap", "growth-frameworks", "analytics-experimentation", "geo-fundamentals", "ethical-design", "design-critique-scoring"] },
-    ],
-  },
-  "landing-page": {
-    intro: "Single conversion-focused page. Condensed website roadmap: one goal, one narrative, ruthless proof.",
-    fullGuides: ["marketing-website-roadmap"],
-    phases: [
-      { title: "1. Offer & message", goal: "Value prop + headline/subhead/CTA + risk reducers written first", docs: ["positioning-messaging", "value-proposition-jtbd", "storybrand-copywriting", "conversion-ux"] },
-      { title: "2. Page narrative", goal: "Hero → proof → benefits → objections → final CTA", docs: ["conversion-ux", "hero-sections", "social-proof-footer", "influence-persuasion"] },
-      { title: "3. Design & craft", goal: "CTA pops (squint test); clean & mobile-first", docs: ["buttons", ...CORE_FOUNDATION, "clean-app-design", "visual-craft-standards", "refactoring-ui"] },
-      { title: "4. Performance, SEO/GEO & launch", goal: "Lighthouse ≥90; schema + answer-first content; funnel instrumented", docs: ["seo-for-designers", "on-page-seo", "geo-tactics-checklist", "accessibility"] },
-    ],
-  },
-  "ios-app": {
-    intro: "iOS app, HIG/Liquid Glass era. Native navigation and platform conventions are non-negotiable; App Store presence is part of the design.",
-    fullGuides: ["product-design-roadmap"],
-    phases: [
-      { title: "1. Discovery & positioning", goal: "Persona, job-to-be-done, success metric, competitor teardown", docs: ["product-design-roadmap", "positioning-messaging"] },
-      { title: "2. IA & flows", goal: "≤5 tab destinations; critical flows mapped; trunk test", docs: ["navigation", "ios-app-design", "navigation-home"] },
-      { title: "3. Wireframes, copy & edge states", goal: "Real copy; empty/loading/error/offline designed; permission priming planned", docs: ["ux-writing", "empty-states-buttons", "onboarding-permission-priming", "dont-make-me-think"] },
-      { title: "4. Design system on HIG baseline", goal: "Tokens + core components; Dynamic Type; dark mode", docs: ["apple-hig-liquid-glass", "ios-app-design", "apple-intelligence-design", ...CORE_FOUNDATION] },
-      { title: "5. Hi-fi design & craft", goal: "All states, all sizes; clean & calm; motion + haptics; reduced motion", docs: ["mobile-ux", "buttons", "forms-inputs", "cards-lists-modals", "clean-app-design", "motion-microinteractions", ...CORE_CRAFT] },
-      { title: "6. Monetization & key flows", goal: "Onboarding/paywall/auth/checkout patterns; pricing & growth loops; honest, non-dark-pattern flows", docs: ["onboarding-paywall", "onboarding-permission-priming", "paywall-benchmarks", "pricing-strategy", "auth-patterns", "checkout-payments", "settings-lists", "hooked-retention", "growth-frameworks", "ethical-design"] },
-      { title: "7. Validate, list & ship", goal: "5-user tests; a11y audit; App Store listing (ASO) + assets; activation instrumented", docs: [...CORE_VALIDATE, "app-store-optimization", "analytics-experimentation", "ios-app-design"] },
-    ],
-  },
-  "android-app": {
-    intro: "Android app on Material 3 (Expressive). Same skeleton as iOS but Material navigation, shapes and motion physics.",
-    fullGuides: ["product-design-roadmap"],
-    phases: [
-      { title: "1. Discovery & positioning", goal: "Persona, job-to-be-done, success metric", docs: ["product-design-roadmap", "positioning-messaging"] },
-      { title: "2. IA & flows", goal: "Nav bar destinations; critical flows; predictive back correct", docs: ["android-app-design", "navigation", "navigation-home"] },
-      { title: "3. Wireframes, copy & edge states", goal: "Real copy; all edge states; permission priming planned", docs: ["ux-writing", "empty-states-buttons", "onboarding-permission-priming", "dont-make-me-think"] },
-      { title: "4. Design system on M3 baseline", goal: "Dynamic color, shape scale, motion springs, dark theme, edge-to-edge", docs: ["material-3", "android-app-design", ...CORE_FOUNDATION] },
-      { title: "5. Hi-fi design & craft", goal: "All states/sizes; clean & calm; 60fps; reduced motion", docs: ["mobile-ux", "buttons", "forms-inputs", "cards-lists-modals", "clean-app-design", "motion-microinteractions", ...CORE_CRAFT] },
-      { title: "6. Monetization & key flows", goal: "Onboarding/paywall/auth/checkout patterns; pricing & growth loops; Android conventions; honest flows", docs: ["android-patterns", "onboarding-paywall", "onboarding-permission-priming", "paywall-benchmarks", "pricing-strategy", "auth-patterns", "checkout-payments", "settings-lists", "hooked-retention", "growth-frameworks", "ethical-design"] },
-      { title: "7. Validate, list & ship", goal: "Usability tests; a11y (TalkBack); Play Store listing (ASO) + assets; activation instrumented", docs: [...CORE_VALIDATE, "app-store-optimization", "analytics-experimentation", "android-app-design"] },
-    ],
-  },
-  "macos-app": {
-    intro: "macOS app. Keyboard-first, menu bar complete, multi-window sane, resizable everything — that's what 'native' means on Mac.",
-    fullGuides: ["product-design-roadmap"],
-    phases: [
-      { title: "1. Discovery & app model", goal: "Document-based vs shoebox vs utility decided; persona + metric", docs: ["product-design-roadmap", "macos-app-design"] },
-      { title: "2. IA: windows, menus, shortcuts", goal: "Window anatomy, full menu bar map, shortcut table BEFORE wireframes", docs: ["macos-app-design", "navigation"] },
-      { title: "3. Wireframes, copy & edge states", goal: "Real copy; empty/error/loading; resizing behavior per pane", docs: ["ux-writing", "cards-lists-modals", "dont-make-me-think"] },
-      { title: "4. Design system on macOS HIG", goal: "Tokens; density for desktop; dark mode; Liquid Glass adoption", docs: ["macos-app-design", "apple-hig-liquid-glass", "apple-intelligence-design", ...CORE_FOUNDATION] },
-      { title: "5. Hi-fi design & craft", goal: "Pointer+keyboard interactions; drag & drop; undo everywhere", docs: ["buttons", "forms-inputs", "motion-microinteractions", ...CORE_CRAFT] },
-      { title: "6. Validate & ship", goal: "Keyboard-only pass; VoiceOver; multi-window/multi-display QA", docs: CORE_VALIDATE },
-    ],
-  },
-  "saas-web-app": {
-    intro: "SaaS product UI (dashboard/app shell). Density, navigation clarity, data-viz and empty states decide perceived quality; pricing & growth loops decide the business.",
-    fullGuides: ["product-design-roadmap"],
-    phases: [
-      { title: "1. Discovery & jobs", goal: "Core workflows ranked; jobs-to-be-done; success metric per workflow", docs: ["product-design-roadmap", "value-proposition-jtbd", "positioning-messaging"] },
-      { title: "2. IA & app shell", goal: "Sidebar structure, command palette, breadcrumbs", docs: ["navigation", "dashboards"] },
-      { title: "3. Wireframes, copy & edge states", goal: "Real data shapes; empty/loading/error/zero-results for every view", docs: ["ux-writing", "cards-lists-modals", "empty-states-buttons"] },
-      { title: "4. Design system & data-viz", goal: "Token system + governance; density mode; tables/forms/charts standardized", docs: ["design-systems-methodology", "data-visualization", ...CORE_FOUNDATION, "forms-inputs", "buttons"] },
-      { title: "5. Hi-fi & craft", goal: "Dense screens first; keyboard support; dark mode; clean & maintainable", docs: [...CORE_CRAFT, "clean-app-design", "design-engineering", "motion-microinteractions", "principles-heuristics"] },
-      { title: "6. Pricing, onboarding & retention", goal: "Value-based pricing; time-to-value <60s; activation instrumented; honest, non-manipulative flows", docs: ["pricing-strategy", "onboarding-paywall", "hooked-retention", "growth-frameworks", "conversion-ux", "ethical-design"] },
-      { title: "7. Validate & iterate", goal: "Task-based tests; heuristic score; clean design→dev handoff; metrics + experiments", docs: [...CORE_VALIDATE, "design-handoff", "analytics-experimentation"] },
-    ],
-  },
-};
 
 tool(
   "get_design_roadmap",
@@ -372,7 +251,6 @@ tool(
   },
   async ({ project_type }) => {
     const rm = ROADMAPS[project_type];
-    const known = new Set(docs.map((d) => d.id));
     const lines: string[] = [
       `# SaglitzDesign roadmap — ${project_type}`,
       "",
@@ -384,7 +262,8 @@ tool(
     for (const phase of rm.phases) {
       lines.push(`## ${phase.title}`);
       lines.push(`**Goal / exit criteria:** ${phase.goal}`);
-      const available = phase.docs.filter((id) => known.has(id));
+      // Resolve to real doc ids so the roadmap always cites ids get_design_doc accepts.
+      const available = [...new Set(phase.docs.map((id) => findDoc(docs, id)?.id).filter(Boolean))];
       lines.push(`**Consult:** ${available.map((id) => `\`${id}\``).join(", ")}`);
       lines.push("");
     }
@@ -417,9 +296,19 @@ tool(
 );
 
 // ── Tool 9: visual design examples ──────────────────────────────────────────
+// The screenshot library is a LOCAL-ONLY asset: the images are third-party
+// (Mobbin) and are deliberately excluded from the published npm package. A
+// published install therefore serves the curated annotations + source links.
+// Detect which mode we're in once, so the tool can say so instead of implying
+// images are always returned.
+const bundledImages = examples.filter((e) => e.image && existsSync(join(examplesDir, e.image))).length;
+const IMAGES_BUNDLED = bundledImages > 0;
+
 tool(
   "get_design_examples",
-  "Fetch REAL screenshot examples of a design pattern from top apps and websites (curated from Mobbin). Returns the actual images plus notes on what each does well — use these as visual references when designing paywalls, onboarding, auth, navigation, checkout, settings, empty states, heroes, pricing, features, social proof, signup pages, dashboards and footers.",
+  IMAGES_BUNDLED
+    ? "Fetch REAL screenshot examples of a design pattern from top apps and websites (curated from Mobbin). Returns the actual images plus notes on what each does well — use these as visual references when designing paywalls, onboarding, auth, navigation, checkout, settings, empty states, heroes, pricing, features, social proof, signup pages, dashboards and footers."
+    : "Fetch curated real-world examples of a design pattern from top apps and websites (paywalls, onboarding, auth, navigation, checkout, settings, empty states, heroes, pricing, features, social proof, signup, dashboards, footers). Returns, for each example, the app/site, what it does well, and a source link to view the screenshot. NOTE: this installation does not bundle the screenshot images (they are third-party assets, excluded from the published package), so the notes and links are returned WITHOUT inline images — open the links, or use your own browser tool, if you need to see them.",
   {
     query: z.string().describe("Pattern to see examples of, e.g. 'paywall', 'pricing section', 'dark hero', 'empty state'"),
     platform: z.enum(["mobile", "web"]).optional().describe("'mobile' for iOS app screens, 'web' for website examples"),
@@ -434,6 +323,15 @@ tool(
       return text(`No visual examples match "${query}". Available patterns: ${patterns || "(example library is empty)"}.`);
     }
     const content: Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }> = [];
+    if (!IMAGES_BUNDLED) {
+      content.push({
+        type: "text",
+        text:
+          `**${hits.length} curated example(s) for "${query}" — annotations + source links only.**\n` +
+          "_This installation does not bundle the screenshot images (third-party assets are not redistributed). " +
+          "Open a source link, or use a browser tool, to see the actual screen._",
+      });
+    }
     for (const e of hits) {
       content.push({
         type: "text",
@@ -447,10 +345,11 @@ tool(
         } catch {
           content.push({ type: "text", text: `(image unreadable — view it at ${e.mobbin_url})` });
         }
-      } else {
+      } else if (IMAGES_BUNDLED) {
+        // Library is present but this one entry has no file — worth saying.
         content.push({
           type: "text",
-          text: `(screenshot not bundled in this installation — view it at ${e.mobbin_url})`,
+          text: `(screenshot missing from the local library — view it at ${e.mobbin_url})`,
         });
       }
     }
@@ -459,10 +358,6 @@ tool(
 );
 
 // ── Tool 10: knowledge freshness ─────────────────────────────────────────────
-const STALE_DAYS: Record<string, number> = {
-  seo: 120, geo: 120, "design-language": 240, pattern: 300,
-  component: 365, ux: 365, craft: 365, book: 730, process: 365, marketing: 240,
-};
 
 tool(
   "knowledge_freshness",
@@ -734,6 +629,161 @@ tool(
       return text(`"${brand_color}" is not a valid hex color. Use #RGB, #RRGGBB, or #RRGGBBAA (e.g. #4F46E5).`);
     }
     return text(createDesignSystem(brand_color, vibe, (platform as DSPlatform) ?? "web", name || "Brand"));
+  },
+);
+
+// ── Tool 24: audit design system ─────────────────────────────────────────────
+tool(
+  "audit_design_system",
+  "Measure how systematic an existing UI really is: paste CSS / SCSS / Tailwind / JSX source and get a consistency score plus the sprawl behind it — how many distinct colors, font sizes, radii, shadows and spacing values it actually uses, which colors are near-duplicates nobody can tell apart, which spacing is off the 4pt grid, token adoption, stray font families, !important and magic z-index. Returns a consolidation plan wired to the generators. Use it before a redesign, on an inherited codebase, or to prove a design system is (or isn't) being followed. Deterministic static analysis; complements design_lint (per-line anti-patterns) with a whole-codebase view.",
+  {
+    code: z.string().describe("The stylesheet / token file / component source to audit. Concatenate several files to audit them together."),
+  },
+  async ({ code }) => text(designSystemAuditReport(code)),
+);
+
+// ── Tool 25: generate layout system ──────────────────────────────────────────
+tool(
+  "generate_layout_system",
+  "Generate the layout foundation the other generators leave out: breakpoints (with what changes at each), container max-widths, edge padding, a column grid, an intrinsic auto-fit card grid, container queries, and a fluid section-rhythm scale — as CSS custom properties and a Tailwind v4 @theme block, plus the rules that matter more than the numbers (design narrow-first, cap the measure at 45–75ch, prefer intrinsic layout to media queries). Deterministic real code. Pair with generate_type_scale and generate_design_tokens.",
+  {
+    preset: z.enum(["marketing-site", "web-app", "docs", "mobile-first"]).optional().describe("Layout archetype (default 'marketing-site'): 'web-app' for a dense app shell with a sidebar, 'docs' for a three-zone documentation layout, 'mobile-first' for a 4→12 column phone-first grid"),
+    max_width: z.number().int().min(480).max(2560).optional().describe("Max content width in px (default depends on preset: 960–1440)"),
+    columns: z.number().int().min(2).max(24).optional().describe("Grid columns (default 12, or 4 for mobile-first)"),
+    gutter: z.number().int().min(4).max(64).optional().describe("Gutter between columns in px (default 16–32 by preset)"),
+    container_queries: z.boolean().optional().describe("Include a container-query example so components respond to their own width (default true)"),
+  },
+  async ({ preset, max_width, columns, gutter, container_queries }) =>
+    text(
+      layoutSystemReport({
+        preset: preset as LayoutPreset | undefined,
+        maxWidth: max_width,
+        columns,
+        gutter,
+        containerQueries: container_queries,
+      }),
+    ),
+);
+
+// ── Tool 26: compare design languages ────────────────────────────────────────
+tool(
+  "compare_design_languages",
+  "Compare how iOS (HIG/Liquid Glass), Android (Material 3), macOS and the web each solve ONE design problem — navigation, buttons, modals/sheets, typography, color, elevation, motion, forms, lists, icons, search or settings. Returns a side-by-side table of the concrete conventions per platform, the rules for porting a design between them, and an explicit 'do NOT port' list. Use when building the same product on more than one platform, or when deciding whether a pattern that works on one platform belongs on another.",
+  {
+    topic: z.enum(COMPARE_TOPICS as unknown as [string, ...string[]]).describe("The surface to compare, e.g. 'navigation', 'buttons', 'modals-sheets', 'motion'"),
+    platforms: z.array(z.enum(["ios", "android", "macos", "web"])).optional().describe("Which platforms to include as columns (default all four). e.g. ['ios','android'] for a mobile-only comparison"),
+  },
+  async ({ topic, platforms }) =>
+    text(
+      compareDesignLanguages(
+        topic as CompareTopic,
+        (platforms as ComparePlatform[] | undefined)?.length ? (platforms as ComparePlatform[]) : COMPARE_PLATFORMS,
+      ),
+    ),
+);
+
+// ── resources ────────────────────────────────────────────────────────────────
+// Tools are how an agent *asks*; resources are how a human *browses*. Exposing
+// the knowledge base as resources lets clients @-mention a document directly
+// (Claude Desktop, Cursor) and gives id autocompletion via completion/complete,
+// without spending a tool call.
+
+const DOC_URI = (id: string) => `saglitzdesign://doc/${id}`;
+const RECIPE_URI = (component: string) => `saglitzdesign://recipe/${component}`;
+
+function knowledgeIndexMarkdown(): string {
+  const byCategory = new Map<string, KnowledgeDoc[]>();
+  for (const d of docs) byCategory.set(d.category, [...(byCategory.get(d.category) ?? []), d]);
+  const lines = [
+    "# SaglitzDesign knowledge index",
+    "",
+    `${docs.length} documents · ${byCategory.size} categories · ${recipes.length} component recipes`,
+    "",
+  ];
+  for (const [cat, list] of [...byCategory].sort((a, b) => a[0].localeCompare(b[0]))) {
+    lines.push(`## ${cat} (${list.length})`);
+    for (const d of list) lines.push(`- \`${d.id}\` — ${d.title} · ${d.platform} · updated ${d.updated}`);
+    lines.push("");
+  }
+  lines.push("_Read one with the `saglitzdesign://doc/<id>` resource, or the get_design_doc tool._");
+  return lines.join("\n");
+}
+
+server.registerResource(
+  "knowledge-index",
+  "saglitzdesign://index",
+  {
+    title: "SaglitzDesign knowledge index",
+    description: "Every knowledge document grouped by category, with its id, platform and last-verified date.",
+    mimeType: "text/markdown",
+  },
+  async (uri) => ({
+    contents: [{ uri: uri.href, mimeType: "text/markdown", text: knowledgeIndexMarkdown() }],
+  }),
+);
+
+server.registerResource(
+  "design-doc",
+  new ResourceTemplate("saglitzdesign://doc/{id}", {
+    list: async () => ({
+      resources: docs.map((d) => ({
+        uri: DOC_URI(d.id),
+        name: d.id,
+        title: d.title,
+        description: `${d.category} · ${d.platform}${d.tags.length ? ` · ${d.tags.join(", ")}` : ""}`,
+        mimeType: "text/markdown",
+      })),
+    }),
+    complete: {
+      id: async (value: string) => {
+        const q = value.trim().toLowerCase();
+        const ids = docs.map((d) => d.id);
+        if (!q) return ids.slice(0, 100);
+        const starts = ids.filter((id) => id.startsWith(q));
+        const contains = ids.filter((id) => !id.startsWith(q) && id.includes(q));
+        return [...starts, ...contains].slice(0, 100);
+      },
+    },
+  }),
+  {
+    title: "Design knowledge document",
+    description: "One full knowledge-base document — prescriptive rules, numbers, anti-patterns and cited sources.",
+    mimeType: "text/markdown",
+  },
+  async (uri, { id }) => {
+    const doc = findDoc(docs, String(id));
+    if (!doc) throw new Error(`No design document with id "${id}". See saglitzdesign://index for the full list.`);
+    return { contents: [{ uri: uri.href, mimeType: "text/markdown", text: fullDoc(doc) }] };
+  },
+);
+
+server.registerResource(
+  "component-recipe",
+  new ResourceTemplate("saglitzdesign://recipe/{component}", {
+    list: async () => ({
+      resources: recipes.map((r) => ({
+        uri: RECIPE_URI(r.component),
+        name: r.component,
+        title: `${r.component} recipe`,
+        description: r.description || `Production-ready ${r.component} code — ${r.stacks.map((s) => s.stack).join(", ")}`,
+        mimeType: "text/markdown",
+      })),
+    }),
+    complete: {
+      component: async (value: string) =>
+        recipes.map((r) => r.component).filter((c) => c.startsWith(value.trim().toLowerCase())).slice(0, 100),
+    },
+  }),
+  {
+    title: "Component recipe",
+    description: "Accessible reference implementation of a UI component, with its spec and every available stack.",
+    mimeType: "text/markdown",
+  },
+  async (uri, { component }) => {
+    const key = String(component).trim().toLowerCase();
+    const r = recipes.find((x) => x.component === key);
+    if (!r) throw new Error(`No component recipe for "${component}". Available: ${recipes.map((x) => x.component).join(", ")}.`);
+    return { contents: [{ uri: uri.href, mimeType: "text/markdown", text: recipeText(r) }] };
   },
 );
 

@@ -8,9 +8,10 @@ npx skills@latest add HalidSaglam/saglitzdesign-mcp
 ```
 
 Each skill is condensed, actionable guidance that stands on its own. For the
-**full knowledge base** (68 documents), the **tools** (token generation,
-accessibility auditing), the **visual example library**, and the end-to-end
-**build/review workflows**, install the MCP server instead:
+**full knowledge base** (83 documents), the **26 tools** (design-system,
+color, type, layout, elevation and motion generators; accessibility, design and
+UX-copy auditors; production component code), the **example library**, and the
+end-to-end **build / review / port workflows**, install the MCP server instead:
 
 ```bash
 npx saglitzdesign-mcp
@@ -25,6 +26,7 @@ npx saglitzdesign-mcp
 | **design-review** | Critiquing a UI (screenshot, page, or code) against a fixed 0–40 rubric, ranked by severity. |
 | **motion-and-animation** | Adding motion that feels great — easing, springs, interruptibility, the details agents get wrong. |
 | **apple-platform-design** | Designing native-feeling iOS / iPadOS / macOS apps in the Liquid Glass era. |
+| **design-system-audit** | Measuring whether a codebase has a design system or is re-deciding the basics per screen — and migrating it onto tokens. |
 
 The skills are a condensed on-ramp; the MCP server is the full system. Both are
 MIT-licensed and free.

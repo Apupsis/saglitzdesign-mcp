@@ -127,4 +127,4 @@ The test is always: does this break serve the user or the brand's real intent, o
 
 ## The through-line
 
-Clean design = a single accent, generous whitespace, one radius, a tiny type scale, one font, one icon family at one weight, one obvious action per screen, and one separation language. Everything else is restraint. Related: [[quieter]] · [[color-systems]] · [[typography]] · [[spacing-layout]] · [[conversion-ux]].
+Clean design = a single accent, generous whitespace, one radius, a tiny type scale, one font, one icon family at one weight, one obvious action per screen, and one separation language. Everything else is restraint. Related: [[visual-craft-standards]] · [[color-systems]] · [[typography]] · [[spacing-layout]] · [[conversion-ux]].

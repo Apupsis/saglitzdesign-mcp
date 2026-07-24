@@ -7,7 +7,7 @@ description: Build or improve landing pages and marketing sites that convert, no
 
 A beautiful page with unclear positioning converts worse than a plain page with sharp positioning. Fix upstream first: **positioning → copy → structure → design → speed.**
 
-> Full depth (frameworks, real examples, benchmarks) is in the **SaglitzDesign MCP** (`npx saglitzdesign-mcp`): docs `conversion-ux`, `storybrand-copywriting`, `value-proposition-jtbd`, `influence-persuasion`, `growth-frameworks`, and the `/build_landing_page` workflow.
+> Full depth (frameworks, real examples, benchmarks) is in the **SaglitzDesign MCP** (`npx saglitzdesign-mcp`): docs `conversion-ux`, `storybrand-copywriting`, `value-proposition-jtbd`, `influence-persuasion`, `growth-frameworks`, `web-hero-sections`; tools `audit_ux_copy` (readability, weak CTAs), `create_design_system`, `generate_layout_system`, and the `/build_landing_page` workflow.
 
 ## Order of operations
 

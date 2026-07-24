@@ -9,7 +9,7 @@ expert‑level guidance on **web, iOS, Android and macOS design** — plus the
 **UX, copywriting, SEO, GEO and marketing** knowledge that makes a product
 actually convert.
 
-83 curated knowledge documents · 23 tools · 7 build/review workflows · a one‑call design‑system builder · real token/color/type/elevation/motion/a11y generators · design & UX‑copy linters · production component recipes · phased roadmaps · real‑world visual examples
+83 curated knowledge documents · 26 tools · 8 build/review/port workflows · MCP resources with id autocomplete · a one‑call design‑system builder · real token/color/type/elevation/motion/a11y generators · design & UX‑copy linters · production component recipes · phased roadmaps · real‑world visual examples
 
 [![npm](https://img.shields.io/npm/v/saglitzdesign-mcp?color=cb3837&logo=npm)](https://www.npmjs.com/package/saglitzdesign-mcp)
 [![CI](https://github.com/HalidSaglam/saglitzdesign-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/HalidSaglam/saglitzdesign-mcp/actions/workflows/ci.yml)
@@ -18,7 +18,7 @@ actually convert.
 [![MCP](https://img.shields.io/badge/Model_Context_Protocol-server-000)](https://modelcontextprotocol.io)
 [![Glama](https://glama.ai/mcp/servers/HalidSaglam/saglitzdesign-mcp/badges/score.svg)](https://glama.ai/mcp/servers/HalidSaglam/saglitzdesign-mcp)
 
-[Why](#why) · [What's inside](#whats-inside) · [Tools](#tools) · [Install](#install) · [Usage](#usage) · [Extending](#extending-the-knowledge-base) · [License](#license)
+[Why](#why) · [What's inside](#whats-inside) · [Tools](#tools) · [Resources](#resources) · [Install](#install) · [Usage](#usage) · [Extending](#extending-the-knowledge-base) · [Changelog](CHANGELOG.md) · [License](#license)
 
 </div>
 
@@ -46,7 +46,7 @@ instead of guessing.
 
 ## What's inside
 
-**83 knowledge documents across 11 categories:**
+**83 knowledge documents across 10 categories:**
 
 | Category | Coverage |
 |---|---|
@@ -59,15 +59,18 @@ instead of guessing.
 | 📣 **Marketing** | Branding & identity · email marketing · **HTML email development** (Outlook, dark mode, bulletproof) · ad creative · paywall benchmarks (RevenueCat 2026) · growth frameworks (loops/AARRR/PLG) · pricing strategy · analytics & experimentation · value proposition & JTBD · **content & distribution** (topic clusters, community, referral) · **App Store Optimization (ASO)** |
 | 🔎 **SEO** | Technical SEO (Core Web Vitals) · on‑page & E‑E‑A‑T · SEO for designers |
 | 🤖 **GEO** | Generative Engine Optimization — visibility in ChatGPT / Perplexity / AI Overviews, llms.txt, citation tactics |
-| 🖼️ **Patterns & examples** | Real‑world patterns studied from top apps & sites (incl. **e‑commerce & checkout** and **fintech / trust** flows), plus a curated screenshot library served as images |
+| 🖼️ **Patterns & examples** | Real‑world patterns studied from top apps & sites (incl. **e‑commerce & checkout** and **fintech / trust** flows), plus a curated library of real‑world example screens |
 
 ## Workflows (`/` prompts) — "build me a…"
 
 Beyond answering questions, SaglitzDesign ships **prompts** that orchestrate an
 entire build end‑to‑end. In Claude Code they appear in the `/` menu; invoke one
-and the agent runs the full method — roadmap → positioning & copy → real
-examples → **writes the actual code** → opens it in a browser, screenshots,
-scores it against the critique rubric, and iterates until it passes.
+and the agent runs the full method — roadmap → positioning & copy → **generates
+the design system** (color, type, layout, elevation, tokens) → real examples →
+**writes the actual code** from the component recipes → runs the **deterministic
+verify gate** (`design_lint`, `audit_accessibility`, `audit_design_system`,
+`audit_ux_copy`) → opens it in a browser, screenshots, scores it against the
+critique rubric, and iterates until it passes.
 
 | Prompt | What it does |
 |---|---|
@@ -76,8 +79,9 @@ scores it against the critique rubric, and iterates until it passes.
 | **`build_mobile_app_ui`** | Builds iOS or Android screens on the correct platform baseline (HIG/Liquid Glass or Material 3). |
 | **`critique_screenshot`** | Grounded, reproducible critique of an attached UI screenshot against the fixed 0–40 rubric — cites specific elements, no padding. |
 | **`review_paywall`** | Scores a paywall / subscription onboarding against real RevenueCat 2026 conversion benchmarks. |
-| **`design_review`** | Audits an existing site/app against the checklists and the 0–40 critique rubric, ranked by severity. |
-| **`redesign`** | Improves an existing UI (bolder / quieter / higher‑converting) using the craft standards, with before→after scoring. |
+| **`design_review`** | Audits an existing site/app — runs the deterministic auditors first, so findings lead with measured numbers, then the checklists and the 0–40 rubric, ranked by severity. |
+| **`redesign`** | Improves an existing UI (bolder / quieter / higher‑converting) using the craft standards, with a **measured** before→after (consistency score, critique score, lint findings, contrast failures). |
+| **`port_to_platform`** | Takes an existing UI to another platform (iOS ↔ Android ↔ macOS ↔ web) surface by surface — porting the intent and IA, never the components. |
 
 > Just say, e.g., *"/build_landing_page for a SaaS invoicing tool for freelancers"* — the workflow asks for anything missing, then builds it.
 >
@@ -95,7 +99,8 @@ scores it against the critique rubric, and iterates until it passes.
 | **`get_design_doc`** | Fetch any document in full by id. |
 | **`get_component_guidance`** | Deep dive on a component or screen (button, form, paywall, hero, pricing…) — specs + real‑world patterns. |
 | **`get_design_language`** | Full platform / design‑system references (Material 3, Liquid Glass, iOS/Android/macOS, Fluent 2, web trends, tokens). |
-| **`get_design_examples`** | **Real screenshots** of a pattern from top apps/sites, returned as images with notes on what each does well. |
+| **`compare_design_languages`** | **Building on more than one platform?** Side‑by‑side iOS / Android / macOS / web conventions for one surface (navigation, buttons, sheets, motion, forms…), plus the porting rules — and an explicit *do NOT port* list. |
+| **`get_design_examples`** | Curated real‑world examples of a pattern from top apps/sites, with notes on what each does well. (Screenshots are a local‑only asset — see [Visual examples](#visual-examples).) |
 | **`design_review_checklist`** | An assembled audit checklist per project type and focus (UI, UX, accessibility, SEO, GEO, conversion, copywriting). |
 | **`seo_geo_guide`** | SEO and GEO guides, optionally narrowed to a topic. |
 | **`generate_design_tokens`** | **Real artifacts, not advice** — turns a color/spacing/type spec into CSS variables, Tailwind v4, SwiftUI, Jetpack Compose, and W3C DTCG JSON. |
@@ -107,15 +112,38 @@ scores it against the critique rubric, and iterates until it passes.
 | **`suggest_icon_library`** | Recommends the right icon system for a vibe/platform (Lucide, Phosphor, Solar, SF Symbols, Material Symbols…) — with license, install command, coverage, fit rationale, and usage rules. |
 | **`generate_type_scale`** | A modular type scale (base × ratio) → named steps with line‑heights, tracking, and fluid `clamp()`, as CSS variables + Tailwind. |
 | **`generate_elevation_system`** | A cohesive layered box‑shadow ramp (flat→modal) as CSS variables + Tailwind, with dark‑mode guidance. |
+| **`generate_layout_system`** | Breakpoints (with what changes at each), container widths, a column grid, an intrinsic auto‑fit grid, container queries, and a fluid section‑rhythm scale — CSS variables + Tailwind v4. |
 | **`generate_motion`** | Easing + duration tokens and ready‑to‑paste keyframe animations (fade/slide/scale/spring/shimmer) in CSS, Framer Motion, or SwiftUI — reduced‑motion included. |
-| **`design_lint`** | Lints an HTML/CSS/JSX/Tailwind snippet for design & a11y anti‑patterns (hardcoded values, killed focus, missing alt/labels, clickable divs…) with line numbers and fixes. |
+| **`design_lint`** | Lints an HTML/CSS/JSX/Tailwind snippet for design & a11y anti‑patterns (hardcoded values, killed focus, missing alt/labels, clickable divs, unlabelled inputs…) with line numbers and fixes. Tag‑aware, so formatting never changes the verdict. |
+| **`audit_design_system`** | **Is there actually a system here?** Point it at real CSS/JSX and get a consistency score plus the sprawl behind it: how many distinct colors, sizes, radii, shadows and spacings are in use, which colors are indistinguishable duplicates, what's off the 4pt grid, token adoption — and a consolidation plan. |
 | **`audit_ux_copy`** | Objective copy audit — readability (Flesch), sentence length, passive voice, jargon, filler, user‑focus, weak CTAs — with flagged phrases and fixes. |
 | **`list_design_knowledge`** | Browse the full knowledge index by category / platform. |
 | **`knowledge_freshness`** | Reports each doc's age vs a per‑category staleness threshold, so the base can be kept current. |
 
+## Resources
+
+Beyond tools, the knowledge base is exposed as MCP **resources**, so clients that
+support them (Claude Desktop, Cursor) can `@`‑mention a document directly —
+with id autocompletion — instead of spending a tool call:
+
+| URI | What it is |
+|---|---|
+| `saglitzdesign://index` | The whole index: every document by category, with platform and last‑verified date. |
+| `saglitzdesign://doc/{id}` | One knowledge document in full (83 of them). Autocompletes on `id`. |
+| `saglitzdesign://recipe/{component}` | A component's spec plus its reference implementation in every available stack. |
+
+### Visual examples
+
+`get_design_examples` serves a curated library of real app/site screens. The
+**screenshots themselves are third‑party assets and are not redistributed**, so
+the published npm package ships the annotations and source links without the
+images — the tool detects this and says so rather than pretending otherwise. If
+you clone the repo you can rebuild the local image library; see
+[`scripts/regenerate-examples.md`](scripts/regenerate-examples.md).
+
 ## Install
 
-**Requirements:** Node.js 18+.
+**Requirements:** Node.js 20+.
 
 **From npm** (no clone needed):
 

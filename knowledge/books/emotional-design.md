@@ -49,7 +49,7 @@ Walter separates the kinds of positive emotion, and they are engineered differen
 
 - **Surprise** — an unexpected, better-than-necessary moment (a delightful animation, a thoughtful default, an easter egg). Powerful precisely because it's unexpected; loses all force once expected. Rule: deploy sparingly and vary it — a surprise on every visit is just a feature.
 - **Anticipation** — building pleasant expectation *before* a payoff (a progress reveal, a "your order is on its way," a countdown to a launch). Rule: use anticipation to make waits feel purposeful and to make payoffs land harder.
-- **Delight** — the sustained sense that someone thoughtful is behind the product. Rule: delight is the *baseline warmth*; surprise and anticipation are the spikes on top of it. Get the baseline right first (see [[delight]]).
+- **Delight** — the sustained sense that someone thoughtful is behind the product. Rule: delight is the *baseline warmth*; surprise and anticipation are the spikes on top of it. Get the baseline right first (see [[motion-microinteractions]]).
 
 ## Norman's three levels of processing
 
@@ -131,7 +131,7 @@ Emotional design *supports* business goals honestly; it must never weaponize the
 
 ## Cross-links
 
-- [[delight]] — the tactical patterns and micro-interactions that execute this philosophy
+- [[motion-microinteractions]] — the tactical patterns and micro-interactions that execute this philosophy
 - [[ux-writing]] — voice, tone, and the words that carry personality
 - [[clean-app-design]] — the visceral-level visual foundation delight sits on
 - [[branding-identity]] — where the persona and voice originate
