@@ -4,6 +4,43 @@ All notable changes to SaglitzDesign MCP are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.16.0] — 2026-07-25
+
+### Added
+
+- **`measure_screenshot`** — measures a real screenshot from its pixels rather
+  than describing it: the exact palette and how many distinct colours a screen
+  actually uses, true WCAG contrast ratios for the colour pairs present,
+  whitespace and density, and structural detections (left-edge alignment,
+  vertical rhythm, off-grid gaps) each carrying a confidence level. Findings
+  describe the image, never the interface's semantics, and anything below its
+  confidence threshold is not reported at all.
+- **Self-contained HTML report** — the measurement renders to a single
+  standalone document with no external requests, readable in light and dark,
+  that you can open, keep and share.
+- **Pure-Node PNG decoding** (`src/png.ts`) built on `node:zlib` — truecolour,
+  greyscale, palette with tRNS, 8- and 16-bit, all five scanline filters. No new
+  dependencies. Unsupported input (JPEG, interlaced, truncated) is refused with
+  a named reason instead of producing wrong pixels.
+
+### Changed
+
+- `critique_screenshot` and `design_review` now measure a screenshot before
+  judging it, so a critique cites "2.9:1, AA needs 4.5" instead of "contrast
+  looks weak".
+- Colour distance and clustering moved to `src/colorutil.ts`, shared by the
+  screenshot measurement and `audit_design_system` — "23 colours in your CSS"
+  and "23 colours on your screen" are now counted by the same rule.
+- **27 tools** in total.
+
+### Testing
+
+- Fixtures are synthesised in-test by a PNG *encoder*, so every assertion
+  checks an exactly known answer rather than an approximation. Two
+  false-positive guards protect the positioning: a perfectly aligned layout must
+  report a single edge, and an anti-aliased edge — which produces two adjacent
+  peaks above threshold — must merge into one.
+
 ## [0.15.0] — 2026-07-24
 
 An audit-and-repair release: three bugs were silently degrading the flagship

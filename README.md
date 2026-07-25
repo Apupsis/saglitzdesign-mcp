@@ -9,7 +9,7 @@ expert‑level guidance on **web, iOS, Android and macOS design** — plus the
 **UX, copywriting, SEO, GEO and marketing** knowledge that makes a product
 actually convert.
 
-83 curated knowledge documents · 26 tools · 8 build/review/port workflows · MCP resources with id autocomplete · a one‑call design‑system builder · real token/color/type/elevation/motion/a11y generators · design & UX‑copy linters · production component recipes · phased roadmaps · real‑world visual examples
+83 curated knowledge documents · 27 tools · 8 build/review/port workflows · MCP resources with id autocomplete · a one‑call design‑system builder · real token/color/type/elevation/motion/a11y generators · design & UX‑copy linters · production component recipes · phased roadmaps · real‑world visual examples
 
 [![npm](https://img.shields.io/npm/v/saglitzdesign-mcp?color=cb3837&logo=npm)](https://www.npmjs.com/package/saglitzdesign-mcp)
 [![CI](https://github.com/HalidSaglam/saglitzdesign-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/HalidSaglam/saglitzdesign-mcp/actions/workflows/ci.yml)
@@ -77,7 +77,7 @@ critique rubric, and iterates until it passes.
 | **`build_landing_page`** | Designs & builds a conversion‑focused landing page, copy‑first, with a visual critique loop. |
 | **`build_website`** | Builds a multi‑page marketing site — positioning, IA, SEO/GEO, shared design system. |
 | **`build_mobile_app_ui`** | Builds iOS or Android screens on the correct platform baseline (HIG/Liquid Glass or Material 3). |
-| **`critique_screenshot`** | Grounded, reproducible critique of an attached UI screenshot against the fixed 0–40 rubric — cites specific elements, no padding. |
+| **`critique_screenshot`** | **Measures the screenshot, then critiques it** against the fixed 0–40 rubric — cites real ratios and colour counts, specific elements, no padding. |
 | **`review_paywall`** | Scores a paywall / subscription onboarding against real RevenueCat 2026 conversion benchmarks. |
 | **`design_review`** | Audits an existing site/app — runs the deterministic auditors first, so findings lead with measured numbers, then the checklists and the 0–40 rubric, ranked by severity. |
 | **`redesign`** | Improves an existing UI (bolder / quieter / higher‑converting) using the craft standards, with a **measured** before→after (consistency score, critique score, lint findings, contrast failures). |
@@ -115,6 +115,7 @@ critique rubric, and iterates until it passes.
 | **`generate_layout_system`** | Breakpoints (with what changes at each), container widths, a column grid, an intrinsic auto‑fit grid, container queries, and a fluid section‑rhythm scale — CSS variables + Tailwind v4. |
 | **`generate_motion`** | Easing + duration tokens and ready‑to‑paste keyframe animations (fade/slide/scale/spring/shimmer) in CSS, Framer Motion, or SwiftUI — reduced‑motion included. |
 | **`design_lint`** | Lints an HTML/CSS/JSX/Tailwind snippet for design & a11y anti‑patterns (hardcoded values, killed focus, missing alt/labels, clickable divs, unlabelled inputs…) with line numbers and fixes. Tag‑aware, so formatting never changes the verdict. |
+| **`measure_screenshot`** | **Measures your actual screen.** Give it a PNG and it reports the real palette and colour count, true WCAG contrast ratios for the pairs on screen, density, and structural detections (alignment, rhythm, off‑grid gaps) each with a confidence level — plus a self‑contained HTML report you can open and share. Pure‑Node PNG decoding, no network, no dependencies. |
 | **`audit_design_system`** | **Is there actually a system here?** Point it at real CSS/JSX and get a consistency score plus the sprawl behind it: how many distinct colors, sizes, radii, shadows and spacings are in use, which colors are indistinguishable duplicates, what's off the 4pt grid, token adoption — and a consolidation plan. |
 | **`audit_ux_copy`** | Objective copy audit — readability (Flesch), sentence length, passive voice, jargon, filler, user‑focus, weak CTAs — with flagged phrases and fixes. |
 | **`list_design_knowledge`** | Browse the full knowledge index by category / platform. |
