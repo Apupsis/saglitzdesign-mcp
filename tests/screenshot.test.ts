@@ -105,3 +105,81 @@ describe("contrast measurement", () => {
     expect(r.contrast[1].fg).toBe("#4f46e5");
   });
 });
+
+describe("structure detection", () => {
+  it("detects a single consistent left edge for an aligned layout", () => {
+    const img = canvas(200, 200, WHITE, [
+      { x: 32, y: 20, w: 120, h: 12, rgb: INK },
+      { x: 32, y: 60, w: 100, h: 12, rgb: INK },
+      { x: 32, y: 100, w: 140, h: 12, rgb: INK },
+    ]);
+    const edges = measure(img).structure.leftEdges;
+    expect(edges).not.toBeNull();
+    expect(edges!.value).toEqual([32]);
+  });
+
+  it("FALSE-POSITIVE GUARD: a perfectly aligned layout reports one edge, never several", () => {
+    const rects = Array.from({ length: 8 }, (_, i) => ({ x: 24, y: 10 + i * 24, w: 150, h: 12, rgb: INK }));
+    const img = canvas(300, 300, WHITE, rects);
+    const edges = measure(img).structure.leftEdges!;
+    expect(edges.value).toHaveLength(1);
+    expect(edges.value[0]).toBe(24);
+  });
+
+  it("FALSE-POSITIVE GUARD: an anti-aliased edge is one edge, not two", () => {
+    // Real text and shapes are anti-aliased: the transition spans a couple of
+    // columns. Those must merge into a single detected edge, or every screen
+    // would look misaligned to us.
+    const MID: [number, number, number] = [136, 140, 147];
+    const rects: Array<{ x: number; y: number; w: number; h: number; rgb: [number, number, number] }> = [];
+    for (let i = 0; i < 6; i++) {
+      rects.push({ x: 31, y: 20 + i * 30, w: 1, h: 14, rgb: MID });   // AA column
+      rects.push({ x: 32, y: 20 + i * 30, w: 120, h: 14, rgb: INK }); // solid
+    }
+    const img = canvas(300, 220, WHITE, rects);
+    const edges = measure(img).structure.leftEdges!;
+    expect(edges.value).toHaveLength(1);
+  });
+
+  it("detects genuinely different left edges", () => {
+    const img = canvas(300, 300, WHITE, [
+      { x: 16, y: 20, w: 150, h: 80, rgb: INK },
+      { x: 24, y: 110, w: 150, h: 80, rgb: INK },
+      { x: 40, y: 200, w: 150, h: 80, rgb: INK },
+    ]);
+    const edges = measure(img).structure.leftEdges!;
+    expect(edges.value).toEqual([16, 24, 40]);
+  });
+
+  it("reports gaps and flags the ones off a 4px grid", () => {
+    const img = canvas(100, 100, WHITE, [
+      { x: 10, y: 20, w: 80, h: 10, rgb: INK },  // gap above: rows 0..19 = 20
+      { x: 10, y: 50, w: 80, h: 10, rgb: INK },  // gap between: rows 30..49 = 20
+    ]);                                           // gap below: rows 60..99 = 40
+    const s = measure(img).structure;
+    expect(s.gaps!.value).toEqual([20, 20, 40]);
+    expect(s.offGridGaps).toEqual([]);
+  });
+
+  it("halves reported lengths at scale 2", () => {
+    const img = canvas(200, 200, WHITE, [{ x: 32, y: 40, w: 120, h: 120, rgb: INK }]);
+    const one = measure(img, { scale: 1 }).structure.leftEdges!.value[0];
+    const two = measure(img, { scale: 2 }).structure.leftEdges!.value[0];
+    expect(one).toBe(32);
+    expect(two).toBe(16);
+  });
+
+  it("attaches a confidence level and support fraction", () => {
+    const img = canvas(200, 200, WHITE, [{ x: 32, y: 0, w: 120, h: 200, rgb: INK }]);
+    const edges = measure(img).structure.leftEdges!;
+    expect(edges.confidence).toBe("high");
+    expect(edges.support).toBeGreaterThanOrEqual(0.25);
+  });
+
+  it("reports nothing when there is nothing to detect", () => {
+    const img = canvas(100, 100, WHITE);
+    const s = measure(img).structure;
+    expect(s.leftEdges).toBeNull();
+    expect(s.gaps).toBeNull();
+  });
+});
