@@ -114,3 +114,15 @@ describe("prompt workflows", () => {
     expect(text).toMatch(/do NOT port/i);
   });
 });
+
+describe("workflows measure before they judge", () => {
+  it("critique_screenshot measures the image first", () => {
+    const text = buildPromptText("critique_screenshot");
+    expect(text).toContain("measure_screenshot");
+    expect(text).toMatch(/measure.*before|first/i);
+  });
+
+  it("design_review offers measurement for screenshots", () => {
+    expect(buildPromptText("design_review")).toContain("measure_screenshot");
+  });
+});
