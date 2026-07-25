@@ -17,7 +17,7 @@ const TOOL_NAMES = [
   "get_component_recipe", "generate_color_system", "suggest_font_pairing", "fix_contrast",
   "suggest_icon_library", "generate_type_scale", "generate_elevation_system", "generate_motion",
   "design_lint", "audit_ux_copy", "create_design_system", "audit_design_system",
-  "generate_layout_system", "compare_design_languages",
+  "generate_layout_system", "compare_design_languages", "measure_screenshot",
 ];
 
 const allText = PROMPT_NAMES.map((n: string) => buildPromptText(n, "a test brief")).join("\n\n");
