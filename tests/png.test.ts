@@ -95,3 +95,46 @@ describe("PNG decoding — other colour types", () => {
     expect(px(img, 0, 0)).toBe("#113355");
   });
 });
+
+describe("PNG decoding — refusals", () => {
+  const expectCode = (fn: () => unknown, code: string) => {
+    try {
+      fn();
+    } catch (e) {
+      expect((e as { code?: string }).code, `expected code ${code}`).toBe(code);
+      return;
+    }
+    throw new Error(`expected a PngError with code ${code}, but nothing was thrown`);
+  };
+
+  it("names a JPEG specifically", () => {
+    expectCode(() => decodePng(Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0])), "jpeg-unsupported");
+  });
+
+  it("rejects a non-PNG", () => {
+    expectCode(() => decodePng(Buffer.from("not an image at all")), "not-png");
+  });
+
+  it("rejects interlaced PNGs instead of decoding them wrongly", () => {
+    const buf = encodePng({ width: 2, height: 1, colorType: 2, bitDepth: 8, rows: [[1, 2, 3, 4, 5, 6]], interlace: 1 });
+    expectCode(() => decodePng(buf), "interlace-unsupported");
+  });
+
+  it("rejects an unsupported bit depth", () => {
+    const buf = encodePng({ width: 2, height: 1, colorType: 2, bitDepth: 4, rows: [[1, 2, 3]] });
+    expectCode(() => decodePng(buf), "bitdepth-unsupported");
+  });
+
+  it("rejects a truncated file", () => {
+    const good = encodePng({ width: 2, height: 1, colorType: 2, bitDepth: 8, rows: [[1, 2, 3, 4, 5, 6]] });
+    expectCode(() => decodePng(good.subarray(0, good.length - 12)), "corrupt");
+  });
+
+  it("carries a human-readable message alongside the code", () => {
+    try {
+      decodePng(Buffer.from([0xff, 0xd8, 0xff]));
+    } catch (e) {
+      expect((e as Error).message).toMatch(/PNG/);
+    }
+  });
+});

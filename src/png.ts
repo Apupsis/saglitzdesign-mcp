@@ -48,6 +48,7 @@ export function decodePng(buffer: Buffer): DecodedImage {
   }
 
   let ihdr: Buffer | null = null, plte: Buffer | null = null, trns: Buffer | null = null;
+  let sawIend = false;
   const idat: Buffer[] = [];
   let off = 8;
   while (off + 8 <= buffer.length) {
@@ -60,11 +61,15 @@ export function decodePng(buffer: Buffer): DecodedImage {
     else if (type === "PLTE") plte = Buffer.from(data);
     else if (type === "tRNS") trns = Buffer.from(data);
     else if (type === "IDAT") idat.push(Buffer.from(data));
-    else if (type === "IEND") break;
+    else if (type === "IEND") { sawIend = true; break; }
     off = start + len + 4;
   }
   if (!ihdr || ihdr.length < 13) throw new PngError("corrupt", "The PNG has no valid header chunk.");
   if (idat.length === 0) throw new PngError("corrupt", "The PNG has no image data.");
+  // A PNG must end with IEND. Its absence is the reliable signal that the file
+  // was truncated — the chunks read so far may look complete and decode into
+  // plausible but incomplete pixels, which is exactly what must not happen.
+  if (!sawIend) throw new PngError("corrupt", "The PNG is truncated (its end-of-image marker is missing).");
 
   const width = ihdr.readUInt32BE(0);
   const height = ihdr.readUInt32BE(4);
