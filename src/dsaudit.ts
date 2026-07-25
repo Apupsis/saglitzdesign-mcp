@@ -7,18 +7,11 @@
 // Deterministic and static: it counts what is written, never runs the code.
 
 import { normalizeHex } from "./tokens.js";
+import { clusterColors, type ValueUse, type ColorCluster } from "./colorutil.js";
 
-export interface ValueUse {
-  value: string;
-  count: number;
-}
-
-export interface ColorCluster {
-  /** the most-used member — the one worth keeping */
-  keep: string;
-  /** the near-identical members that should collapse into `keep` */
-  drop: Array<{ value: string; count: number; distance: number }>;
-}
+// Re-exported so existing consumers of these types keep working; the maths now
+// lives in colorutil.ts and is shared with the screenshot measurement.
+export type { ValueUse, ColorCluster };
 
 export interface DimensionReport {
   id: string;
@@ -93,52 +86,6 @@ function extractLengths(src: string, props: RegExp): string[] {
     }
   }
   return out;
-}
-
-function hexToRgb(hex: string) {
-  const h = hex.slice(1);
-  return { r: parseInt(h.slice(0, 2), 16), g: parseInt(h.slice(2, 4), 16), b: parseInt(h.slice(4, 6), 16) };
-}
-
-/**
- * "Redmean" weighted RGB distance — a cheap, widely used approximation of
- * perceived difference. Range 0 (identical) … ~765 (black vs white).
- */
-function colorDistance(a: string, b: string): number {
-  const x = hexToRgb(a);
-  const y = hexToRgb(b);
-  const rmean = (x.r + y.r) / 2;
-  const dr = x.r - y.r, dg = x.g - y.g, db = x.b - y.b;
-  return Math.sqrt((2 + rmean / 256) * dr * dr + 4 * dg * dg + (2 + (255 - rmean) / 256) * db * db);
-}
-
-/** Below this, two colors are the same color as far as any user is concerned. */
-const INDISTINGUISHABLE = 12;
-
-/**
- * Greedy clustering, most-used color first: each cluster keeps the color that
- * appears most often and lists the near-identical ones that should collapse
- * into it. Clustering (rather than listing pairs) is what makes the output
- * actionable — it says which value survives.
- */
-function clusterColors(colors: ValueUse[]): ColorCluster[] {
-  const clusters: ColorCluster[] = [];
-  const taken = new Set<string>();
-  for (const c of colors) {
-    if (taken.has(c.value)) continue;
-    const drop: ColorCluster["drop"] = [];
-    for (const other of colors) {
-      if (other.value === c.value || taken.has(other.value)) continue;
-      const d = colorDistance(c.value, other.value);
-      if (d <= INDISTINGUISHABLE) {
-        drop.push({ value: other.value, count: other.count, distance: +d.toFixed(1) });
-        taken.add(other.value);
-      }
-    }
-    taken.add(c.value);
-    if (drop.length) clusters.push({ keep: c.value, drop: drop.sort((p, q) => p.distance - q.distance) });
-  }
-  return clusters;
 }
 
 // ── audit ────────────────────────────────────────────────────────────────────
