@@ -3,8 +3,8 @@ import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mc
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
-import { existsSync, readFileSync } from "node:fs";
+import { dirname, join, isAbsolute, resolve, basename } from "node:path";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { loadKnowledge, searchKnowledge, sections, findDoc, platformMatches, type KnowledgeDoc } from "./knowledge.js";
 import { CATEGORIES, PLATFORMS, DESIGN_LANGUAGES, REVIEW_MAP, FOCUS_MAP, ROADMAPS, STALE_DAYS } from "./catalog.js";
 import { loadExamples, searchExamples, imageMime } from "./examples.js";
@@ -26,6 +26,9 @@ import { uxCopyReport } from "./uxcopy.js";
 import { designSystemAuditReport } from "./dsaudit.js";
 import { layoutSystemReport, type LayoutPreset } from "./layout.js";
 import { compareDesignLanguages, COMPARE_TOPICS, COMPARE_PLATFORMS, type CompareTopic, type ComparePlatform } from "./compare.js";
+import { decodePng, PngError, MAX_BYTES } from "./png.js";
+import { measure } from "./screenshot.js";
+import { renderMarkdown, renderHtml } from "./report.js";
 import { createDesignSystem, type DSPlatform } from "./designsystem.js";
 import { normalizeHex } from "./tokens.js";
 
@@ -680,6 +683,61 @@ tool(
         (platforms as ComparePlatform[] | undefined)?.length ? (platforms as ComparePlatform[]) : COMPARE_PLATFORMS,
       ),
     ),
+);
+
+// ── Tool 27: measure a screenshot ────────────────────────────────────────────
+// The only tool that reads a file the caller names. It still makes no network
+// call and writes nothing — it decodes one PNG and reports what the pixels say.
+tool(
+  "measure_screenshot",
+  "Measure a real screenshot from its actual pixels — the exact palette and how many distinct colours it really uses, true WCAG contrast ratios for the colour pairs on screen, whitespace/density, and structural detections (left-edge alignment, vertical rhythm, off-grid gaps) each carrying a confidence level. Returns a markdown measurement and, on request, a self-contained HTML report you can save, open and share. PNG only. Reads the local file you name; makes no network call. Use it before critiquing a UI so the review cites measured numbers instead of impressions; pair with fix_contrast for failing pairs and audit_design_system for the codebase behind the screen.",
+  {
+    path: z.string().describe("Path to a .png screenshot. Absolute paths are strongly preferred — a relative path is resolved against the server's working directory, which is usually not your project folder."),
+    scale: z.number().int().min(1).max(3).optional().describe("Device pixel ratio of the screenshot (default 1). Pass 2 for a Retina/2× capture so lengths are reported in logical px instead of image px."),
+    format: z.enum(["markdown", "html", "both"]).optional().describe("'markdown' (default) for the measurement text, 'html' for a self-contained report document to save and open, 'both' for each."),
+    max_colors: z.number().int().min(4).max(24).optional().describe("How many palette clusters to list (default 12)."),
+  },
+  async ({ path, scale, format, max_colors }) => {
+    const abs = isAbsolute(path) ? path : resolve(process.cwd(), path);
+    let stat;
+    try {
+      stat = statSync(abs);
+    } catch {
+      return text(`There is no file at \`${abs}\`. Pass an absolute path to the .png screenshot.`);
+    }
+    if (!stat.isFile()) return text(`\`${abs}\` is not a file. Pass the path to a .png screenshot.`);
+    if (stat.size > MAX_BYTES) {
+      return text(`\`${abs}\` is ${(stat.size / 1048576).toFixed(1)} MB; the limit is 25 MB. Export a smaller PNG.`);
+    }
+
+    let report;
+    try {
+      const img = decodePng(readFileSync(abs));
+      report = measure(img, { name: basename(abs), scale: scale as 1 | 2 | 3 | undefined, maxColors: max_colors });
+    } catch (err) {
+      if (err instanceof PngError) return text(`Could not read \`${basename(abs)}\`: ${err.message}`);
+      return text(`Could not read \`${basename(abs)}\` as a PNG image.`);
+    }
+
+    const md = renderMarkdown(report);
+    const want = format ?? "markdown";
+    if (want === "markdown") return text(md);
+
+    const html = renderHtml(report, {
+      version: packageVersion(),
+      measuredAt: new Date().toISOString().slice(0, 10),
+    });
+    const htmlBlock =
+      "<!-- saglitzdesign:report:html -->\n" +
+      "Save the document below as a .html file and open it in a browser — it is fully self-contained.\n\n" +
+      html;
+
+    return {
+      content: want === "html"
+        ? [{ type: "text" as const, text: htmlBlock }]
+        : [{ type: "text" as const, text: md }, { type: "text" as const, text: htmlBlock }],
+    };
+  },
 );
 
 // ── resources ────────────────────────────────────────────────────────────────

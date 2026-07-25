@@ -31,6 +31,7 @@ const TOOLKIT = `You have the SaglitzDesign tools available. Use them — do not
 - design_lint(code) — design & a11y anti-patterns with line numbers.
 - audit_design_system(code) — consistency score + value sprawl across the whole codebase.
 - audit_ux_copy(text) — readability, passive voice, jargon, weak CTAs.
+- measure_screenshot(path, scale, format) — measures a PNG screenshot's real palette, contrast ratios, density and structure. Use it whenever you have an image file rather than source.
 - design_review_checklist(project_type, focus) — the assembled audit checklist.`;
 
 const FOUNDATION = `## Foundation before pixels
@@ -182,7 +183,7 @@ Research shows most AI critiques (a) hallucinate issues inconsistently, (b) pad 
 1. **Look at the image first.** Describe what you actually see (layout, hierarchy, the primary action, states shown) before judging. If you're unsure what an element is, say so — don't invent.
 2. **Apply the fixed rubric.** Call get_design_doc("design-critique-scoring") and score each of the 10 heuristics 0–4 for a total /40. Use the SAME rubric every time so scores are reproducible.
 3. **Cite specific elements.** Every finding must point to a concrete element ("the secondary 'Learn more' button competes with the primary CTA — two filled buttons"), not generic advice.
-4. **Measure what can be measured.** If you can read colors off the screenshot, run audit_accessibility on the actual pairs rather than eyeballing contrast, and fix_contrast for anything failing. If copy is legible, run audit_ux_copy on the headline and CTA. A measured finding beats an asserted one.
+4. **Measure before you judge.** If the screenshot exists as a file, call measure_screenshot(path) FIRST and let its numbers drive the critique — the real palette and how many colours the screen actually uses, exact WCAG ratios for the pairs on screen, density, and the structural detections with their confidence. Cite those numbers instead of impressions ("the muted text measures 2.9:1; AA needs 4.5"), and run fix_contrast for each failure. Respect the confidence levels: a medium-confidence detection is a question to check, not a finding to assert. If you only have an inline image and no file path, say so, and fall back to audit_accessibility on any colours you can read plus audit_ux_copy on legible copy.
 5. **No padding.** Report only real issues. If the screen is genuinely good, a short list is the correct answer — do not manufacture findings to seem thorough.
 6. **Rank by severity P0→P3** and give one concrete fix per finding, citing the SaglitzDesign rule/doc it comes from.
 7. If it's a known screen type, also run the matching design_review_checklist and get_design_examples to compare against how top apps handle it.
@@ -222,6 +223,7 @@ ${TOOLKIT}
    - audit_design_system(code) — is there actually a system, or is every screen re-deciding the basics? This is the finding senior reviewers make and juniors miss.
    - audit_accessibility on the real color pairs and target sizes; fix_contrast for each failure.
    - audit_ux_copy on the primary headlines, CTAs and error messages.
+   - measure_screenshot(path) — when you are reviewing a screenshot file rather than source, this is the equivalent of the auditors above: real palette, real contrast ratios, real spacing.
 3. Run design_review_checklist for that type, plus a focused pass where it matters (accessibility, conversion, seo, copywriting).
 4. Score against get_design_doc("design-critique-scoring") (0–40) with per-heuristic notes.
 5. Report findings ranked by severity (P0→P3): what's wrong, why (cite the rule/doc, or the measured number), and the concrete fix. Separate "must fix" from "polish". Lead with anything the tools measured — a stated ratio of 2.9:1 or a score of 41/100 ends an argument that an opinion cannot.

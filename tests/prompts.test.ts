@@ -17,7 +17,7 @@ const TOOL_NAMES = [
   "get_component_recipe", "generate_color_system", "suggest_font_pairing", "fix_contrast",
   "suggest_icon_library", "generate_type_scale", "generate_elevation_system", "generate_motion",
   "design_lint", "audit_ux_copy", "create_design_system", "audit_design_system",
-  "generate_layout_system", "compare_design_languages",
+  "generate_layout_system", "compare_design_languages", "measure_screenshot",
 ];
 
 const allText = PROMPT_NAMES.map((n: string) => buildPromptText(n, "a test brief")).join("\n\n");
@@ -112,5 +112,17 @@ describe("prompt workflows", () => {
     const text = buildPromptText("port_to_platform");
     expect(text).toContain("compare_design_languages");
     expect(text).toMatch(/do NOT port/i);
+  });
+});
+
+describe("workflows measure before they judge", () => {
+  it("critique_screenshot measures the image first", () => {
+    const text = buildPromptText("critique_screenshot");
+    expect(text).toContain("measure_screenshot");
+    expect(text).toMatch(/measure.*before|first/i);
+  });
+
+  it("design_review offers measurement for screenshots", () => {
+    expect(buildPromptText("design_review")).toContain("measure_screenshot");
   });
 });

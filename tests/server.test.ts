@@ -1,7 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { join } from "node:path";
+import { writeFileSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { encodePng, canvasRows } from "./helpers/pngFixture.js";
 
 // End-to-end smoke test over the real stdio server. Everything else in the
 // suite tests pure functions; this is the layer that proves the 23 tools are
@@ -9,6 +12,14 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 // cannot see.
 
 const root = join(__dirname, "..");
+
+// A PNG with pixels we chose, written where the server can read it.
+const fixtureDir = mkdtempSync(join(tmpdir(), "saglitz-shot-"));
+const fixturePath = join(fixtureDir, "fixture.png");
+writeFileSync(fixturePath, encodePng({
+  width: 60, height: 60, colorType: 2, bitDepth: 8,
+  rows: canvasRows(60, 60, [255, 255, 255], [{ x: 10, y: 10, w: 40, h: 10, rgb: [17, 24, 39] }]),
+}));
 
 /**
  * One representative call per tool. Adding a tool without adding a case here
@@ -41,6 +52,7 @@ const SMOKE: Record<string, Record<string, unknown>> = {
   audit_design_system: { code: ":root{--a:#fff}\n.a{color:#111;border-radius:4px}\n.b{color:#112;border-radius:5px}" },
   generate_layout_system: { preset: "marketing-site" },
   compare_design_languages: { topic: "navigation" },
+  measure_screenshot: { path: fixturePath, format: "both" },
 };
 
 let client: Client;
@@ -177,4 +189,46 @@ describe("input validation", () => {
     })) as { content?: Array<{ type: string; text?: string }> };
     expect(textOf(result)).toMatch(/id: web-hero-sections/);
   });
+});
+
+describe("measure_screenshot", () => {
+  it("returns a markdown measurement and an HTML document", async () => {
+    const result = (await client.callTool({
+      name: "measure_screenshot",
+      arguments: { path: fixturePath, format: "both" },
+    })) as { content?: Array<{ type: string; text?: string }> };
+    const blocks = (result.content ?? []).map((c) => c.text ?? "");
+    expect(blocks[0]).toContain("Screenshot measurement");
+    expect(blocks[0]).toContain("#111827");
+    expect(blocks.join("\n")).toContain("<!-- saglitzdesign:report:html -->");
+    expect(blocks.join("\n")).toContain("<!doctype html>");
+  }, 20_000);
+
+  it("returns only markdown by default", async () => {
+    const result = (await client.callTool({
+      name: "measure_screenshot",
+      arguments: { path: fixturePath },
+    })) as { content?: Array<{ type: string; text?: string }> };
+    expect(result.content).toHaveLength(1);
+    expect(result.content![0].text).not.toContain("<!doctype html>");
+  }, 20_000);
+
+  it("explains a missing file by naming the resolved path", async () => {
+    const result = (await client.callTool({
+      name: "measure_screenshot",
+      arguments: { path: "does-not-exist.png" },
+    })) as { content?: Array<{ type: string; text?: string }> };
+    expect(result.content![0].text).toMatch(/no file at/i);
+    expect(result.content![0].text).toContain("does-not-exist.png");
+  }, 20_000);
+
+  it("tells the user to convert a JPEG rather than failing obscurely", async () => {
+    const jpeg = join(fixtureDir, "fake.jpg");
+    writeFileSync(jpeg, Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0]));
+    const result = (await client.callTool({
+      name: "measure_screenshot",
+      arguments: { path: jpeg },
+    })) as { content?: Array<{ type: string; text?: string }> };
+    expect(result.content![0].text).toMatch(/PNG/);
+  }, 20_000);
 });
