@@ -29,6 +29,7 @@ import { compareDesignLanguages, COMPARE_TOPICS, COMPARE_PLATFORMS, type Compare
 import { decodePng, PngError, MAX_BYTES } from "./png.js";
 import { measure } from "./screenshot.js";
 import { renderMarkdown, renderHtml } from "./report.js";
+import { importTokensReport } from "./importtokens.js";
 import { createDesignSystem, type DSPlatform } from "./designsystem.js";
 import { normalizeHex } from "./tokens.js";
 
@@ -738,6 +739,20 @@ tool(
         : [{ type: "text" as const, text: md }, { type: "text" as const, text: htmlBlock }],
     };
   },
+);
+
+// ── Tool 28: import design tokens ────────────────────────────────────────────
+// The inverse of generate_design_tokens, for the majority of projects that
+// already have a design system and do not want a second one.
+tool(
+  "import_design_tokens",
+  "Read an EXISTING design system and convert it: paste CSS custom properties (a Tailwind v4 @theme block, a shadcn :root block, plain CSS), a W3C DTCG token file, or a theme object as JSON, and get back the roles it names, the semantic roles it is missing, a WCAG contrast check on the pairs it defines, and the whole set re-emitted as CSS / Tailwind / SwiftUI / Compose / DTCG. The inverse of generate_design_tokens — use it to take a web theme to iOS or Android, to audit an inherited system, or to see what a third-party theme leaves undefined. Only NAMED tokens are read; a bare hex inside a rule carries no role and is never imported as one (use audit_design_system to count those). JavaScript configs are never evaluated.",
+  {
+    source: z.string().describe("The token source: CSS custom properties, DTCG JSON, or a theme object as JSON. The format is detected automatically."),
+    format: z.enum(["css", "tailwind", "swiftui", "compose", "dtcg", "all"]).optional().describe("Format to re-emit in (default 'all'). Use 'swiftui' or 'compose' to take a web theme to native."),
+    name: z.string().optional().describe("Token set / brand name for the emitted artifacts (default 'Imported')"),
+  },
+  async ({ source, format, name }) => text(importTokensReport(source, (format as TokenFormat) ?? "all", name || "Imported")),
 );
 
 // ── resources ────────────────────────────────────────────────────────────────

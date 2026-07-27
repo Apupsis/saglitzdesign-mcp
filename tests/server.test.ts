@@ -53,6 +53,7 @@ const SMOKE: Record<string, Record<string, unknown>> = {
   generate_layout_system: { preset: "marketing-site" },
   compare_design_languages: { topic: "navigation" },
   measure_screenshot: { path: fixturePath, format: "both" },
+  import_design_tokens: { source: ":root{--color-primary:#4f46e5;--color-surface:#ffffff}", format: "css" },
 };
 
 let client: Client;

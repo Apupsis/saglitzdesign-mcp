@@ -40,7 +40,7 @@ Do NOT hand-pick hex values, font sizes, radii or shadows. Generate the system, 
 2. Call **create_design_system(brand_color, vibe, platform)** — this returns an accessibility-verified palette (light + dark), a matched font pairing, an icon library, a type scale, an elevation ramp, paste-ready tokens, and the component list to build.
 3. For web/app layout, also call **generate_layout_system(preset)** and use its breakpoints, container widths, grid and section-rhythm tokens.
 4. Emit the tokens into the codebase as the single source of truth, then reference them everywhere. Every later value you write should be a token, not a literal.
-If the user already has a design system, run **audit_design_system(code)** on it first and build inside what exists instead of introducing a second system.`;
+If the user already has a design system, do NOT introduce a second one: run **import_design_tokens(source)** on their theme (CSS custom properties, a shadcn :root block, a DTCG file) to read the roles it already names and see which ones it leaves undefined, and **audit_design_system(code)** on the stylesheet to see what is still hardcoded. Build inside what exists.`;
 
 const VERIFY_GATE = `## Verify gate (deterministic — run before you say it's done)
 These are machine-checkable. Do not skip them and do not self-assess in their place:
@@ -270,7 +270,7 @@ Share the intent, the information architecture and the content; re-implement eve
 1. Confirm the source and target platforms and the screens in scope. Ask up to 3 questions if unclear.
 2. Load the target baseline with get_design_language (ios-app-design + apple-hig-liquid-glass · android-app-design + material-3 · macos-app-design · web-trends-2026).
 3. **Inventory the surfaces** in the source UI (navigation, buttons, modals/sheets, forms, lists, search, settings, motion, icons, typography, color, elevation) and for EACH one call compare_design_languages(topic, [source, target]). Follow its porting rules and honor its "do NOT port" list explicitly — call out anything in the source design that appears on that list.
-4. **Re-map the tokens, don't copy them.** Port the semantic roles (background/surface/border/text/primary/on-primary) and regenerate platform-appropriate output with create_design_system or generate_design_tokens — point sizes, touch targets and elevation mechanics differ per platform and must be recomputed, not translated.
+4. **Re-map the tokens, don't copy them.** If the source platform already has a theme, run **import_design_tokens(source, format: "swiftui" | "compose" | "css")** — it reads the roles the existing system names and re-emits them for the target, and tells you which roles it never defined. Otherwise regenerate with create_design_system. Either way, point sizes, touch targets and elevation mechanics differ per platform and must be recomputed, not translated.
 5. **Build the target screens** with get_component_recipe(component, stack) for the target's native stack, and get_component_guidance(component, platform) for the rest.
 6. Design every state again on the target — empty/loading/error behavior is platform-specific, not inherited.
 

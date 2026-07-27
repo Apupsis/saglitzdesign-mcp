@@ -17,7 +17,7 @@ const TOOL_NAMES = [
   "get_component_recipe", "generate_color_system", "suggest_font_pairing", "fix_contrast",
   "suggest_icon_library", "generate_type_scale", "generate_elevation_system", "generate_motion",
   "design_lint", "audit_ux_copy", "create_design_system", "audit_design_system",
-  "generate_layout_system", "compare_design_languages", "measure_screenshot",
+  "generate_layout_system", "compare_design_languages", "measure_screenshot", "import_design_tokens",
 ];
 
 const allText = PROMPT_NAMES.map((n: string) => buildPromptText(n, "a test brief")).join("\n\n");
@@ -124,5 +124,19 @@ describe("workflows measure before they judge", () => {
 
   it("design_review offers measurement for screenshots", () => {
     expect(buildPromptText("design_review")).toContain("measure_screenshot");
+  });
+});
+
+describe("existing design systems are respected, not replaced", () => {
+  it("build workflows import an existing theme before generating a new one", () => {
+    for (const name of ["build_landing_page", "build_website", "build_mobile_app_ui"]) {
+      const text = buildPromptText(name);
+      expect(text, name).toContain("import_design_tokens");
+      expect(text, `${name}: must not introduce a second system`).toMatch(/do NOT introduce a second one/);
+    }
+  });
+
+  it("porting re-emits the existing tokens for the target platform", () => {
+    expect(buildPromptText("port_to_platform")).toContain("import_design_tokens");
   });
 });
