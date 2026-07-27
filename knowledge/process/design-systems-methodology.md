@@ -148,7 +148,7 @@ A design system is a long-term investment with real ongoing cost. Do not build o
 - **One team, one codebase, low change rate.** The coordination overhead of a "system" only pays off across multiple teams, products, or platforms. Below that threshold, shared components in the repo are enough.
 - **You lack ownership.** A system with no dedicated maintainer and no governance decays faster than ad hoc UI, and now everyone distrusts it. If no one can own it, do not start it.
 - **You would be building it speculatively.** Extract the system from real, repeated patterns you have already shipped. Build components on the second or third real need, not on the first guess. Premature abstraction is the most common design-system failure.
-- **A capable off-the-shelf system already fits.** If Material, an Apple/HIG native kit, shadcn/ui, or a vendor system covers your needs, adopt and theme it rather than reinventing. Building your own is justified only when your brand or product constraints genuinely exceed what an existing system offers.
+- **A capable off-the-shelf system already fits.** If Material, an Apple/HIG native kit, shadcn/ui, or a vendor system covers your needs, adopt and theme it rather than reinventing (see [[theming-off-the-shelf]] for how). Building your own is justified only when your brand or product constraints genuinely exceed what an existing system offers.
 
 ## Tooling pipeline
 

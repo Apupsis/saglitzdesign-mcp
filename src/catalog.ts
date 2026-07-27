@@ -63,7 +63,7 @@ export const REVIEW_MAP: Record<string, string[]> = {
   ],
   dashboard: [
     "navigation", "web-dashboards", "cards-lists-modals", "data-visualization", "design-systems-methodology",
-    "information-architecture", "principles-heuristics", "typography", "color-systems", "spacing-layout", "accessibility",
+    "information-architecture", "theming-off-the-shelf", "principles-heuristics", "typography", "color-systems", "spacing-layout", "accessibility",
     "buttons", "forms-inputs", "visual-craft-standards", "clean-app-design", "iconography", "ux-writing",
     "i18n-localization", "ai-product-ux", "ethical-design",
   ],
@@ -164,7 +164,7 @@ export const ROADMAPS: Record<string, Roadmap> = {
       { title: "1. Discovery & jobs", goal: "Core workflows ranked; jobs-to-be-done; success metric per workflow", docs: ["product-design-roadmap", "value-proposition-jtbd", "positioning-messaging"] },
       { title: "2. IA & app shell", goal: "Sidebar structure, command palette, breadcrumbs", docs: ["information-architecture", "navigation", "web-dashboards"] },
       { title: "3. Wireframes, copy & edge states", goal: "Real data shapes; empty/loading/error/zero-results for every view", docs: ["ux-writing", "cards-lists-modals", "mobile-empty-states-buttons", "i18n-localization"] },
-      { title: "4. Design system & data-viz", goal: "Token system + governance; density mode; tables/forms/charts standardized", docs: ["design-systems-methodology", "data-visualization", ...CORE_FOUNDATION, "forms-inputs", "buttons"] },
+      { title: "4. Design system & data-viz", goal: "Token system + governance; density mode; tables/forms/charts standardized", docs: ["design-systems-methodology", "theming-off-the-shelf", "data-visualization", ...CORE_FOUNDATION, "forms-inputs", "buttons"] },
       { title: "5. Hi-fi & craft", goal: "Dense screens first; keyboard support; dark mode; clean & maintainable", docs: [...CORE_CRAFT, "clean-app-design", "design-engineering", "ai-product-ux", "motion-microinteractions", "principles-heuristics"] },
       { title: "6. Pricing, onboarding & retention", goal: "Value-based pricing; time-to-value <60s; activation instrumented; honest, non-manipulative flows", docs: ["pricing-strategy", "web-pricing-sections", "mobile-onboarding-paywall", "hooked-retention", "growth-frameworks", "conversion-ux", "email-marketing", "ethical-design"] },
       { title: "7. Validate & iterate", goal: "Task-based tests; heuristic score; clean design→dev handoff; metrics + experiments", docs: [...CORE_VALIDATE, "design-handoff", "analytics-experimentation"] },

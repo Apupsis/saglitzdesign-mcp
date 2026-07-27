@@ -9,7 +9,7 @@ expert‑level guidance on **web, iOS, Android and macOS design** — plus the
 **UX, copywriting, SEO, GEO and marketing** knowledge that makes a product
 actually convert.
 
-83 curated knowledge documents · 27 tools · 8 build/review/port workflows · MCP resources with id autocomplete · a one‑call design‑system builder · real token/color/type/elevation/motion/a11y generators · design & UX‑copy linters · production component recipes · phased roadmaps · real‑world visual examples
+84 curated knowledge documents · 28 tools · 8 build/review/port workflows · MCP resources with id autocomplete · a one‑call design‑system builder · real token/color/type/elevation/motion/a11y generators · design & UX‑copy linters · production component recipes · phased roadmaps · real‑world visual examples
 
 [![npm](https://img.shields.io/npm/v/saglitzdesign-mcp?color=cb3837&logo=npm)](https://www.npmjs.com/package/saglitzdesign-mcp)
 [![CI](https://github.com/HalidSaglam/saglitzdesign-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/HalidSaglam/saglitzdesign-mcp/actions/workflows/ci.yml)
@@ -46,7 +46,7 @@ instead of guessing.
 
 ## What's inside
 
-**83 knowledge documents across 10 categories:**
+**84 knowledge documents across 10 categories:**
 
 | Category | Coverage |
 |---|---|
@@ -103,6 +103,7 @@ critique rubric, and iterates until it passes.
 | **`get_design_examples`** | Curated real‑world examples of a pattern from top apps/sites, with notes on what each does well. (Screenshots are a local‑only asset — see [Visual examples](#visual-examples).) |
 | **`design_review_checklist`** | An assembled audit checklist per project type and focus (UI, UX, accessibility, SEO, GEO, conversion, copywriting). |
 | **`seo_geo_guide`** | SEO and GEO guides, optionally narrowed to a topic. |
+| **`import_design_tokens`** | **Already have a design system?** Paste your CSS custom properties, shadcn `:root` block, DTCG file or theme JSON and get back the roles it names, the roles it leaves undefined, a WCAG check on the pairs it defines, and the whole set re‑emitted as CSS / Tailwind / SwiftUI / Compose / DTCG. The inverse of `generate_design_tokens` — take a web theme to iOS, or audit an inherited one. Only *named* tokens are read; JS configs are never evaluated. |
 | **`generate_design_tokens`** | **Real artifacts, not advice** — turns a color/spacing/type spec into CSS variables, Tailwind v4, SwiftUI, Jetpack Compose, and W3C DTCG JSON. |
 | **`audit_accessibility`** | Deterministic WCAG 2.2 checks — exact contrast ratios for color pairs + tap‑target sizes per platform, with fixes. |
 | **`get_component_recipe`** | Production‑ready, accessible reference **code** for a component (button, input, modal, toast, card, switch, tabs, empty‑state, list‑row) in react‑tailwind, html‑css, SwiftUI, or Compose — all states, ARIA, keyboard, correct motion. |
