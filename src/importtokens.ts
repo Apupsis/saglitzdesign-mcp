@@ -350,10 +350,30 @@ export function importTokensReport(source: string, format: TokenFormat = "all", 
   const texts = Object.entries(t.colors).filter(([k]) => TEXT_ROLES.test(k));
   const surfaces = Object.entries(t.colors).filter(([k]) => SURFACE_ROLES.test(k) && !TEXT_ROLES.test(k));
   const pairs: Array<{ fg: string; bg: string; fgHex: string; bgHex: string; ratio: number }> = [];
+  const add = (fg: string, fgHex: string, bg: string, bgHex: string) =>
+    pairs.push({ fg, bg, fgHex, bgHex, ratio: +contrastRatio(fgHex, bgHex).toFixed(2) });
+
   for (const [fg, fgHex] of texts) {
-    for (const [bg, bgHex] of surfaces) {
-      pairs.push({ fg, bg, fgHex, bgHex, ratio: +contrastRatio(fgHex, bgHex).toFixed(2) });
+    // The paired convention states its own background, and whether the text
+    // also appears elsewhere depends on what it is paired WITH:
+    //
+    //   `primary-foreground` belongs to a fill. It sits on `primary` and
+    //   nowhere else — checking it against the page manufactures a failure
+    //   that does not exist in the design, and being the worst "pair" it would
+    //   capture the repair suggestion too.
+    //
+    //   `muted-foreground` belongs to a surface. It is secondary body text and
+    //   is used across page surfaces, so checking it only against `muted`
+    //   would hide the most common real failure in the ecosystem.
+    const owner = fg.match(/^(.+)-foreground$/)?.[1];
+    if (owner && t.colors[owner]) {
+      add(fg, fgHex, owner, t.colors[owner]);
+      if (SURFACE_ROLES.test(owner)) {
+        for (const [bg, bgHex] of surfaces) if (bg !== owner) add(fg, fgHex, bg, bgHex);
+      }
+      continue;
     }
+    for (const [bg, bgHex] of surfaces) add(fg, fgHex, bg, bgHex);
   }
   if (pairs.length) {
     pairs.sort((a, b) => a.ratio - b.ratio);

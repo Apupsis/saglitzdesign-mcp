@@ -4,6 +4,47 @@ All notable changes to SaglitzDesign MCP are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.17.0] — 2026-07-27
+
+### Added
+
+- **`import_design_tokens`** — the inverse `generate_design_tokens` never had.
+  Reads CSS custom properties (a Tailwind v4 `@theme` block, a shadcn `:root`
+  block, plain CSS), a W3C DTCG token file, or a theme object as JSON, and
+  returns the roles it names, the semantic roles it leaves undefined, a WCAG
+  contrast check on the pairs it defines, and the whole set re-emitted as CSS /
+  Tailwind / SwiftUI / Compose / DTCG. Until now the server only served
+  greenfield projects; this one meets a codebase that already has a system.
+- **`theming-off-the-shelf`** knowledge doc — how to theme shadcn/ui, Radix,
+  Material and native kits with your own tokens instead of rebuilding them.
+  `design-systems-methodology` had told people to adopt and theme rather than
+  reinvent without ever saying how. 84 documents.
+
+### Changed
+
+- Build workflows now import an existing theme before generating a new one, and
+  `port_to_platform` re-emits the tokens a project already has for the target
+  platform rather than starting over.
+- **28 tools** in total.
+
+### Deliberately not added
+
+shadcn/ui component recipes. `design-systems-methodology` lists "reinventing an
+off-the-shelf system" among its anti-patterns and names shadcn/ui specifically;
+shipping our own competing button would contradict our own published guidance,
+and it would be worse maintained than the one `npx shadcn add button` gives you.
+The useful thing for those users is knowing how to theme what they already have,
+which is the knowledge doc above.
+
+### Notes
+
+Only *named* tokens are read — CSS custom properties, DTCG entries and theme
+keys carry a role; a bare `color: #4f46e5` inside a rule does not, and is never
+imported as one. JavaScript configs are never evaluated. Text roles are
+classified before surfaces: shadcn names its text roles `muted-foreground` and
+`primary-foreground`, and matching surfaces first filed the most common failing
+text colour in the ecosystem as a background.
+
 ## [0.16.0] — 2026-07-25
 
 ### Added

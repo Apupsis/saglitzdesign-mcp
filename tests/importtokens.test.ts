@@ -213,3 +213,45 @@ describe("text vs surface classification", () => {
     expect(report).toMatch(/fix_contrast\(foreground: "#a1a1aa", background: "#f4f4f5"\)/);
   });
 });
+
+describe("paired conventions state their own background", () => {
+  const PAIRED = `:root{
+    --background:#ffffff; --foreground:#0a0a0a;
+    --primary:#18181b; --primary-foreground:#fafafa;
+  }`;
+
+  it("checks a FILL text role only against its fill, not against the page", () => {
+    const report = importTokensReport(PAIRED);
+    expect(report).toMatch(/`primary-foreground` \| `primary` \|/);
+    // #fafafa on #ffffff is 1.04:1 — a failure that does not exist in the design.
+    expect(report).not.toMatch(/`primary-foreground` \| `background` \|/);
+  });
+
+  it("reports the pair as passing, because it does", () => {
+    const report = importTokensReport(PAIRED);
+    expect(report).toMatch(/`primary-foreground` \| `primary` \| 1[5-9]\.\d\d:1 \| ✅/);
+    expect(report).not.toMatch(/fall below/);
+  });
+
+  it("still pairs an unqualified text role against every surface", () => {
+    const report = importTokensReport(":root{--background:#ffffff;--muted:#f4f4f5;--foreground:#0a0a0a}");
+    expect(report).toMatch(/`foreground` \| `background` \|/);
+    expect(report).toMatch(/`foreground` \| `muted` \|/);
+  });
+});
+
+describe("surface-owned text is still checked across surfaces", () => {
+  it("keeps muted-foreground honest on both its own surface and the page", () => {
+    // `muted` is a surface, so its text is secondary body copy used page-wide;
+    // `primary` is a fill, so its text sits only on the fill. The distinction
+    // is what keeps a real failure visible without inventing a fake one.
+    const report = importTokensReport(`:root{
+      --background:#ffffff; --muted:#f4f4f5; --muted-foreground:#a1a1aa;
+      --primary:#18181b; --primary-foreground:#fafafa;
+    }`);
+    expect(report).toMatch(/`muted-foreground` \| `muted` \|/);
+    expect(report).toMatch(/`muted-foreground` \| `background` \|/);
+    expect(report).toMatch(/`primary-foreground` \| `primary` \|/);
+    expect(report).not.toMatch(/`primary-foreground` \| `background` \|/);
+  });
+});
