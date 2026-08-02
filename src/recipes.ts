@@ -88,14 +88,92 @@ const HOUSE_PALETTE: Array<{ role: string; hex: string[]; tailwind: string[] }> 
 export const RECIPE_TOKEN_ROLES = HOUSE_PALETTE.map((p) => p.role);
 
 /**
+ * The neutral ramp these recipes are written in — Tailwind's, exactly.
+ *
+ * Neutrals resisted role substitution: `bg-neutral-900` is a surface and
+ * `text-neutral-900` is text, the same value meaning two different things, and
+ * guessing which would eventually repaint a dark surface with a text colour.
+ *
+ * Swapping the ramp step for step sidesteps the question entirely. Nothing is
+ * inferred: your 300 replaces our 300, wherever it appears and whatever it is
+ * being used for, which is the one substitution that cannot be wrong.
+ */
+/**
+ * Tailwind properties that take a colour. Compound utilities like
+ * `ring-offset-` are listed explicitly: matching only `ring` leaves
+ * `ring-offset-neutral-950` behind, which is how a stray house grey survived
+ * the first implementation.
+ */
+const COLOR_PROPS =
+  "ring-offset|outline-offset|divide|placeholder|decoration|bg|text|border|ring|outline|from|via|to|caret|accent|shadow|fill|stroke";
+
+/**
+ * The three ramps these recipes are written in — Tailwind's neutral, indigo and
+ * red, exactly.
+ *
+ * Role mapping was the crutch. It handled `indigo-600` because that is "the
+ * primary", and left `indigo-400` behind because no role is named for the shade
+ * a dark theme uses — so every dark UI built from these recipes kept our accent.
+ * The same question defeats neutrals from the other side: `bg-neutral-900` is a
+ * surface and `text-neutral-900` is text, one value meaning two things.
+ *
+ * Swapping a ramp step for step answers neither question and needs neither:
+ * your 400 replaces our 400, wherever it appears and whatever it is doing. It
+ * is the one substitution that cannot be wrong, and generate_color_system
+ * already returns exactly these scales.
+ */
+const HOUSE_RAMPS: Record<"neutral" | "primary" | "danger", { tailwind: string; hex: Record<number, string> }> = {
+  neutral: {
+    tailwind: "neutral",
+    hex: {
+      50: "#fafafa", 100: "#f5f5f5", 200: "#e5e5e5", 300: "#d4d4d4", 400: "#a3a3a3",
+      500: "#737373", 600: "#525252", 700: "#404040", 800: "#262626", 900: "#171717", 950: "#0a0a0a",
+    },
+  },
+  primary: {
+    tailwind: "indigo",
+    hex: {
+      50: "#eef2ff", 100: "#e0e7ff", 200: "#c7d2fe", 300: "#a5b4fc", 400: "#818cf8",
+      500: "#6366f1", 600: "#4f46e5", 700: "#4338ca", 800: "#3730a3", 900: "#312e81", 950: "#1e1b4b",
+    },
+  },
+  danger: {
+    tailwind: "red",
+    hex: {
+      50: "#fef2f2", 100: "#fee2e2", 200: "#fecaca", 300: "#fca5a5", 400: "#f87171",
+      500: "#ef4444", 600: "#dc2626", 700: "#b91c1c", 800: "#991b1b", 900: "#7f1d1d", 950: "#450a0a",
+    },
+  },
+};
+
+export type RecipeScales = Partial<Record<"neutral" | "primary" | "danger", Record<number, string>>>;
+
+/**
  * Rewrite a recipe in the caller's colours.
  *
  * Substitution happens on the served text, never on disk: the files stay valid,
  * runnable, readable code that a person can open in the repo. Without tokens
  * the output is byte-identical to what it has always been.
  */
-export function applyTokens(code: string, tokens: Record<string, string>): string {
+export function applyTokens(code: string, tokens: Record<string, string>, scales?: RecipeScales): string {
   let out = code;
+
+  // Ramps first, and they cover most of it: a role substitution afterwards can
+  // only refine what is left, never undo an unambiguous step-for-step swap.
+  for (const [name, house] of Object.entries(HOUSE_RAMPS) as Array<[keyof RecipeScales, typeof HOUSE_RAMPS.neutral]>) {
+    const yours = scales?.[name];
+    if (!yours) continue;
+    for (const [step, houseHex] of Object.entries(house.hex)) {
+      const replacement = yours[Number(step)];
+      if (!replacement) continue;
+      out = out.replace(new RegExp(houseHex, "gi"), replacement);
+      out = out.replace(
+        new RegExp(`\\b(${COLOR_PROPS})-${house.tailwind}-${step}\\b`, "g"),
+        (_m, prop) => `${prop}-[${replacement}]`,
+      );
+    }
+  }
+
   for (const { role, hex, tailwind } of HOUSE_PALETTE) {
     const replacement = tokens[role];
     if (!replacement) continue;
@@ -109,16 +187,21 @@ export function applyTokens(code: string, tokens: Record<string, string>): strin
     // Tailwind palette classes have no arbitrary equivalent, so the caller's
     // hex goes in as an arbitrary value — honest, and it actually renders.
     for (const t of tailwind) {
-      out = out.replace(new RegExp(`\\b(bg|text|border|ring|from|to|decoration|outline)-${t}\\b`, "g"),
+      out = out.replace(new RegExp(`\\b(${COLOR_PROPS})-${t}\\b`, "g"),
         (_m, prop) => `${prop}-[${replacement}]`);
     }
   }
   return out;
 }
 
-export function recipeText(r: Recipe, stack?: string, tokens?: Record<string, string>): string {
+export function recipeText(
+  r: Recipe,
+  stack?: string,
+  tokens?: Record<string, string>,
+  scales?: RecipeScales,
+): string {
   const chosen = stack ? r.stacks.filter((s) => s.stack === stack) : r.stacks;
-  const themed = tokens && Object.keys(tokens).length > 0;
+  const themed = (tokens && Object.keys(tokens).length > 0) || (scales && Object.keys(scales).length > 0);
   const out: string[] = [`# ${r.component} — component recipe`];
   if (r.description) out.push(`\n_${r.description}_`);
   if (r.spec) out.push(`\n## Spec & rules\n${r.spec}`);
@@ -126,15 +209,17 @@ export function recipeText(r: Recipe, stack?: string, tokens?: Record<string, st
     out.push(`\n_No code for stack "${stack}". Available: ${r.stacks.map((s) => s.stack).join(", ") || "(none)"}._`);
   } else {
     for (const s of chosen) {
-      const code = themed ? applyTokens(s.code, tokens!) : s.code;
+      const code = themed ? applyTokens(s.code, tokens ?? {}, scales) : s.code;
       out.push(`\n## ${s.stack}\n\`\`\`${s.lang}\n${code}\n\`\`\``);
     }
     if (themed) {
       out.push(
         "\n_Rewritten in your colours. Roles applied: " +
-        Object.keys(tokens!).filter((k) => RECIPE_TOKEN_ROLES.includes(k)).map((k) => `\`${k}\``).join(", ") +
-        ". Neutrals are left as written — a grey used for a border carries no role to substitute, so it is not guessed at. " +
-        "Verify the result with `audit_accessibility`._",
+        (Object.keys(tokens ?? {}).filter((k) => RECIPE_TOKEN_ROLES.includes(k)).map((k) => `\`${k}\``).join(", ") || "none") +
+        (scales && Object.keys(scales).length
+          ? `; ${Object.keys(scales).join(", ")} ramp(s) swapped step for step`
+          : "; ramps left as written — pass `scales` to swap the neutral, primary and danger ramps wholesale") +
+        ". Verify the result with `audit_accessibility`._",
       );
     }
   }

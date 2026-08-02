@@ -149,20 +149,17 @@ export function createDesignSystem(
     `Grab production-ready, accessible code for each with \`get_component_recipe\`:`,
     comps.map((c) => `\`${c}\``).join(" · "),
     "",
-    "Pass the palette above and the code comes back in these colours rather than the house ones — otherwise you will be rewiring every value by hand:",
+    "Pass the palette above and the code comes back in these colours rather than the house ones — otherwise you will be rewiring every value by hand. Send the ramps, not just the roles: role names cover the light-theme accent and miss every shade a dark theme uses.",
     "```json",
     JSON.stringify(
       {
         component: comps[0],
         stack: platform === "ios" ? "swiftui" : platform === "android" ? "compose" : "react-tailwind",
         tokens: {
-          primary: color.light.primary,
-          primaryHover: color.light.primaryHover,
-          danger: color.light.danger,
-          dangerHover: color.light.dangerHover,
           background: color.light.background,
           textPrimary: color.light.textPrimary,
         },
+        scales: { neutral: "…the neutral scale below", primary: "…the primary scale", danger: "…the danger scale" },
       },
       null,
       2,

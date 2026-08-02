@@ -184,12 +184,13 @@ describe("create_design_system hands its palette to the recipes", () => {
     expect(ds()).toMatch(/\*\*Status:\*\* danger/);
   });
 
-  it("shows the exact tokens payload to pass to get_component_recipe", () => {
+  it("shows the exact payload to pass to get_component_recipe", () => {
     const out = ds();
     expect(out).toContain('"component"');
     expect(out).toContain('"tokens"');
-    for (const role of ["primary", "primaryHover", "danger", "dangerHover", "background", "textPrimary"]) {
-      expect(out, role).toContain(`"${role}"`);
+    expect(out).toContain('"scales"');
+    for (const ramp of ["neutral", "primary", "danger"]) {
+      expect(out, ramp).toContain(`"${ramp}"`);
     }
   });
 
@@ -198,5 +199,9 @@ describe("create_design_system hands its palette to the recipes", () => {
     for (const role of Object.keys(payload.tokens)) {
       expect(RECIPE_TOKEN_ROLES, `${role} is not a role get_component_recipe understands`).toContain(role);
     }
+  });
+
+  it("tells the caller to send ramps, because roles alone miss the dark theme", () => {
+    expect(ds()).toMatch(/miss every shade a dark theme uses/);
   });
 });

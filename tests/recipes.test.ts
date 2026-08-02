@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { loadRecipes, recipeText } from "../dist/recipes.js";
+import { generateColorSystem } from "../dist/color.js";
 import { auditDesignSystem } from "../dist/dsaudit.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -101,11 +102,13 @@ describe("recipes in your colours", () => {
     expect(out).toMatch(/#0F62FE/);
   });
 
-  it("says which roles it applied, and that neutrals were left alone", () => {
+  it("says which roles it applied, and how to get the ramps too", () => {
     const out = recipeText(button(), "react-tailwind", BRAND);
     expect(out).toMatch(/Rewritten in your colours/);
     expect(out).toMatch(/`primary`/);
-    expect(out).toMatch(/not guessed at/);
+    // No scales were passed, so it says what is still ours and how to change that.
+    expect(out).toMatch(/ramps left as written/);
+    expect(out).toMatch(/`scales`/);
   });
 
   it("ignores a role it does not know rather than failing", () => {
@@ -118,5 +121,63 @@ describe("recipes in your colours", () => {
     const before = readFileSync(join(root, "recipes", "button", "react-tailwind.tsx"), "utf8");
     recipeText(button(), "react-tailwind", BRAND);
     expect(readFileSync(join(root, "recipes", "button", "react-tailwind.tsx"), "utf8")).toBe(before);
+  });
+});
+
+describe("ramp swaps, not role guesses", () => {
+  // Role mapping handled `indigo-600` because that is "the primary" and left
+  // `indigo-400` behind, because no role names the shade a dark theme uses —
+  // so every dark UI built from these recipes kept our accent. Neutrals fail
+  // the same question from the other side: bg-neutral-900 is a surface,
+  // text-neutral-900 is text. A step-for-step swap answers neither question
+  // and needs neither.
+  const sys = () => generateColorSystem("#0F62FE");
+  const scalesOf = () => {
+    const s = sys();
+    return { neutral: s.neutral, primary: s.primary, danger: s.danger };
+  };
+
+  it("leaves no house colour anywhere, in any component or web stack", () => {
+    const scales = scalesOf();
+    const leftovers: string[] = [];
+    for (const r of loadRecipes(join(root, "recipes"))) {
+      for (const stack of ["react-tailwind", "html-css"]) {
+        const out = recipeText(r, stack, {}, scales);
+        const hits = out.match(/[a-z-]*(indigo|red|neutral)-\d{2,3}/gi);
+        if (hits) leftovers.push(`${r.component}/${stack}: ${[...new Set(hits)].join(" ")}`);
+      }
+    }
+    expect(leftovers).toEqual([]);
+  });
+
+  it("themes the dark-mode shades, which role tokens never reached", () => {
+    const out = recipeText(loadRecipes(join(root, "recipes")).find((r) => r.component === "tabs")!,
+      "react-tailwind", {}, scalesOf());
+    expect(out).not.toMatch(/indigo-300|indigo-400/);
+    expect(out).toMatch(/dark:/); // the dark variants are still there, just recoloured
+  });
+
+  it("catches compound utilities like ring-offset", () => {
+    const out = recipeText(loadRecipes(join(root, "recipes")).find((r) => r.component === "button")!,
+      "react-tailwind", {}, scalesOf());
+    expect(out).not.toMatch(/ring-offset-neutral-\d{2,3}/);
+  });
+
+  it("swaps the hex form in the CSS recipes too", () => {
+    const out = recipeText(loadRecipes(join(root, "recipes")).find((r) => r.component === "button")!,
+      "html-css", {}, scalesOf());
+    expect(out).not.toMatch(/#(171717|737373|d4d4d4|4f46e5|ef4444)/i);
+  });
+
+  it("still returns the recipe untouched with neither tokens nor scales", () => {
+    const b = loadRecipes(join(root, "recipes")).find((r) => r.component === "button")!;
+    expect(recipeText(b, "react-tailwind", {}, {})).toBe(recipeText(b, "react-tailwind"));
+  });
+
+  it("swaps only the ramps it was given", () => {
+    const out = recipeText(loadRecipes(join(root, "recipes")).find((r) => r.component === "button")!,
+      "react-tailwind", {}, { neutral: sys().neutral });
+    expect(out).not.toMatch(/neutral-\d{2,3}/);
+    expect(out).toMatch(/indigo-\d{2,3}/); // untouched, because it was not supplied
   });
 });
