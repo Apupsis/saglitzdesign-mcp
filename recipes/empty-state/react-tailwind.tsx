@@ -56,14 +56,14 @@ function Shell({
 }
 
 const primaryBtn =
-  "inline-flex min-h-11 items-center justify-center rounded-lg bg-blue-600 px-5 text-sm font-medium text-white " +
-  "hover:bg-blue-700 active:bg-blue-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 " +
-  "focus-visible:ring-offset-2 dark:focus-visible:ring-blue-400 dark:focus-visible:ring-offset-neutral-950 " +
+  "inline-flex min-h-11 items-center justify-center rounded-lg bg-indigo-600 px-5 text-sm font-medium text-white " +
+  "hover:bg-indigo-700 active:bg-indigo-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-600 " +
+  "focus-visible:ring-offset-2 dark:focus-visible:ring-indigo-400 dark:focus-visible:ring-offset-neutral-950 " +
   "disabled:opacity-60 disabled:cursor-not-allowed";
 
 const secondaryBtn =
   "inline-flex min-h-11 items-center justify-center rounded-lg px-4 text-sm font-medium text-neutral-700 " +
-  "hover:bg-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 " +
+  "hover:bg-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-600 " +
   "dark:text-neutral-200 dark:hover:bg-neutral-800";
 
 /* --- first-use ------------------------------------------------------------ */

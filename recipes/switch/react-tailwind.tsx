@@ -70,8 +70,8 @@ export const Switch = React.forwardRef<HTMLButtonElement, SwitchProps>(
           // grid place-items-center pads the visible track to a >=44px hit area
           className={[
             "group relative grid h-11 w-11 shrink-0 place-items-center rounded-full",
-            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2",
-            "dark:focus-visible:ring-blue-400 dark:focus-visible:ring-offset-neutral-950",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-600 focus-visible:ring-offset-2",
+            "dark:focus-visible:ring-indigo-400 dark:focus-visible:ring-offset-neutral-950",
             disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer",
           ].join(" ")}
         >
@@ -81,7 +81,7 @@ export const Switch = React.forwardRef<HTMLButtonElement, SwitchProps>(
             className={[
               "block h-8 w-[52px] rounded-full transition-colors duration-150 ease-out motion-reduce:transition-none",
               checked
-                ? "bg-blue-600 dark:bg-blue-500"
+                ? "bg-indigo-600 dark:bg-indigo-500"
                 : "bg-neutral-300 dark:bg-neutral-700",
             ].join(" ")}
           />
