@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { designLint } from "../dist/lint.js";
 import { analyzeCopy } from "../dist/uxcopy.js";
 import { createDesignSystem } from "../dist/designsystem.js";
+import { RECIPE_TOKEN_ROLES } from "../dist/recipes.js";
 
 describe("design_lint", () => {
   it("flags the classic anti-patterns", () => {
@@ -170,5 +171,32 @@ describe("design_lint does not punish the correct focus idiom", () => {
 
   it("still flags a bare rule with no focus qualification at all", () => {
     expect(rules(".btn { outline: none; }")).toEqual(["outline-none"]);
+  });
+});
+
+describe("create_design_system hands its palette to the recipes", () => {
+  // The seam that was loose: the flagship produced a verified 23-role palette
+  // and the recipe tool ignored it unless the agent copied values across by
+  // hand — and two of the roles the recipes need did not exist at all.
+  const ds = () => createDesignSystem("#0F62FE", "modern saas dashboard", "web", "Acme");
+
+  it("names the status colours it now generates", () => {
+    expect(ds()).toMatch(/\*\*Status:\*\* danger/);
+  });
+
+  it("shows the exact tokens payload to pass to get_component_recipe", () => {
+    const out = ds();
+    expect(out).toContain('"component"');
+    expect(out).toContain('"tokens"');
+    for (const role of ["primary", "primaryHover", "danger", "dangerHover", "background", "textPrimary"]) {
+      expect(out, role).toContain(`"${role}"`);
+    }
+  });
+
+  it("offers a payload whose roles the recipe tool actually accepts", () => {
+    const payload = JSON.parse(ds().split("```json")[1].split("```")[0]);
+    for (const role of Object.keys(payload.tokens)) {
+      expect(RECIPE_TOKEN_ROLES, `${role} is not a role get_component_recipe understands`).toContain(role);
+    }
   });
 });
