@@ -12,6 +12,15 @@ export interface KnowledgeDoc {
   updated: string;
   body: string;
   path: string;
+  /** Where this document came from — the package, or a directory the user pointed at. */
+  origin: "builtin" | "user";
+  /**
+   * Project types whose review checklist this document opts into, via
+   * `review: [website, saas-web-app]` in frontmatter. Built-in docs use the
+   * curated REVIEW_MAP instead; this is how a team's own rules get *enforced*
+   * rather than merely being searchable.
+   */
+  review: string[];
 }
 
 /** Minimal frontmatter parser — supports strings, quoted strings and inline arrays. */
@@ -46,9 +55,15 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-export function loadKnowledge(rootDir: string): KnowledgeDoc[] {
+export function loadKnowledge(rootDir: string, origin: "builtin" | "user" = "builtin"): KnowledgeDoc[] {
   const docs: KnowledgeDoc[] = [];
-  for (const path of walk(rootDir)) {
+  let paths: string[];
+  try {
+    paths = walk(rootDir);
+  } catch {
+    return []; // a directory that is not there is not an error worth crashing over
+  }
+  for (const path of paths) {
     try {
       const raw = readFileSync(path, "utf8");
       const { meta, body } = parseFrontmatter(raw);
@@ -65,12 +80,46 @@ export function loadKnowledge(rootDir: string): KnowledgeDoc[] {
           : statSync(path).mtime.toISOString().slice(0, 10),
         body: body.trim(),
         path,
+        origin,
+        review: Array.isArray(meta.review) ? (meta.review as string[]) : [],
       });
     } catch {
       // skip unreadable files
     }
   }
   return docs.sort((a, b) => a.id.localeCompare(b.id));
+}
+
+export interface MergeResult {
+  docs: KnowledgeDoc[];
+  /** Ids where a user document replaced a built-in one. Always surfaced. */
+  overridden: string[];
+  /** Categories outside the known vocabulary — such docs load, but filters miss them. */
+  unknownCategories: string[];
+}
+
+const KNOWN_CATEGORIES = new Set([
+  "design-language", "component", "ux", "seo", "geo", "pattern", "craft", "book", "process", "marketing",
+]);
+
+/**
+ * Merge a team's own documents into the base.
+ *
+ * A user document with the same id replaces the built-in one — that is the
+ * point: a team's own button rules should beat ours. But taking someone's
+ * document out of the base silently is the failure mode to avoid, so every
+ * override is reported and the caller announces it at startup.
+ */
+export function mergeKnowledge(builtin: KnowledgeDoc[], user: KnowledgeDoc[]): MergeResult {
+  const byId = new Map(builtin.map((d) => [d.id, d]));
+  const overridden: string[] = [];
+  for (const d of user) {
+    if (byId.has(d.id)) overridden.push(d.id);
+    byId.set(d.id, d);
+  }
+  const docs = [...byId.values()].sort((a, b) => a.id.localeCompare(b.id));
+  const unknownCategories = [...new Set(user.map((d) => d.category).filter((c) => !KNOWN_CATEGORIES.has(c)))];
+  return { docs, overridden: overridden.sort(), unknownCategories };
 }
 
 /**
@@ -118,10 +167,29 @@ function tokenize(text: string): string[] {
     .filter((t) => t.length > 1);
 }
 
+/**
+ * What fraction of the query's terms a user document must cover before it is
+ * promoted above the built-ins.
+ *
+ * A team that writes house rules expects them to govern, not to appear third.
+ * The obvious fix — compare their score against the best built-in — does not
+ * work, because the scoring is length-biased: body frequency rewards long
+ * documents, so a twenty-line house-rules file can never out-score a
+ * two-hundred-line reference on raw term counts.
+ *
+ * Term coverage is independent of length. A short document that contains
+ * everything you asked about is about what you asked about; one that happens to
+ * share a single word is not, which is what keeps a house-rules file from
+ * leading a search for Core Web Vitals.
+ */
+export const USER_DOC_LEAD_COVERAGE = 0.5;
+
 export interface SearchResult {
   doc: KnowledgeDoc;
   score: number;
   excerpt: string;
+  /** Fraction of the query's terms this document contains, 0–1. */
+  coverage: number;
 }
 
 /** Split a doc body into ## sections; returns [heading, content] pairs. */
@@ -156,17 +224,22 @@ export function searchKnowledge(
     const bodyLower = doc.body.toLowerCase();
 
     let score = 0;
+    let matchedTerms = 0;
     for (const term of terms) {
-      if (titleTokens.has(term)) score += 8;
-      if (tagTokens.has(term)) score += 6;
+      const inTitle = titleTokens.has(term);
+      const inTags = tagTokens.has(term);
       const occurrences = bodyLower.split(term).length - 1;
+      if (inTitle) score += 8;
+      if (inTags) score += 6;
       score += Math.min(occurrences, 10);
+      if (inTitle || inTags || occurrences > 0) matchedTerms++;
     }
     // Exact-id / exact-title queries are a strong intent signal — surface that
     // doc first even if another mentions the term more often in its body.
     const qNorm = query.trim().toLowerCase();
     if (doc.id === qNorm || terms.join("-") === doc.id || doc.title.toLowerCase() === qNorm) score += 20;
     if (score === 0) continue;
+
 
     // Best-matching section as excerpt
     let best = { heading: "", content: doc.body.slice(0, 600), hits: -1 };
@@ -179,9 +252,18 @@ export function searchKnowledge(
       (best.heading ? `## ${best.heading}\n` : "") +
       (best.content.length > 900 ? best.content.slice(0, 900) + "\n…(truncated)" : best.content);
 
-    results.push({ doc, score, excerpt });
+    results.push({ doc, score, excerpt, coverage: matchedTerms / terms.length });
   }
 
   results.sort((a, b) => b.score - a.score);
+
+  // A team's own document leads when the question is genuinely theirs. Term
+  // frequency across an 84-document corpus otherwise buries a short house-rules
+  // file every time, and a rule the agent reads third is not a rule.
+  const leads = results.filter((r) => r.doc.origin === "user" && r.coverage >= USER_DOC_LEAD_COVERAGE);
+  if (leads.length) {
+    const rest = results.filter((r) => !leads.includes(r));
+    return [...leads, ...rest].slice(0, opts.limit ?? 5);
+  }
   return results.slice(0, opts.limit ?? 5);
 }

@@ -3,9 +3,9 @@ import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mc
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { fileURLToPath } from "node:url";
-import { dirname, join, isAbsolute, resolve, basename } from "node:path";
+import { dirname, join, isAbsolute, resolve, basename, delimiter } from "node:path";
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { loadKnowledge, searchKnowledge, sections, findDoc, platformMatches, type KnowledgeDoc } from "./knowledge.js";
+import { loadKnowledge, mergeKnowledge, searchKnowledge, sections, findDoc, platformMatches, type KnowledgeDoc } from "./knowledge.js";
 import { CATEGORIES, PLATFORMS, DESIGN_LANGUAGES, REVIEW_MAP, FOCUS_MAP, ROADMAPS, STALE_DAYS } from "./catalog.js";
 import { loadExamples, searchExamples, imageMime } from "./examples.js";
 import { registerPrompts } from "./prompts.js";
@@ -40,7 +40,25 @@ if (!knowledgeDir) {
   console.error("SaglitzDesign: knowledge/ directory not found");
   process.exit(1);
 }
-const docs = loadKnowledge(knowledgeDir);
+const builtinDocs = loadKnowledge(knowledgeDir);
+
+// A team's own design rules cannot live inside the installed package — npm
+// update wipes it — so they point at their own directory instead. Multiple
+// paths are allowed, separated the way PATH is on this platform.
+const userDirs = (process.env.SAGLITZDESIGN_KNOWLEDGE_DIR ?? "")
+  .split(delimiter)
+  .map((p) => p.trim())
+  .filter(Boolean);
+
+const userDocs = userDirs.flatMap((dir) => {
+  if (!existsSync(dir)) {
+    console.error(`SaglitzDesign: SAGLITZDESIGN_KNOWLEDGE_DIR points at "${dir}", which does not exist — skipping it.`);
+    return [];
+  }
+  return loadKnowledge(dir, "user");
+});
+
+const { docs, overridden, unknownCategories } = mergeKnowledge(builtinDocs, userDocs);
 const examplesDir = join(knowledgeDir, "examples");
 const examples = loadExamples(examplesDir);
 const repoRoot = join(knowledgeDir, "..");
@@ -65,7 +83,10 @@ const server = new McpServer({
 });
 
 function docHeader(d: KnowledgeDoc): string {
-  return `# ${d.title}\n_id: ${d.id} · category: ${d.category} · platform: ${d.platform} · tags: ${d.tags.join(", ")}_\n`;
+  // Say plainly when a document is the team's own — an agent quoting a house
+  // rule as though it were sourced platform guidance would be misleading.
+  const origin = d.origin === "user" ? " · **your team's document**" : "";
+  return `# ${d.title}\n_id: ${d.id} · category: ${d.category} · platform: ${d.platform} · tags: ${d.tags.join(", ")}${origin}_\n`;
 }
 
 function fullDoc(d: KnowledgeDoc): string {
@@ -222,7 +243,13 @@ tool(
   async ({ project_type, focus }) => {
     const focusFn = FOCUS_MAP[focus ?? "all"];
     const ids = REVIEW_MAP[project_type];
-    const picked = ids.map((id) => findDoc(docs, id)).filter((d): d is KnowledgeDoc => !!d && focusFn(d));
+    const curated = ids.map((id) => findDoc(docs, id)).filter((d): d is KnowledgeDoc => !!d && focusFn(d));
+    // A team's document joins the checklist by asking to, via `review:` in its
+    // frontmatter — the difference between their rules being searchable and
+    // their rules being enforced. Theirs go first: house rules win.
+    const opted = docs.filter((d) => d.origin === "user" && d.review.includes(project_type) && focusFn(d));
+    const seen = new Set<string>();
+    const picked = [...opted, ...curated].filter((d) => !seen.has(d.id) && seen.add(d.id));
     if (picked.length === 0) return text("No checklist sections available for that combination.");
 
     const lines: string[] = [
@@ -871,4 +898,20 @@ registerPrompts(server as never, {
 // ── start ────────────────────────────────────────────────────────────────────
 const transport = new StdioServerTransport();
 await server.connect(transport);
-console.error(`SaglitzDesign MCP server running — ${docs.length} knowledge docs loaded from ${knowledgeDir}`);
+const startup = [`SaglitzDesign MCP server running — ${docs.length} knowledge docs (${builtinDocs.length} built in`];
+if (userDocs.length) startup.push(`, ${userDocs.length} from ${userDirs.join(", ")}`);
+startup.push(`) from ${knowledgeDir}`);
+console.error(startup.join(""));
+
+// Never take a built-in document out of the base quietly: a team that shadows
+// `buttons` should see that they did, and so should anyone debugging why the
+// guidance changed.
+if (overridden.length) {
+  console.error(`SaglitzDesign: your documents replace ${overridden.length} built-in one(s): ${overridden.join(", ")}`);
+}
+if (unknownCategories.length) {
+  console.error(
+    `SaglitzDesign: category "${unknownCategories.join('", "')}" is outside the known vocabulary — ` +
+    "those documents are searchable and readable, but category filters will not find them.",
+  );
+}
