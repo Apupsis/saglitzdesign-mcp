@@ -151,3 +151,24 @@ describe("design_lint — formatting must not change the verdict", () => {
     expect(findings.filter((f) => f.rule === "img-no-alt").length).toBe(1);
   });
 });
+
+describe("design_lint does not punish the correct focus idiom", () => {
+  const rules = (code: string) => [...new Set(designLint(code).map((f) => f.rule))].sort();
+
+  it("accepts :focus:not(:focus-visible) — the recommended pointer-focus pattern", () => {
+    // Found on a real site: flagging this teaches people to ignore the linter.
+    expect(rules("#main:focus:not(:focus-visible) { outline: none; }")).toEqual([]);
+  });
+
+  it("accepts it with whitespace and other declarations in the rule", () => {
+    expect(rules("a:focus:not( :focus-visible ) {\n  outline: none;\n  color: red;\n}")).toEqual([]);
+  });
+
+  it("still flags a plain :focus that kills the outline", () => {
+    expect(rules("#main:focus { outline: none; }")).toEqual(["outline-none"]);
+  });
+
+  it("still flags a bare rule with no focus qualification at all", () => {
+    expect(rules(".btn { outline: none; }")).toEqual(["outline-none"]);
+  });
+});

@@ -90,6 +90,22 @@ function innerText(src: string, tag: Tag): string {
  * is only a defect when nothing replaces it — checking the whole snippet
  * (rather than the same line) is what makes that judgement correct.
  */
+/**
+ * True when this `outline: none` sits in a rule that deliberately excludes
+ * keyboard focus — `:focus:not(:focus-visible)`, or the `not-focus-visible:`
+ * variant. The selector is whatever precedes the enclosing `{`.
+ */
+function isPointerFocusException(src: string, index: number): boolean {
+  const open = src.lastIndexOf("{", index);
+  if (open === -1) {
+    // No block: a utility class list. Only the explicit negated variant counts.
+    return /not-focus-visible:outline-none/.test(src.slice(Math.max(0, index - 40), index + 40));
+  }
+  const prevClose = Math.max(src.lastIndexOf("}", open), src.lastIndexOf(";", open));
+  const selector = src.slice(prevClose + 1, open);
+  return /:not\(\s*:focus-visible\s*\)/.test(selector);
+}
+
 function hasFocusReplacement(src: string): boolean {
   // NOTE: the "not none" guards must sit directly after the colon. Written as
   // `outline\s*:\s*(?!none)` the `\s*` backtracks to zero width and the
@@ -236,6 +252,11 @@ function sourceFindings(src: string): LintFinding[] {
     const outlineRe = /outline\s*:\s*(?:none|0)\b|(?:^|[\s"'`])(?:[a-z][a-z0-9-]*:)*outline-none\b/g;
     let m: RegExpExecArray | null;
     while ((m = outlineRe.exec(src)) !== null) {
+      // `:focus:not(:focus-visible) { outline: none }` is the recommended way to
+      // drop the ring for pointer focus while keeping it for the keyboard.
+      // Flagging it would mark best-practice code as an error, which teaches
+      // people to ignore the linter.
+      if (isPointerFocusException(src, m.index)) continue;
       push(m.index, {
         severity: "error",
         rule: "outline-none",
