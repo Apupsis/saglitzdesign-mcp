@@ -4,6 +4,56 @@ All notable changes to SaglitzDesign MCP are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.18.0] — 2026-08-02
+
+Three gaps, each found by measuring rather than guessing: the pipeline broke in
+the middle, teams could not add their own rules, and the auditors could not see
+a project.
+
+### Added
+
+- **Your own knowledge directory.** `SAGLITZDESIGN_KNOWLEDGE_DIR` points at one
+  or more directories whose documents join the base. The README used to say
+  "drop a file under `knowledge/`", which means editing the installed package —
+  `npm update` wipes it, so extending was effectively impossible from npm.
+  A document with the same id replaces the built-in one, announced at startup
+  and marked as your team's wherever it is served; `review: [website]` in
+  frontmatter puts it into that checklist, ahead of the curated list.
+- **`audit_project`** — the auditors over a directory instead of a pasted
+  snippet, with the consistency score computed across files, findings ranked
+  worst-file-first, and an explicit list of what was skipped.
+- **`get_component_recipe` takes your tokens** and returns the code in your
+  colours. Substitution happens on the way out, never on disk, so the recipe
+  files stay valid runnable code; without tokens the output is byte-identical
+  to before.
+- **29 tools** in total.
+
+### Fixed
+
+- **Focus rings were counted as elevation.** A ring is a box-shadow but not
+  depth, and counting them together punished exactly the codebases that do this
+  properly — a consistent ramp plus a few ring states read as "sprawl". A ring
+  has no offset and no blur, which separates the two precisely.
+- **`design_lint` called best-practice code an error.**
+  `:focus:not(:focus-visible) { outline: none }` is the recommended way to drop
+  the ring for pointer focus while keeping it for the keyboard. Found by running
+  `audit_project` against a real site.
+- **The recipe library was not one system.** Four components used indigo as the
+  accent and four used blue, so a UI built from these recipes put an indigo
+  button beside a blue tab; radii had two values for "control" and two for
+  "container". Audited at 54/100 by our own tool, now 90, with a test that keeps
+  it there — a project shipping `audit_design_system` cannot ship a library that
+  fails it.
+
+### Notes
+
+Ranking a team's documents took three attempts. A flat score boost was
+arbitrary; gating on a fraction of the best built-in score failed outright,
+because the scoring is length-biased — body frequency rewards long documents, so
+a twenty-line house-rules file can never out-score a two-hundred-line reference.
+Term coverage is length-independent: a document containing everything you asked
+about leads, one sharing a single word does not.
+
 ## [0.17.0] — 2026-07-27
 
 ### Added
