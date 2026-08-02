@@ -76,3 +76,47 @@ describe("the recipe library passes our own auditor", () => {
     }
   });
 });
+
+describe("recipes in your colours", () => {
+  const button = () => loadRecipes(join(root, "recipes")).find((r) => r.component === "button")!;
+  const BRAND = { primary: "#0F62FE", primaryHover: "#0043CE", danger: "#DA1E28", dangerHover: "#A2191F" };
+
+  it("returns the recipe unchanged when no tokens are given", () => {
+    const b = button();
+    expect(recipeText(b, "react-tailwind", {})).toBe(recipeText(b, "react-tailwind"));
+    expect(recipeText(b, "react-tailwind")).toMatch(/indigo-600/);
+  });
+
+  it("replaces every house colour with the caller's", () => {
+    const out = recipeText(button(), "react-tailwind", BRAND);
+    expect(out).not.toMatch(/indigo-\d{3}|red-[567]00/);
+    expect(out).toMatch(/bg-\[#0F62FE\]/);
+    expect(out).toMatch(/hover:bg-\[#0043CE\]/);
+    expect(out).toMatch(/bg-\[#DA1E28\]/);
+  });
+
+  it("substitutes hex in the CSS recipe too, including the #fff shorthand", () => {
+    const out = recipeText(button(), "html-css", { primary: "#0F62FE", background: "#FAFAFA" });
+    expect(out).not.toMatch(/#4f46e5/i);
+    expect(out).toMatch(/#0F62FE/);
+  });
+
+  it("says which roles it applied, and that neutrals were left alone", () => {
+    const out = recipeText(button(), "react-tailwind", BRAND);
+    expect(out).toMatch(/Rewritten in your colours/);
+    expect(out).toMatch(/`primary`/);
+    expect(out).toMatch(/not guessed at/);
+  });
+
+  it("ignores a role it does not know rather than failing", () => {
+    const out = recipeText(button(), "react-tailwind", { ...BRAND, teaGreen: "#0f0" });
+    expect(out).toMatch(/bg-\[#0F62FE\]/);
+    expect(out).not.toMatch(/#0f0/);
+  });
+
+  it("leaves the recipe files on disk untouched", () => {
+    const before = readFileSync(join(root, "recipes", "button", "react-tailwind.tsx"), "utf8");
+    recipeText(button(), "react-tailwind", BRAND);
+    expect(readFileSync(join(root, "recipes", "button", "react-tailwind.tsx"), "utf8")).toBe(before);
+  });
+});

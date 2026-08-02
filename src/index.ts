@@ -14,7 +14,7 @@ import {
   type TokenSpec, type TokenFormat,
 } from "./tokens.js";
 import { contrastReport, contrastRatio, type ContrastPair, type TapTarget } from "./a11y.js";
-import { loadRecipes, recipeText } from "./recipes.js";
+import { loadRecipes, recipeText, RECIPE_TOKEN_ROLES } from "./recipes.js";
 import { generateColorSystem, colorSystemReport, suggestAccessibleColor } from "./color.js";
 import { suggestFontPairing, fontPairingReport } from "./fonts.js";
 import { suggestIconLibrary, iconLibraryReport } from "./icons.js";
@@ -486,8 +486,13 @@ tool(
   {
     component: z.string().describe("Component name, e.g. 'button', 'input', 'modal', 'toast', 'card', 'switch', 'tabs', 'empty-state', 'list-row'"),
     stack: z.enum(["react-tailwind", "html-css", "swiftui", "compose"]).optional().describe("Target stack. Omit to get the spec + all available stacks."),
+    tokens: z.record(z.string()).optional().describe(
+      "Your colours, so the code comes back in them instead of the house palette. Roles: " +
+      RECIPE_TOKEN_ROLES.join(", ") +
+      ". Pass the values create_design_system or generate_color_system produced, e.g. {\"primary\":\"#0F62FE\",\"primaryHover\":\"#0043CE\"}. Omit to get the recipe as written.",
+    ),
   },
-  async ({ component, stack }) => {
+  async ({ component, stack, tokens }) => {
     if (recipes.length === 0) {
       return text("No component recipes are installed in this build.");
     }
@@ -500,7 +505,7 @@ tool(
     if (!r) {
       return text(`No recipe for "${component}". Available components: ${recipes.map((x) => x.component).join(", ")}.`);
     }
-    return text(recipeText(r, stack));
+    return text(recipeText(r, stack, tokens));
   },
 );
 
