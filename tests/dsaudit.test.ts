@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { auditDesignSystem, designSystemAuditReport } from "../dist/dsaudit.js";
+import { auditDesignSystem, designSystemAuditReport, isFocusRing } from "../dist/dsaudit.js";
 
 const SPRAWL = `
 .card  { background:#ffffff; color:#111827; border-radius:6px;  padding:13px; font-size:15px;   box-shadow:0 1px 2px rgba(0,0,0,.06) }
@@ -89,5 +89,41 @@ describe("audit_design_system", () => {
 
   it("asks for input instead of scoring an empty string", () => {
     expect(designSystemAuditReport("   ")).toMatch(/No source provided/);
+  });
+});
+
+describe("focus rings are not elevation", () => {
+  // A ring is written as a box-shadow but is not depth. Counting them together
+  // punishes exactly the codebases that do this properly: a consistent ramp
+  // plus a few ring states reads as "sprawl".
+  const RINGS_AND_RAMP = `
+    .a:focus-visible { box-shadow: 0 0 0 2px #ffffff, 0 0 0 4px #4f46e5 }
+    .b:focus-visible { box-shadow: 0 0 0 2px #ffffff, 0 0 0 4px #ef4444 }
+    .c:focus-visible { box-shadow: 0 0 0 3px #6366f1 }
+    .card  { box-shadow: 0 1px 2px rgba(0,0,0,.06) }
+    .modal { box-shadow: 0 20px 60px rgba(0,0,0,.25) }
+  `;
+
+  it("classifies a zero-offset zero-blur shadow as a ring", () => {
+    expect(isFocusRing("0 0 0 2px #4f46e5")).toBe(true);
+    expect(isFocusRing("0 0 0 2px #fff, 0 0 0 4px #4f46e5")).toBe(true);
+  });
+
+  it("classifies an offset or blurred shadow as elevation", () => {
+    expect(isFocusRing("0 1px 2px rgba(0,0,0,.06)")).toBe(false);
+    expect(isFocusRing("0 20px 60px rgba(0,0,0,.25)")).toBe(false);
+    expect(isFocusRing("0 0 8px rgba(0,0,0,.2)")).toBe(false); // blurred glow, not a ring
+  });
+
+  it("counts only elevation against the shadow budget", () => {
+    const a = auditDesignSystem(RINGS_AND_RAMP);
+    const shadows = a.dimensions.find((d) => d.id === "shadow")!;
+    expect(shadows.unique).toBe(2);      // card + modal
+    expect(a.focusRings).toHaveLength(3);
+    expect(shadows.status).toBe("ok");
+  });
+
+  it("does not let a mixed layer sneak through as a ring", () => {
+    expect(isFocusRing("0 0 0 2px #fff, 0 4px 8px rgba(0,0,0,.2)")).toBe(false);
   });
 });

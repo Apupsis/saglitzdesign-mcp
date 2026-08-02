@@ -9,7 +9,7 @@ expert‑level guidance on **web, iOS, Android and macOS design** — plus the
 **UX, copywriting, SEO, GEO and marketing** knowledge that makes a product
 actually convert.
 
-84 curated knowledge documents · 28 tools · 8 build/review/port workflows · MCP resources with id autocomplete · a one‑call design‑system builder · real token/color/type/elevation/motion/a11y generators · design & UX‑copy linters · production component recipes · phased roadmaps · real‑world visual examples
+84 curated knowledge documents · 29 tools · 8 build/review/port workflows · MCP resources with id autocomplete · a one‑call design‑system builder · real token/color/type/elevation/motion/a11y generators · design & UX‑copy linters · production component recipes · phased roadmaps · real‑world visual examples
 
 [![npm](https://img.shields.io/npm/v/saglitzdesign-mcp?color=cb3837&logo=npm)](https://www.npmjs.com/package/saglitzdesign-mcp)
 [![CI](https://github.com/HalidSaglam/saglitzdesign-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/HalidSaglam/saglitzdesign-mcp/actions/workflows/ci.yml)
@@ -18,7 +18,7 @@ actually convert.
 [![MCP](https://img.shields.io/badge/Model_Context_Protocol-server-000)](https://modelcontextprotocol.io)
 [![Glama](https://glama.ai/mcp/servers/HalidSaglam/saglitzdesign-mcp/badges/score.svg)](https://glama.ai/mcp/servers/HalidSaglam/saglitzdesign-mcp)
 
-[Why](#why) · [What's inside](#whats-inside) · [Tools](#tools) · [Resources](#resources) · [Install](#install) · [Usage](#usage) · [Extending](#extending-the-knowledge-base) · [Changelog](CHANGELOG.md) · [License](#license)
+[Why](#why) · [What's inside](#whats-inside) · [Tools](#tools) · [Resources](#resources) · [Install](#install) · [Usage](#usage) · [Your own rules](#your-own-design-rules) · [Changelog](CHANGELOG.md) · [License](#license)
 
 </div>
 
@@ -106,7 +106,7 @@ critique rubric, and iterates until it passes.
 | **`import_design_tokens`** | **Already have a design system?** Paste your CSS custom properties, shadcn `:root` block, DTCG file or theme JSON and get back the roles it names, the roles it leaves undefined, a WCAG check on the pairs it defines, and the whole set re‑emitted as CSS / Tailwind / SwiftUI / Compose / DTCG. The inverse of `generate_design_tokens` — take a web theme to iOS, or audit an inherited one. Only *named* tokens are read; JS configs are never evaluated. |
 | **`generate_design_tokens`** | **Real artifacts, not advice** — turns a color/spacing/type spec into CSS variables, Tailwind v4, SwiftUI, Jetpack Compose, and W3C DTCG JSON. |
 | **`audit_accessibility`** | Deterministic WCAG 2.2 checks — exact contrast ratios for color pairs + tap‑target sizes per platform, with fixes. |
-| **`get_component_recipe`** | Production‑ready, accessible reference **code** for a component (button, input, modal, toast, card, switch, tabs, empty‑state, list‑row) in react‑tailwind, html‑css, SwiftUI, or Compose — all states, ARIA, keyboard, correct motion. |
+| **`get_component_recipe`** | Production‑ready, accessible reference **code** for a component (button, input, modal, toast, card, switch, tabs, empty‑state, list‑row) in react‑tailwind, html‑css, SwiftUI, or Compose — all states, ARIA, keyboard, correct motion. Pass your `tokens` and the code comes back in **your** colours instead of the house palette. |
 | **`generate_color_system`** | **One brand color → a full palette.** A 50–950 tonal scale, a cohesive neutral ramp, and light + dark semantic tokens — every text/UI pair WCAG‑verified and auto‑corrected. Feeds straight into `generate_design_tokens`. |
 | **`suggest_font_pairing`** | Curated, production font pairings for a vibe (SaaS, editorial, bold, native…) — heading + body (+ mono) with paste‑ready CSS stacks, weights, rationale, and a type scale. |
 | **`fix_contrast`** | Repairs a failing color pair: computes the **nearest** accessible color (hue/saturation preserved) that meets your WCAG target — the corrected value, not just a fail report. |
@@ -117,6 +117,7 @@ critique rubric, and iterates until it passes.
 | **`generate_motion`** | Easing + duration tokens and ready‑to‑paste keyframe animations (fade/slide/scale/spring/shimmer) in CSS, Framer Motion, or SwiftUI — reduced‑motion included. |
 | **`design_lint`** | Lints an HTML/CSS/JSX/Tailwind snippet for design & a11y anti‑patterns (hardcoded values, killed focus, missing alt/labels, clickable divs, unlabelled inputs…) with line numbers and fixes. Tag‑aware, so formatting never changes the verdict. |
 | **`measure_screenshot`** | **Measures your actual screen.** Give it a PNG and it reports the real palette and colour count, true WCAG contrast ratios for the pairs on screen, density, and structural detections (alignment, rhythm, off‑grid gaps) each with a confidence level — plus a self‑contained HTML report you can open and share. Pure‑Node PNG decoding, no network, no dependencies. |
+| **`audit_project`** | **Audits a real codebase, not a snippet.** Point it at a directory: it walks your design source, lints every file, and scores the whole project for consistency — cross‑file drift being exactly what a single‑file lint cannot see. Findings ranked worst‑file‑first with file:line, plus an explicit list of what it did not look at. |
 | **`audit_design_system`** | **Is there actually a system here?** Point it at real CSS/JSX and get a consistency score plus the sprawl behind it: how many distinct colors, sizes, radii, shadows and spacings are in use, which colors are indistinguishable duplicates, what's off the 4pt grid, token adoption — and a consolidation plan. |
 | **`audit_ux_copy`** | Objective copy audit — readability (Flesch), sentence length, passive voice, jargon, filler, user‑focus, weak CTAs — with flagged phrases and fixes. |
 | **`list_design_knowledge`** | Browse the full knowledge index by category / platform. |
@@ -235,7 +236,40 @@ Once connected, just talk to your agent naturally — it decides when to call th
 > *"What's llms.txt and how do I set it up?"*
 > → `seo_geo_guide` (GEO) returns the tactic with a ready‑to‑use example.
 
-## Extending the knowledge base
+## Your own design rules
+
+Point the server at a directory of your own and your documents join the base —
+searchable, readable, and, if you ask, part of the review checklist:
+
+```bash
+claude mcp add --scope user saglitzdesign \
+  --env SAGLITZDESIGN_KNOWLEDGE_DIR=/path/to/our-design-rules \
+  -- npx -y saglitzdesign-mcp
+```
+
+Or in `claude_desktop_config.json` / any MCP client, alongside `command` and `args`:
+
+```json
+"env": { "SAGLITZDESIGN_KNOWLEDGE_DIR": "/path/to/our-design-rules" }
+```
+
+Several directories are allowed, separated the way `PATH` is on your platform.
+
+- **Your rules lead.** When a search is genuinely about something you documented,
+  your document comes first — measured by how many of the query's terms it
+  covers, so a short house‑rules file is not buried by a long reference.
+- **Same id replaces ours.** A file with `id: buttons` takes over from the
+  built‑in one. That is deliberate, and it is announced at startup rather than
+  happening quietly. Wherever it is served it is marked as your team's document,
+  so nothing of yours is ever quoted as though it were sourced platform guidance.
+- **`review: [website, saas-web-app]`** in the frontmatter puts the document into
+  those project types' `design_review_checklist`, ahead of the curated list —
+  the difference between your rules being findable and your rules being enforced.
+
+> Editing files inside the installed package works until `npm update` deletes
+> them. Use the environment variable.
+
+## Adding to this repository
 
 Drop a Markdown file anywhere under `knowledge/` with frontmatter:
 

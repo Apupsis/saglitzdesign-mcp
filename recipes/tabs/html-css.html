@@ -6,12 +6,12 @@
 <title>SaglitzDesign — Tabs</title>
 <style>
   :root {
-    --ring: #2563eb; --accent: #2563eb; --border: #e5e5e5;
+    --ring: #4f46e5; --accent: #4f46e5; --border: #e5e5e5;
     --text: #171717; --muted: #525252; --disabled: #a3a3a3;
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --ring: #60a5fa; --accent: #60a5fa; --border: #262626;
+      --ring: #818cf8; --accent: #818cf8; --border: #262626;
       --text: #fafafa; --muted: #a3a3a3; --disabled: #525252;
     }
   }
@@ -35,7 +35,7 @@
   /* 2px active indicator — shape, not just color */
   [role="tab"]::after {
     content: ""; position: absolute; left: 8px; right: 8px; bottom: 0; height: 2px;
-    background: var(--accent); border-radius: 2px; opacity: 0;
+    background: var(--accent); border-radius: 9999px; opacity: 0;
     transition: opacity .15s ease-out;
   }
   [role="tab"][aria-selected="true"]::after { opacity: 1; }

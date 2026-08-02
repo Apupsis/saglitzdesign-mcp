@@ -102,12 +102,12 @@ export function Tabs({ items, defaultValue, paramKey, "aria-label": ariaLabel }:
               onKeyDown={(e) => onKeyDown(e, i)}
               className={[
                 "relative -mb-px inline-flex min-h-11 items-center px-4 text-sm font-medium",
-                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2",
-                "dark:focus-visible:ring-blue-400 dark:focus-visible:ring-offset-neutral-950 rounded-t-md",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-600 focus-visible:ring-offset-2",
+                "dark:focus-visible:ring-indigo-400 dark:focus-visible:ring-offset-neutral-950 rounded-t-md",
                 item.disabled
                   ? "cursor-not-allowed text-neutral-300 dark:text-neutral-700"
                   : isSelected
-                    ? "text-blue-700 dark:text-blue-300"
+                    ? "text-indigo-700 dark:text-indigo-300"
                     : "text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100",
               ].join(" ")}
             >
@@ -117,7 +117,7 @@ export function Tabs({ items, defaultValue, paramKey, "aria-label": ariaLabel }:
                 aria-hidden="true"
                 className={[
                   "absolute inset-x-2 bottom-0 h-0.5 rounded-full transition-opacity duration-150 ease-out motion-reduce:transition-none",
-                  isSelected ? "bg-blue-600 opacity-100 dark:bg-blue-400" : "opacity-0",
+                  isSelected ? "bg-indigo-600 opacity-100 dark:bg-indigo-400" : "opacity-0",
                 ].join(" ")}
               />
             </button>
@@ -133,7 +133,7 @@ export function Tabs({ items, defaultValue, paramKey, "aria-label": ariaLabel }:
           aria-labelledby={`tab-${item.value}`}
           tabIndex={0} // panel is focusable so keyboard users reach its content
           hidden={item.value !== selected}
-          className="p-4 text-sm text-neutral-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 dark:text-neutral-300"
+          className="p-4 text-sm text-neutral-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-600 dark:text-neutral-300"
         >
           {item.content}
         </div>

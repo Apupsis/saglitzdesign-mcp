@@ -19,7 +19,7 @@ type CardBaseProps = {
   children: React.ReactNode;
 };
 
-const RADIUS = "rounded-2xl"; // single radius token for card + media top corners
+const RADIUS = "rounded-xl"; // single radius token for card + media top corners
 
 function surfaceClasses(surface: "border" | "shadow") {
   return surface === "shadow"
@@ -77,8 +77,8 @@ export const CardLink = React.forwardRef<HTMLDivElement, CardLinkProps>(
           surfaceClasses(surface),
           "transition-[transform,box-shadow] duration-200 ease-out",
           "hover:-translate-y-0.5 active:translate-y-0",
-          "focus-within:outline-none focus-within:ring-2 focus-within:ring-blue-600 focus-within:ring-offset-2",
-          "dark:focus-within:ring-blue-400 dark:focus-within:ring-offset-neutral-950",
+          "focus-within:outline-none focus-within:ring-2 focus-within:ring-indigo-600 focus-within:ring-offset-2",
+          "dark:focus-within:ring-indigo-400 dark:focus-within:ring-offset-neutral-950",
           "motion-reduce:transition-none motion-reduce:hover:translate-y-0",
           className,
         ].join(" ")}
@@ -189,13 +189,13 @@ export function CardExamples() {
         <CardFooter>
           <button
             type="button"
-            className="inline-flex min-h-11 items-center rounded-lg bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2"
+            className="inline-flex min-h-11 items-center rounded-lg bg-indigo-600 px-4 text-sm font-medium text-white hover:bg-indigo-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-600 focus-visible:ring-offset-2"
           >
             Open project
           </button>
           <button
             type="button"
-            className="inline-flex min-h-11 items-center rounded-lg px-3 text-sm font-medium text-neutral-700 hover:bg-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
+            className="inline-flex min-h-11 items-center rounded-lg px-3 text-sm font-medium text-neutral-700 hover:bg-neutral-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-600 dark:text-neutral-200 dark:hover:bg-neutral-800"
           >
             Share
           </button>

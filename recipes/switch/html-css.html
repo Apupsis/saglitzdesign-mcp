@@ -6,12 +6,12 @@
 <title>SaglitzDesign — Switch</title>
 <style>
   :root {
-    --ring: #2563eb; --track-on: #2563eb; --track-off: #d4d4d4;
+    --ring: #4f46e5; --track-on: #4f46e5; --track-off: #d4d4d4;
     --text: #171717; --muted: #737373; --thumb: #fff;
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --ring: #60a5fa; --track-on: #3b82f6; --track-off: #404040;
+      --ring: #818cf8; --track-on: #6366f1; --track-off: #404040;
       --text: #fafafa; --muted: #a3a3a3; --thumb: #fff;
     }
   }
@@ -41,7 +41,7 @@
   .switch[aria-checked="true"] .switch__track { background: var(--track-on); }
 
   .switch__thumb {
-    position: absolute; left: 6px; width: 24px; height: 24px; border-radius: 50%;
+    position: absolute; left: 6px; width: 24px; height: 24px; border-radius: 9999px;
     background: var(--thumb); box-shadow: 0 1px 2px rgba(0,0,0,.3);
     transform: translateX(0); transition: transform .15s ease-out;
   }

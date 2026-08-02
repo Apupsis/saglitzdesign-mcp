@@ -110,7 +110,7 @@ export const Modal = forwardRef<HTMLDivElement, ModalProps>(function Modal(
         aria-describedby={bodyId}
         tabIndex={-1}
         className={cx(
-          "relative z-10 w-full max-w-md rounded-2xl bg-white p-6 shadow-xl outline-none",
+          "relative z-10 w-full max-w-md rounded-xl bg-white p-6 shadow-xl outline-none",
           "dark:bg-neutral-900",
           // Only transform/opacity animate; ease-out enter.
           "motion-safe:animate-[panelIn_150ms_ease-out]"

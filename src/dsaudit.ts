@@ -31,6 +31,8 @@ export interface DesignSystemAudit {
   offGridSpacing: ValueUse[];
   tokenUse: { tokens: number; literals: number; ratio: number };
   fontFamilies: ValueUse[];
+  /** Focus rings, counted apart from elevation — they are box-shadows but not depth. */
+  focusRings: ValueUse[];
   importantCount: number;
   zIndexOutliers: ValueUse[];
   score: number;
@@ -90,6 +92,27 @@ function extractLengths(src: string, props: RegExp): string[] {
 
 // ── audit ────────────────────────────────────────────────────────────────────
 
+/**
+ * True when every layer of a box-shadow has zero offset and zero blur — the
+ * shape of a focus ring (`0 0 0 2px …`), not of elevation.
+ */
+export function isFocusRing(value: string): boolean {
+  const layers = value.split(/,(?![^()]*\))/).map((l) => l.trim()).filter(Boolean);
+  if (!layers.length) return false;
+  return layers.every((layer) => {
+    // Strip the colour first: rgba(0,0,0,.25) would otherwise contribute
+    // "lengths". A unitless zero is valid CSS, so units are optional here.
+    const lengths = [
+      ...layer
+        .replace(/(rgba?|hsla?|color-mix|var)\([^)]*\)/gi, " ")
+        .replace(/#[0-9a-f]{3,8}\b/gi, " ")
+        .matchAll(/(-?[\d.]+)(px|rem|em)?/g),
+    ].map((m) => parseFloat(m[1]));
+    // offset-x, offset-y and blur must all be zero; a spread may follow.
+    return lengths.length >= 3 && lengths[0] === 0 && lengths[1] === 0 && lengths[2] === 0;
+  });
+}
+
 function classify(unique: number, budget: number): DimensionReport["status"] {
   if (unique <= budget) return "ok";
   return unique <= Math.ceil(budget * 1.5) ? "watch" : "sprawl";
@@ -104,11 +127,16 @@ export function auditDesignSystem(rawSource: string): DesignSystemAudit {
   const spacing = tally(
     extractLengths(src, /(?:^|[;{\s])(?:margin|padding|gap|row-gap|column-gap)(?:-(?:top|right|bottom|left|inline|block))?\s*:[^;{}]+/gi),
   );
-  const shadows = tally(
-    [...src.matchAll(/box-shadow\s*:\s*([^;{}]+)/gi)]
-      .map((m) => m[1].trim().replace(/\s+/g, " ").toLowerCase())
-      .filter((v) => v && v !== "none"),
-  );
+  // A focus ring is written as a box-shadow but is not elevation, and counting
+  // the two together punishes exactly the codebases that do this properly: a
+  // consistent five-level ramp plus a handful of ring states reads as "ten
+  // shadows, sprawl". A ring has no offset and no blur — only spread — which
+  // separates the two precisely.
+  const allShadows = [...src.matchAll(/box-shadow\s*:\s*([^;{}]+)/gi)]
+    .map((m) => m[1].trim().replace(/\s+/g, " ").toLowerCase())
+    .filter((v) => v && v !== "none");
+  const shadows = tally(allShadows.filter((v) => !isFocusRing(v)));
+  const focusRings = tally(allShadows.filter(isFocusRing));
   const fontFamilies = tally(
     [...src.matchAll(/font-family\s*:\s*([^;{}]+)/gi)].map((m) => m[1].trim().replace(/\s+/g, " ").replace(/["']/g, "")),
   );
@@ -203,6 +231,7 @@ export function auditDesignSystem(rawSource: string): DesignSystemAudit {
     offGridSpacing,
     tokenUse: { tokens, literals, ratio: tokens + literals === 0 ? 0 : +(tokens / (tokens + literals)).toFixed(2) },
     fontFamilies,
+    focusRings,
     importantCount,
     zIndexOutliers,
     score,

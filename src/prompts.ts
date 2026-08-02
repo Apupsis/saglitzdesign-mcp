@@ -30,6 +30,7 @@ const TOOLKIT = `You have the SaglitzDesign tools available. Use them — do not
 - audit_accessibility(contrast_pairs, tap_targets) — exact WCAG ratios and target sizes.
 - design_lint(code) — design & a11y anti-patterns with line numbers.
 - audit_design_system(code) — consistency score + value sprawl across the whole codebase.
+- audit_project(path) — the same auditors over a real directory instead of a pasted snippet, ranked worst-file-first. Prefer this when you have the source on disk.
 - audit_ux_copy(text) — readability, passive voice, jargon, weak CTAs.
 - measure_screenshot(path, scale, format) — measures a PNG screenshot's real palette, contrast ratios, density and structure. Use it whenever you have an image file rather than source.
 - design_review_checklist(project_type, focus) — the assembled audit checklist.`;
@@ -44,7 +45,7 @@ If the user already has a design system, do NOT introduce a second one: run **im
 
 const VERIFY_GATE = `## Verify gate (deterministic — run before you say it's done)
 These are machine-checkable. Do not skip them and do not self-assess in their place:
-1. **design_lint(code)** on the markup/styles you wrote. Fix every 🔴 error; justify anything you leave.
+1. **design_lint(code)** on the markup/styles you wrote — or **audit_project(path)** if the work is already on disk, which runs the lint over every file and adds the cross-file consistency score. Fix every 🔴 error; justify anything you leave.
 2. **audit_accessibility** with the real foreground/background pairs you shipped (body text, muted text, the primary button, borders/focus rings) and the real tap-target sizes. Anything failing → **fix_contrast** and apply the returned value.
 3. **audit_design_system(code)** on the finished styles. Every dimension should land inside its budget; near-duplicate colors and off-grid spacing must be zero — you generated a system, so there is no excuse for drift.
 4. **audit_ux_copy(text)** on the headline, subhead, primary CTA and any error/empty copy.
