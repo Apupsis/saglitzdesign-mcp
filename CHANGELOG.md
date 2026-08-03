@@ -4,6 +4,74 @@ All notable changes to SaglitzDesign MCP are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.19.0] — 2026-08-03
+
+### Added
+
+- **Status colours.** `generate_color_system` produced fourteen roles and none
+  of them was an error colour, while `create_design_system` called itself a
+  complete foundation. Adds `danger`, `success` and `warning` as full scales
+  plus verified semantic roles in both themes, seeded from the conventional
+  hues at the brand's own saturation so a muted brand does not get a
+  fluorescent red.
+- **Four knowledge documents**, all from primary sources, all on subjects the
+  base had never covered — 88 documents:
+  - `modern-css-design-primitives` — `contrast-color()`, `light-dark()`,
+    `color-mix()`, `@scope`, container style queries, `field-sizing`, anchor
+    positioning and the new font-relative units. Written around the limits:
+    `contrast-color()` returns only white or black, and MDN's own example is a
+    royal blue where it returns unreadable black.
+  - `brand-on-native-platforms` — expressing brand inside a platform's
+    conventions, built on the UI-layer / content-layer split.
+  - `search-design` — `compare_design_languages` had listed "search" as a topic
+    since v0.15.0 with nothing behind it.
+  - `naming-features-and-labels` — criteria, process and evaluation for naming.
+
+### Changed
+
+- **`get_component_recipe` swaps whole ramps, not roles.** Role mapping handled
+  `indigo-600` because that is "the primary" and left `indigo-300/400/500/800`
+  behind, because no role names the shade a dark theme uses — so every dark UI
+  built from these recipes kept our accent. Neutrals failed the same question
+  from the other side: `bg-neutral-900` is a surface and `text-neutral-900` is
+  text. Pass the `neutral`, `primary` and `danger` scales and each is swapped
+  step for step, which needs no inference and therefore cannot be wrong. Nine
+  components across both web stacks now return with no house colour left.
+- `create_design_system` prints the exact payload to hand to
+  `get_component_recipe`, and a test asserts every role in it is one the recipe
+  tool accepts, so the two cannot drift apart.
+
+### Fixed
+
+- **Focus rings were counted as elevation.** A ring is a box-shadow but not
+  depth, and counting them together punished exactly the codebases that do this
+  properly. A ring has no offset and no blur, which separates the two precisely.
+- **`design_lint` called best-practice code an error.**
+  `:focus:not(:focus-visible) { outline: none }` is the recommended way to drop
+  the ring for pointer focus while keeping it for the keyboard. Found by running
+  `audit_project` against a real site.
+- **The recipe library was not one system.** Four components used indigo as the
+  accent and four used blue. Audited at 54/100 by our own tool, now 90, with a
+  test that keeps it there.
+- **Inflection decided findability.** Title and tag matching is exact-token, so
+  "token" scored nothing against a document titled "Design Tokens". Query and
+  index tokens are now stemmed — plurals and `-ing` only; `-ed` is left alone
+  because "embed" would become "emb", and a stemmer that invents matches is
+  worse than one that misses them.
+
+### Notes
+
+The first status-colour implementation passed every test while producing
+`#46100b` for danger — a near-black brown that white reads on perfectly and
+nobody reads as an error. Contrast passed, hue passed, saturation passed; the
+constraint that bites is lightness. Measuring is not enough on its own — it has
+to be the right measurement.
+
+Apple's Human Interface Guidelines pages render client-side and return only
+their titles to a fetch, so nothing was written from memory about the June 2026
+HIG revisions. SF Symbols 8, Icon Composer 2, Pass Designer, scroll edge effects
+and app schemas remain uncovered for that reason rather than by choice.
+
 ## [0.18.0] — 2026-08-02
 
 Three gaps, each found by measuring rather than guessing: the pipeline broke in
