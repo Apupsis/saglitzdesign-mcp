@@ -492,8 +492,11 @@ tool(
       RECIPE_TOKEN_ROLES.join(", ") +
       ". Pass the values create_design_system or generate_color_system produced, e.g. {\"primary\":\"#0F62FE\",\"primaryHover\":\"#0043CE\"}. Omit to get the recipe as written.",
     ),
+    scales: z.record(z.record(z.string())).optional().describe(
+      "Your ramps, keyed by step — {\"neutral\":{\"50\":\"#…\",…,\"950\":\"#…\"},\"primary\":{…},\"danger\":{…}} — exactly the `neutral`, `primary` and `danger` scales generate_color_system returns. Swapped step for step, which is what themes the dark-mode shades too; role tokens alone leave those behind.",
+    ),
   },
-  async ({ component, stack, tokens }) => {
+  async ({ component, stack, tokens, scales }) => {
     if (recipes.length === 0) {
       return text("No component recipes are installed in this build.");
     }
@@ -506,7 +509,7 @@ tool(
     if (!r) {
       return text(`No recipe for "${component}". Available components: ${recipes.map((x) => x.component).join(", ")}.`);
     }
-    return text(recipeText(r, stack, tokens));
+    return text(recipeText(r, stack, tokens, scales));
   },
 );
 

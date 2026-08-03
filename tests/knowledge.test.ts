@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { loadKnowledge, searchKnowledge, sections } from "../dist/knowledge.js";
+import { loadKnowledge, searchKnowledge, sections, tokenize } from "../dist/knowledge.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const docs = loadKnowledge(join(root, "knowledge"));
@@ -52,5 +52,48 @@ describe("sections", () => {
     const doc = docs.find((d) => d.body.includes("\n## "));
     expect(doc).toBeTruthy();
     expect(sections(doc!).length).toBeGreaterThan(0);
+  });
+});
+
+describe("inflection should not decide whether a document is findable", () => {
+  // Tags were the workaround: every new document needed someone to imagine
+  // every form a query might take. "tokens" was in a title and "token" found
+  // nothing there. Matching titles and tags is exact-token, so the fix belongs
+  // in the tokenizer, not in a growing list of tags.
+  const docs = loadKnowledge(join(root, "knowledge"));
+  const titleTag = (d: (typeof docs)[number]) =>
+    new Set([...tokenize(d.title + " " + d.id), ...d.tags.flatMap(tokenize)]);
+
+  it("matches a singular query against a plural title or tag", () => {
+    for (const [singular, plural] of [["token", "tokens"], ["form", "forms"], ["button", "buttons"], ["color", "colors"]]) {
+      const found = docs.some((d) => titleTag(d).has(tokenize(singular)[0]));
+      expect(found, `"${singular}" should reach a document titled/tagged "${plural}"`).toBe(true);
+    }
+  });
+
+  it("matches across an -ing form", () => {
+    expect(tokenize("naming")).toEqual(tokenize("name"));
+    expect(tokenize("searching")).toEqual(tokenize("search"));
+  });
+
+  it("does not mangle words that merely end in s or ing", () => {
+    // Over-stemming invents matches, which is worse than missing one.
+    for (const w of ["css", "class", "status", "focus", "analysis", "string", "spring", "design"]) {
+      expect(tokenize(w)[0], w).toBe(w);
+    }
+  });
+
+  it("leaves short words alone", () => {
+    for (const w of ["is", "as", "css", "ios"]) expect(tokenize(w)[0], w).toBe(w);
+  });
+
+  it("keeps the searches that already worked", () => {
+    for (const [q, expected] of [
+      ["primary button size mobile", "buttons"],
+      ["core web vitals", "technical-seo"],
+      ["dark mode colors", "color-systems"],
+    ] as const) {
+      expect(searchKnowledge(docs, q, { limit: 3 }).map((r) => r.doc.id), q).toContain(expected);
+    }
   });
 });

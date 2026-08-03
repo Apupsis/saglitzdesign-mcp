@@ -445,7 +445,7 @@ const TOPICS: Record<CompareTopic, TopicEntry> = {
       "Design the zero-results state everywhere — it is the state users hit when they most need help.",
     ],
     doNotPort: ["A ⌘K palette as the *only* way to search on a touch device."],
-    docs: ["navigation", "information-architecture"],
+    docs: ["search-design", "navigation", "information-architecture"],
   },
 
   settings: {

@@ -160,11 +160,48 @@ export function findDoc(docs: KnowledgeDoc[], id: string): KnowledgeDoc | undefi
   return docs.find((d) => d.title.trim().toLowerCase() === key);
 }
 
-function tokenize(text: string): string[] {
+/**
+ * Conservative English suffix normaliser — deliberately not a full stemmer.
+ *
+ * Title and tag matching is exact-token, so before this a search for "token"
+ * scored nothing against a document titled "Design Tokens" and fell back to
+ * competing on body frequency, which long documents win. The workaround was to
+ * add every likely query form to a document's tags, which means every new
+ * document depends on someone imagining every way it might be asked for.
+ *
+ * Only plurals and `-ing` are handled. `-ed` is left alone on purpose: "embed"
+ * would become "emb", and a stemmer that invents matches is worse than one that
+ * misses them — a wrong document at the top is more expensive than a right
+ * document at position three.
+ */
+function stem(token: string): string {
+  if (token.length <= 4) return token;
+
+  // Words that end in s without being plural.
+  if (/(ss|us|is|as)$/.test(token)) return token;
+
+  if (/ies$/.test(token) && token.length > 5) return token.slice(0, -3) + "y";
+  if (/(ch|sh|x|z)es$/.test(token)) return token.slice(0, -2);
+  if (/s$/.test(token)) return token.slice(0, -1);
+
+  if (/ing$/.test(token) && token.length > 5) {
+    let base = token.slice(0, -3);
+    // A stem with no vowel is not a stem: "string" must not become "str".
+    if (!/[aeiou]/.test(base) || base.length < 3) return token;
+    if (/([^aeiou])\1$/.test(base) && !/(ss|ll|zz)$/.test(base)) return base.slice(0, -1); // running → run
+    if (/[^aeiou][aeiou][^aeiouwxy]$/.test(base)) return base + "e";                       // naming → name
+    return base;                                                                            // searching → search
+  }
+
+  return token;
+}
+
+export function tokenize(text: string): string[] {
   return text
     .toLowerCase()
     .split(/[^a-z0-9ğüşıöç]+/)
-    .filter((t) => t.length > 1);
+    .filter((t) => t.length > 1)
+    .map(stem);
 }
 
 /**

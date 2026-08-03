@@ -136,9 +136,34 @@ function readableStep(scale: Scale, bg: string, target: number, prefer: "dark" |
   return prefer === "dark" ? scale[950] : scale[50];
 }
 
+/**
+ * Fixed hues for the status roles. These are conventions, not preferences —
+ * red for destruction, green for success and amber for caution are learned by
+ * every user long before they meet your product, and a system that reassigns
+ * them is not being original, it is being unreadable.
+ */
+const STATUS_HUES = { danger: 5, success: 148, warning: 42 } as const;
+
+/**
+ * Build a status seed that belongs to this palette.
+ *
+ * Taking the brand's saturation keeps a muted brand from sitting next to a
+ * fluorescent red, and a vivid brand from getting a washed-out one. The clamp
+ * matters in both directions: a near-grey brand would otherwise produce an
+ * error colour nobody reads as an error, and a neon brand an unusable one.
+ */
+function statusSeed(brand: string, hue: number): string {
+  const { s } = rgbToHsl(hexToRgb(normalizeHex(brand)!));
+  const saturation = Math.min(0.82, Math.max(0.55, s));
+  return rgbToHex(hslToRgb({ h: hue, s: saturation, l: 0.5 }));
+}
+
 export interface ColorSystem {
   primary: Scale;
   neutral: Scale;
+  danger: Scale;
+  success: Scale;
+  warning: Scale;
   light: Record<string, string>;
   dark: Record<string, string>;
   checks: Array<{ label: string; pair: string; ratio: number; required: number; pass: boolean }>;
@@ -148,6 +173,31 @@ export interface ColorSystem {
 export function generateColorSystem(brand: string): ColorSystem {
   const primary = makeScale(brand);
   const neutral = neutralScale(brand);
+  const danger = makeScale(statusSeed(brand, STATUS_HUES.danger));
+  const success = makeScale(statusSeed(brand, STATUS_HUES.success));
+  const warning = makeScale(statusSeed(brand, STATUS_HUES.warning));
+
+  /**
+   * A status fill plus the text that reads on it.
+   *
+   * `readableStep` is the wrong tool here: asked for the darkest step that
+   * clears 3:1 on white it returns 950 every time, which has the right hue and
+   * plenty of saturation and is still a near-black brown nobody reads as an
+   * error. A fill has to stay in the vivid middle of the ramp — the same
+   * reasoning the primary action step uses — so the candidates are ordered by
+   * how usable they are, and the first that carries readable text wins.
+   */
+  const statusPair = (scale: Scale, bg: string, dir: "light" | "dark") => {
+    const candidates = dir === "dark" ? [600, 500, 700, 400, 800] : [400, 500, 300, 600, 200];
+    for (const step of candidates) {
+      const fill = scale[step];
+      const on = bestOn(fill);
+      // Readable text on the fill, and the fill itself distinct from the canvas.
+      if (on.ratio >= 4.5 && contrastRatio(fill, bg) >= 3) return { fill, on: on.color };
+    }
+    const fallback = scale[dir === "dark" ? 600 : 400];
+    return { fill: fallback, on: bestOn(fallback).color };
+  };
 
   // Primary as an action background: choose the step nearest the brand that
   // still carries readable on-color text (≥4.5). Fall back to a darker step.
@@ -179,6 +229,24 @@ export function generateColorSystem(brand: string): ColorSystem {
     focusRing: readableStep(primary, WHITE, 3, "light"),
   };
 
+  // Status roles. Destructive actions get the full treatment — a hover and a
+  // subtle background — because they are real buttons; success and warning are
+  // usually badges and banners, so a fill and its text is the whole need.
+  {
+    const d = statusPair(danger, WHITE, "dark");
+    light.danger = d.fill;
+    light.dangerHover = danger[700];
+    light.onDanger = d.on;
+    light.dangerSubtle = danger[50];
+    light.onDangerSubtle = readableStep(danger, danger[50], 4.5, "dark");
+    const su = statusPair(success, WHITE, "dark");
+    light.success = su.fill;
+    light.onSuccess = su.on;
+    const w = statusPair(warning, WHITE, "dark");
+    light.warning = w.fill;
+    light.onWarning = w.on;
+  }
+
   const darkBg = neutral[950];
   const darkSurface = neutral[900];
   // primary on a dark canvas: a lighter step that reads as accent text/border (≥4.5)
@@ -200,6 +268,21 @@ export function generateColorSystem(brand: string): ColorSystem {
     focusRing: darkPrimary,
   };
 
+  {
+    const d = statusPair(danger, darkBg, "light");
+    dark.danger = d.fill;
+    dark.dangerHover = danger[300];
+    dark.onDanger = d.on;
+    dark.dangerSubtle = danger[900];
+    dark.onDangerSubtle = readableStep(danger, danger[900], 4.5, "light");
+    const su = statusPair(success, darkBg, "light");
+    dark.success = su.fill;
+    dark.onSuccess = su.on;
+    const w = statusPair(warning, darkBg, "light");
+    dark.warning = w.fill;
+    dark.onWarning = w.on;
+  }
+
   const req = (kind: "text" | "ui") => (kind === "text" ? 4.5 : 3);
   const mk = (label: string, fg: string, bg: string, kind: "text" | "ui" = "text") => {
     const ratio = +contrastRatio(fg, bg).toFixed(2);
@@ -213,14 +296,22 @@ export function generateColorSystem(brand: string): ColorSystem {
     mk("light · primary button", light.onPrimary, light.primary),
     mk("light · text on subtle", light.onPrimarySubtle, light.primarySubtle),
     mk("light · focus ring", light.focusRing, light.background, "ui"),
+    mk("light · danger button", light.onDanger, light.danger),
+    mk("light · text on danger subtle", light.onDangerSubtle, light.dangerSubtle),
+    mk("light · success badge", light.onSuccess, light.success),
+    mk("light · warning badge", light.onWarning, light.warning),
     mk("dark · body text", dark.textPrimary, dark.background),
     mk("dark · secondary text", dark.textSecondary, dark.background),
     mk("dark · primary accent", dark.primary, dark.background, "ui"),
     mk("dark · primary button", dark.onPrimary, dark.primary),
     mk("dark · text on subtle", dark.onPrimarySubtle, dark.primarySubtle),
+    mk("dark · danger button", dark.onDanger, dark.danger),
+    mk("dark · text on danger subtle", dark.onDangerSubtle, dark.dangerSubtle),
+    mk("dark · success badge", dark.onSuccess, dark.success),
+    mk("dark · warning badge", dark.onWarning, dark.warning),
   ];
 
-  return { primary, neutral, light, dark, checks };
+  return { primary, neutral, danger, success, warning, light, dark, checks };
 }
 
 function scaleTable(name: string, scale: Scale): string {

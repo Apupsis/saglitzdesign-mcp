@@ -9,7 +9,7 @@ expert‑level guidance on **web, iOS, Android and macOS design** — plus the
 **UX, copywriting, SEO, GEO and marketing** knowledge that makes a product
 actually convert.
 
-84 curated knowledge documents · 29 tools · 8 build/review/port workflows · MCP resources with id autocomplete · a one‑call design‑system builder · real token/color/type/elevation/motion/a11y generators · design & UX‑copy linters · production component recipes · phased roadmaps · real‑world visual examples
+88 curated knowledge documents · 29 tools · 8 build/review/port workflows · MCP resources with id autocomplete · a one‑call design‑system builder · real token/color/type/elevation/motion/a11y generators · design & UX‑copy linters · production component recipes · phased roadmaps · real‑world visual examples
 
 [![npm](https://img.shields.io/npm/v/saglitzdesign-mcp?color=cb3837&logo=npm)](https://www.npmjs.com/package/saglitzdesign-mcp)
 [![CI](https://github.com/HalidSaglam/saglitzdesign-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/HalidSaglam/saglitzdesign-mcp/actions/workflows/ci.yml)
@@ -46,7 +46,7 @@ instead of guessing.
 
 ## What's inside
 
-**84 knowledge documents across 10 categories:**
+**88 knowledge documents across 10 categories:**
 
 | Category | Coverage |
 |---|---|
@@ -106,8 +106,8 @@ critique rubric, and iterates until it passes.
 | **`import_design_tokens`** | **Already have a design system?** Paste your CSS custom properties, shadcn `:root` block, DTCG file or theme JSON and get back the roles it names, the roles it leaves undefined, a WCAG check on the pairs it defines, and the whole set re‑emitted as CSS / Tailwind / SwiftUI / Compose / DTCG. The inverse of `generate_design_tokens` — take a web theme to iOS, or audit an inherited one. Only *named* tokens are read; JS configs are never evaluated. |
 | **`generate_design_tokens`** | **Real artifacts, not advice** — turns a color/spacing/type spec into CSS variables, Tailwind v4, SwiftUI, Jetpack Compose, and W3C DTCG JSON. |
 | **`audit_accessibility`** | Deterministic WCAG 2.2 checks — exact contrast ratios for color pairs + tap‑target sizes per platform, with fixes. |
-| **`get_component_recipe`** | Production‑ready, accessible reference **code** for a component (button, input, modal, toast, card, switch, tabs, empty‑state, list‑row) in react‑tailwind, html‑css, SwiftUI, or Compose — all states, ARIA, keyboard, correct motion. Pass your `tokens` and the code comes back in **your** colours instead of the house palette. |
-| **`generate_color_system`** | **One brand color → a full palette.** A 50–950 tonal scale, a cohesive neutral ramp, and light + dark semantic tokens — every text/UI pair WCAG‑verified and auto‑corrected. Feeds straight into `generate_design_tokens`. |
+| **`get_component_recipe`** | Production‑ready, accessible reference **code** for a component (button, input, modal, toast, card, switch, tabs, empty‑state, list‑row) in react‑tailwind, html‑css, SwiftUI, or Compose — all states, ARIA, keyboard, correct motion. Pass your `scales` — the neutral, primary and danger ramps `generate_color_system` returns — and the code comes back in **your** colours, dark‑mode shades included. |
+| **`generate_color_system`** | **One brand color → a full palette.** A 50–950 tonal scale, a cohesive neutral ramp, status colors (danger / success / warning) harmonised with your brand, and light + dark semantic tokens — every text/UI pair WCAG‑verified and auto‑corrected. Feeds straight into `generate_design_tokens`. |
 | **`suggest_font_pairing`** | Curated, production font pairings for a vibe (SaaS, editorial, bold, native…) — heading + body (+ mono) with paste‑ready CSS stacks, weights, rationale, and a type scale. |
 | **`fix_contrast`** | Repairs a failing color pair: computes the **nearest** accessible color (hue/saturation preserved) that meets your WCAG target — the corrected value, not just a fail report. |
 | **`suggest_icon_library`** | Recommends the right icon system for a vibe/platform (Lucide, Phosphor, Solar, SF Symbols, Material Symbols…) — with license, install command, coverage, fit rationale, and usage rules. |
