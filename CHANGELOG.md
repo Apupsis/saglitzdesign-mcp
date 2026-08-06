@@ -4,6 +4,30 @@ All notable changes to SaglitzDesign MCP are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.19.1] — 2026-08-06
+
+### Fixed
+
+- **An unsupported Node produced a syntax error, not an explanation.** `dist/index.js`
+  uses top-level await, which older runtimes cannot parse, so the failure was
+  `SyntaxError: Unexpected reserved word` pointing at a file the user did not
+  write — and no check inside that file could ever run, because the parse fails
+  before the first statement. `bin` now points at a small launcher written in
+  deliberately old syntax, which names the required version and shows how to aim
+  a client at a newer Node. Node 18 is not blocked: it works end to end in
+  testing, so it starts with a warning rather than an error. A guard added to
+  improve a message must not become a new source of breakage.
+
+### Changed
+
+- **The startup line names its transport.** It said "server running", which reads
+  as "serving" to anyone who deployed this somewhere — the process would then
+  wait on standard input forever with nothing to explain why it was unreachable.
+  It now says "ready on stdio", and adds an explicit note when started by hand
+  from a terminal, where the wait looks exactly like a hang. The README states
+  the same thing: stdio only, no HTTP or SSE, cannot be hosted remotely — which
+  is also why nothing leaves the machine.
+
 ## [0.19.0] — 2026-08-03
 
 ### Added

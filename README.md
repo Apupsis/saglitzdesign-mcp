@@ -39,6 +39,10 @@ instead of guessing.
 
 - **Runtime‑independent.** The server reads only local files. No external API,
   no account, nothing to configure. It just works, offline.
+- **Local by design.** It speaks MCP over **stdio only** and runs as a child
+  process of your MCP client. There is no HTTP or SSE transport, so it cannot be
+  hosted remotely or reached over a network — which is also why your prompts and
+  code never leave your machine.
 - **Prescriptive, not vague.** Every doc is written as rules an agent applies
   verbatim — numbers, thresholds, do/don't lists, anti‑patterns.
 - **Grounded.** Design‑language specs from official sources; patterns studied
@@ -195,6 +199,13 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 ### Cursor / other MCP clients
 
 Run `npx -y saglitzdesign-mcp` over stdio (or `node /absolute/path/to/dist/index.js` from a clone).
+
+**Requires Node 20 or newer.** It also runs on Node 18 with a warning; below that
+the launcher exits with an explanation instead of a syntax error.
+
+Your client launches the server — you don't start it yourself. Run by hand it
+will print its status and then wait on standard input for a client that never
+arrives, which looks like a hang but is the server working correctly.
 
 ### As skills (no MCP server)
 

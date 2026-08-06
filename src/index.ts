@@ -930,10 +930,24 @@ registerPrompts(server as never, {
 // ── start ────────────────────────────────────────────────────────────────────
 const transport = new StdioServerTransport();
 await server.connect(transport);
-const startup = [`SaglitzDesign MCP server running — ${docs.length} knowledge docs (${builtinDocs.length} built in`];
+// "ready on stdio", not "running": a log line that says only "running" reads as
+// "serving" to anyone who deployed this somewhere, and the process will then sit
+// on stdin forever without ever explaining why nothing can reach it.
+const startup = [`SaglitzDesign MCP server ready on stdio — ${docs.length} knowledge docs (${builtinDocs.length} built in`];
 if (userDocs.length) startup.push(`, ${userDocs.length} from ${userDirs.join(", ")}`);
 startup.push(`) from ${knowledgeDir}`);
 console.error(startup.join(""));
+
+// A TTY on stdin means a person started this by hand rather than an MCP client
+// wiring up a pipe. The server is working correctly and will now wait forever,
+// which looks exactly like a hang — so say what it is waiting for.
+if (process.stdin.isTTY) {
+  console.error(
+    "SaglitzDesign: no MCP client is connected — this server speaks MCP over stdio and is now " +
+    "waiting for one on standard input. It has no HTTP endpoint and cannot be hosted remotely; " +
+    "it is meant to be launched by your MCP client. See the README for configuration. (Ctrl-C to quit.)",
+  );
+}
 
 // Never take a built-in document out of the base quietly: a team that shadows
 // `buttons` should see that they did, and so should anyone debugging why the
