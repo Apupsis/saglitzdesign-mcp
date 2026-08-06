@@ -1,0 +1,91 @@
+#!/usr/bin/env node
+//
+// Refuse to release something inconsistent.
+//
+// A version lives in four places that have no way of noticing each other: the
+// package, the registry manifest, the changelog, and the git tag that triggers
+// the whole thing. Any pair can drift. The expensive one is the tag — npm and
+// the MCP Registry both refuse to republish a version, so `v0.20.0` pushed
+// against a package still saying 0.19.1 does not fail loudly, it silently
+// re-ships the old release under a new name and there is no undo.
+//
+// So this runs before anything is published, and says no.
+//
+// Usage:
+//   node scripts/preflight-release.mjs            # check the tree
+//   node scripts/preflight-release.mjs v0.20.0    # …and that the tag agrees
+//
+// In GitHub Actions the tag is read from GITHUB_REF when no argument is given.
+
+import { readFileSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+const read = (f) => readFileSync(join(root, f), "utf8");
+
+const errors = [];
+const ok = [];
+
+const pkg = JSON.parse(read("package.json"));
+const version = pkg.version;
+
+if (!/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(version ?? "")) {
+  errors.push(`package.json version "${version}" is not a plain semver`);
+}
+ok.push(`package.json — ${version}`);
+
+// server.json carries the version twice: once for the server, once per package
+// entry. `npm version` syncs it via scripts/sync-version.mjs, but a hand-edited
+// release would not, and the registry card is what users read.
+const manifest = JSON.parse(read("server.json"));
+const manifestVersions = [manifest.version, ...(manifest.packages ?? []).map((p) => p.version)];
+const stale = manifestVersions.filter((v) => v !== version);
+if (stale.length) {
+  errors.push(
+    `server.json still says ${[...new Set(stale)].join(", ")} while the package is ${version}. ` +
+    "Run `npm version` rather than editing package.json by hand — it syncs this file.",
+  );
+} else {
+  ok.push(`server.json — ${manifestVersions.length} version field(s) agree`);
+}
+
+// A release with no changelog entry is a release nobody can read.
+const changelog = read("CHANGELOG.md");
+const heading = new RegExp(`^## \\[${version.replace(/\./g, "\\.")}\\]`, "m");
+if (!heading.test(changelog)) {
+  errors.push(`CHANGELOG.md has no "## [${version}]" section — write one before releasing`);
+} else {
+  const section = changelog.split(heading)[1]?.split(/^## \[/m)[0] ?? "";
+  if (section.replace(/[\s—–-]/g, "").length < 80) {
+    errors.push(`the CHANGELOG entry for ${version} is nearly empty — say what changed`);
+  } else {
+    ok.push(`CHANGELOG.md — an entry for ${version}`);
+  }
+}
+
+// The tag is the trigger, so it is the one that must not be wrong.
+const ref = process.argv[2] ?? process.env.GITHUB_REF?.replace(/^refs\/tags\//, "") ?? null;
+if (ref) {
+  const tagged = ref.replace(/^v/, "");
+  if (tagged !== version) {
+    errors.push(
+      `tag ${ref} does not match package.json ${version}. ` +
+      "npm and the MCP Registry both refuse to republish a version, so this would quietly ship nothing new.",
+    );
+  } else {
+    ok.push(`tag ${ref} — matches`);
+  }
+} else {
+  ok.push("no tag to check (not a tagged run)");
+}
+
+console.log("preflight-release");
+for (const line of ok) console.log(`  ✓ ${line}`);
+for (const line of errors) console.log(`  ✗ ${line}`);
+
+if (errors.length) {
+  console.error(`\npreflight-release — ${errors.length} problem(s). Nothing published.`);
+  process.exit(1);
+}
+console.log(`\npreflight-release — ok. ${pkg.name}@${version} is consistent.`);

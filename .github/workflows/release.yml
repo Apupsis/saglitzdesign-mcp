@@ -1,0 +1,87 @@
+name: Release
+
+# Everything a release consists of, triggered by one deliberate act: pushing a
+# version tag. Ships to npm, then the MCP Registry, then cuts a GitHub Release.
+#
+# The order is load-bearing. The MCP Registry validates that the npm package
+# exists and carries a matching `mcpName`, so npm has to land first. The GitHub
+# Release is last because it is the only step with nothing downstream of it.
+#
+# Nothing publishes until the package has been packed, installed somewhere else,
+# and answered real MCP calls — see scripts/smoke-pack.mjs. The test suite
+# imports dist/ directly and cannot see a broken `bin` or a missing knowledge/.
+#
+# To release:
+#   npm version <patch|minor|major>   # syncs server.json, commits, tags
+#   git push && git push --tags
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write # cut the GitHub Release
+  id-token: write # OIDC, so the MCP Registry needs no stored credential
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: npm
+
+      - run: npm ci
+
+      # ── gates ───────────────────────────────────────────────────────────────
+      - name: Verify the tag, the manifest and the changelog agree
+        run: node scripts/preflight-release.mjs
+
+      - run: npm run build
+
+      - run: npx vitest run
+
+      - name: Verify the packed tarball installs and serves
+        run: node scripts/smoke-pack.mjs
+
+      # ── publish ─────────────────────────────────────────────────────────────
+      - name: Publish to npm
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Install mcp-publisher
+        # Pinned deliberately: a release pipeline should not change underneath a
+        # release. Bump it as a normal change, with the diff visible.
+        env:
+          MCP_PUBLISHER_VERSION: "1.8.0"
+        run: |
+          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/download/v${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz" \
+            | tar -xz mcp-publisher
+          ./mcp-publisher --version
+
+      - name: Publish to the MCP Registry
+        # The registry fetches the package from npm to verify ownership, so give
+        # the publish above a moment to become visible to it.
+        run: |
+          sleep 20
+          ./mcp-publisher login github-oidc
+          ./mcp-publisher publish
+
+      - name: Cut the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/changelog-section.mjs "${GITHUB_REF_NAME}" > /tmp/notes.md
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "${GITHUB_REF_NAME}" \
+            --notes-file /tmp/notes.md

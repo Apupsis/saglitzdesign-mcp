@@ -29,8 +29,10 @@
     "inspect": "npx @modelcontextprotocol/inspector node dist/index.js",
     "test": "npm run build && vitest run",
     "test:watch": "vitest",
+    "preflight": "node scripts/preflight-release.mjs",
+    "smoke": "node scripts/smoke-pack.mjs",
     "version": "node scripts/sync-version.mjs && git add server.json",
-    "prepublishOnly": "npm run build && vitest run"
+    "prepublishOnly": "npm run build && vitest run && npm run preflight"
   },
   "keywords": [
     "mcp",
