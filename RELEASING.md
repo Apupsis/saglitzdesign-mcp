@@ -53,10 +53,30 @@ something that installs cleanly and does nothing, with a green suite throughout.
 npm first (the MCP Registry validates against the published package), then the
 registry, then the GitHub Release.
 
-The registry step authenticates with **GitHub Actions OIDC**, so there is no
-stored credential and no interactive device-flow login. npm uses the `NPM_TOKEN`
-repository secret — a granular automation token, because interactive 2FA cannot
-be satisfied from CI.
+**Both authenticate with OIDC, so this repository stores no publishing
+credential at all.** The workflow proves its identity to npm and to the MCP
+Registry with a short-lived token GitHub mints for that run, scoped to this
+repository and this workflow. There is nothing to leak, nothing to rotate, and
+no interactive device-flow login.
+
+npm additionally records a **provenance attestation** — the commit and workflow
+run that produced the exact tarball — which npmjs.com displays on the package
+page.
+
+### One-time setup on npmjs.com
+
+Trusted publishing has to be enabled once, on the package:
+
+> npmjs.com → **saglitzdesign-mcp** → Settings → **Trusted Publisher** →
+> GitHub Actions
+>
+> - Organization or user: `HalidSaglam`
+> - Repository: `saglitzdesign-mcp`
+> - Workflow filename: `release.yml`
+> - Environment: *(leave empty)*
+
+Until that exists, the publish step fails with an authentication error — loudly,
+and after the gates, so nothing half-ships.
 
 ## Running the gates by hand
 

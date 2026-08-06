@@ -66,11 +66,21 @@ jobs:
       # ── publish ─────────────────────────────────────────────────────────────
       # A tag push always publishes. A manual run only does so when asked, which
       # is what makes the gates above runnable on their own.
+
+      # npm's OIDC trusted publishing needs a newer npm than any Node ships with.
+      # Bounded to the major so it keeps picking up fixes without a surprise
+      # breaking change landing in the middle of a release.
+      - name: Use an npm that can do trusted publishing
+        if: github.event_name == 'push' || inputs.publish
+        run: npm install -g npm@^11
+
       - name: Publish to npm
         if: github.event_name == 'push' || inputs.publish
+        # No token: npm exchanges the workflow's OIDC identity for a short-lived
+        # credential, which also attaches a provenance attestation — npm can then
+        # show which commit and workflow built this exact tarball. Configured at
+        # npmjs.com → the package → Settings → Trusted Publisher; see RELEASING.md.
         run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Install mcp-publisher
         if: github.event_name == 'push' || inputs.publish
