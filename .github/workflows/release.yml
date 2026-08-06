@@ -19,6 +19,16 @@ on:
   push:
     tags:
       - "v*"
+  # A release pipeline whose first exercise is a real release is a pipeline
+  # nobody has tested. This runs every gate in the real CI environment —
+  # checkout, install, build, tests, and the pack-and-install smoke test — and
+  # stops before anything is published.
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Actually publish (leave off to run the gates only)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write # cut the GitHub Release
@@ -54,12 +64,16 @@ jobs:
         run: node scripts/smoke-pack.mjs
 
       # ── publish ─────────────────────────────────────────────────────────────
+      # A tag push always publishes. A manual run only does so when asked, which
+      # is what makes the gates above runnable on their own.
       - name: Publish to npm
+        if: github.event_name == 'push' || inputs.publish
         run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Install mcp-publisher
+        if: github.event_name == 'push' || inputs.publish
         # Pinned deliberately: a release pipeline should not change underneath a
         # release. Bump it as a normal change, with the diff visible.
         env:
@@ -70,6 +84,7 @@ jobs:
           ./mcp-publisher --version
 
       - name: Publish to the MCP Registry
+        if: github.event_name == 'push' || inputs.publish
         # The registry fetches the package from npm to verify ownership, so give
         # the publish above a moment to become visible to it.
         run: |
@@ -78,6 +93,7 @@ jobs:
           ./mcp-publisher publish
 
       - name: Cut the GitHub Release
+        if: github.event_name == 'push' || inputs.publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

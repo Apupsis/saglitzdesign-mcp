@@ -65,6 +65,12 @@ npm run preflight   # version consistency
 npm run smoke       # pack, install elsewhere, speak MCP to it
 ```
 
+To run them in the real CI environment without publishing anything, trigger the
+**Release** workflow manually (Actions → Release → Run workflow) and leave the
+*publish* box unchecked. Everything up to and including the smoke test runs; the
+three publish steps are skipped. Worth doing after any change to the pipeline
+itself — otherwise its first exercise is a real release.
+
 `npm run smoke` is worth running after any change to `package.json`'s `files`,
 `bin`, or `exports` — those are exactly the fields no test can see.
 

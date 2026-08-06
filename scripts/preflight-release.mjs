@@ -65,7 +65,13 @@ if (!heading.test(changelog)) {
 }
 
 // The tag is the trigger, so it is the one that must not be wrong.
-const ref = process.argv[2] ?? process.env.GITHUB_REF?.replace(/^refs\/tags\//, "") ?? null;
+// Only a tag ref counts. A manual (workflow_dispatch) run happens on a branch,
+// where GITHUB_REF is refs/heads/… — reading that as a tag would compare a
+// branch name against a version and fail every gate-only run.
+const envTag = process.env.GITHUB_REF?.startsWith("refs/tags/")
+  ? process.env.GITHUB_REF.slice("refs/tags/".length)
+  : null;
+const ref = process.argv[2] ?? envTag;
 if (ref) {
   const tagged = ref.replace(/^v/, "");
   if (tagged !== version) {
