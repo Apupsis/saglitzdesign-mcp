@@ -761,8 +761,21 @@ const MARKUP_FILE = /\.(html?|vue|svelte|astro)$/i;
 /** Sanitiser imports that make a raw-HTML sink defensible. */
 const SANITISER = /\b(dompurify|sanitize-html|xss|Sanitizer)\b/i;
 
-const SECRET_WORD = /(SECRET|PRIVATE|TOKEN|PASSWORD|PASSWD|API_?KEY|ACCESS_?KEY)/i;
-const CREDENTIAL_KEY = /(token|jwt|auth|session|credential|refresh)/i;
+// Both of these match WHOLE SEGMENTS, never substrings. A bare
+// /(token|auth|...)/i fires on `tokenizer-settings`, `authorized-theme`,
+// `credentialsPolicy` and `NEXT_PUBLIC_TOKENIZER_URL` — ordinary names, flagged
+// at error severity. That is the false positive this module refuses to ship,
+// and it is worse than a miss: three bad warnings and nobody reads the fourth.
+//
+// `\b` is NOT sufficient. It fixes `authorized` but breaks `authToken`, because
+// camelCase has no non-word boundary between the parts. Split the identifier on
+// `_`, `-` and lowercase->uppercase transitions, then compare whole segments.
+const SECRET_WORDS = new Set(["SECRET", "PRIVATE", "TOKEN", "PASSWORD", "PASSWD", "APIKEY", "API", "ACCESSKEY"]);
+const CREDENTIAL_WORDS = new Set(["token", "jwt", "auth", "session", "credential"]);
+
+/** Split `authToken`, `auth_token` and `NEXT_PUBLIC_API_KEY` into comparable parts. */
+const segments = (name: string): string[] =>
+  name.split(/[_\-]|(?<=[a-z0-9])(?=[A-Z])/).filter(Boolean);
 
 export function securitySourceRules(code: string, filename?: string): LintFinding[] {
   const out: LintFinding[] = [];
