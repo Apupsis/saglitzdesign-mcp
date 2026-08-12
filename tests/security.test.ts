@@ -5,8 +5,24 @@ const ids = (code: string, filename?: string) =>
   securitySourceRules(code, filename).map((f) => f.rule).sort();
 
 describe("source rules — fire when they should", () => {
-  it("flags target=_blank without rel=noopener", () => {
-    expect(ids(`<a href="https://x.com" target="_blank">go</a>`)).toContain("blank-without-noopener");
+  it("flags target=_blank without rel=noopener, at info severity", () => {
+    const findings = securitySourceRules(`<a href="https://x.com" target="_blank">go</a>`);
+    const f = findings.find((x) => x.rule === "blank-without-noopener");
+    expect(f).toBeDefined();
+    // Browsers imply noopener on anchors at 95.58% (caniuse). Erroring here
+    // would fire on correct modern markup; the live risk is window.open().
+    expect(f!.severity).toBe("info");
+  });
+
+  it("flags window.open without noopener, more severely than the anchor case", () => {
+    const findings = securitySourceRules(`const w = window.open(url, "_blank")`);
+    const f = findings.find((x) => x.rule === "window-open-without-noopener");
+    expect(f).toBeDefined();
+    expect(f!.severity).toBe("warning");
+  });
+
+  it("accepts window.open with noopener in the features string", () => {
+    expect(ids(`window.open(url, "_blank", "noopener,noreferrer")`)).not.toContain("window-open-without-noopener");
   });
 
   it("still flags it when a formatter split the tag over lines", () => {
