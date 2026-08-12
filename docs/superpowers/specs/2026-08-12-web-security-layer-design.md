@@ -68,8 +68,40 @@ frontend developer ships wrong.
 ## Knowledge: `knowledge/security/`, five documents
 
 New category `security`, platform `web`. Existing frontmatter contract
-(`id`, `title`, `category`, `platform`, `tags`, `sources`, `updated`), written
-from primary sources, prescriptive, with numbers.
+(`id`, `title`, `category`, `platform`, `tags`, `sources`, `updated`),
+prescriptive, with numbers.
+
+### Source policy
+
+Security guidance is the one category where a confidently wrong, stale answer
+does direct harm — a reader who deploys a policy from a 2019 blog post gets a
+false sense of coverage. So sourcing is a hard constraint here, not a preference.
+
+**Permitted sources**, in order of preference:
+
+1. Standards bodies and their reference documentation — W3C, WHATWG, IETF RFCs,
+   MDN, FIDO Alliance/WebAuthn specs.
+2. The implementers — web.dev, Chrome Developers, WebKit, Mozilla security blog,
+   the framework's own security documentation (Next.js, Astro, SvelteKit).
+3. OWASP — Top 10, ASVS, and the Cheat Sheet Series.
+4. Regulators for the privacy document — EDPB guidelines, the ICO, the KVKK
+   authority. Not law-firm marketing pages.
+
+**Not permitted as the basis for a rule:** SEO content blogs, listicles,
+Medium/dev.to posts, vendor pages selling a scanner. If a claim appears only in
+that tier, it does not go in.
+
+**Currency:** every claim is verified against the source as of the writing date,
+and anything version-dependent (baseline browser support, header deprecation,
+threshold values) states which. Where a widely-repeated claim turns out to be
+wrong, the document says so explicitly — `technical-seo` already does this for
+the fabricated "LCP threshold dropped to 2.0s" claim, and that myth-check habit
+carries over. A superseded mechanism is named as superseded rather than omitted,
+because readers arrive carrying it: `X-Frame-Options`, `X-XSS-Protection`,
+Expect-CT, `document.domain`.
+
+Each document's `sources` array lists what was actually read, and the `updated`
+date is the verification date — not the date the file was created.
 
 ### `web-security-headers`
 
@@ -235,6 +267,9 @@ extension set instead, so the existing tool's behaviour does not move.
   design rests on.
 - The "not visible" section is present in every report, including reports with
   zero findings.
+- Every `sources` entry across the five documents is on a permitted-tier domain.
+  Asserted mechanically in `integrity.test.ts` against an allowlist, so the source
+  policy survives future edits instead of holding only on the day it was written.
 
 ## Out of scope for this spec, tracked
 
