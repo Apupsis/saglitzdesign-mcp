@@ -65,7 +65,7 @@ export const REVIEW_MAP: Record<string, string[]> = {
     "navigation", "search-design", "web-dashboards", "cards-lists-modals", "data-visualization", "design-systems-methodology",
     "information-architecture", "theming-off-the-shelf", "principles-heuristics", "typography", "color-systems", "spacing-layout", "accessibility",
     "buttons", "forms-inputs", "visual-craft-standards", "clean-app-design", "iconography", "ux-writing",
-    "i18n-localization", "ai-product-ux", "ethical-design", "web-security-headers",
+    "i18n-localization", "ai-product-ux", "ethical-design", "web-security-headers", "auth-and-session-ux",
   ],
 };
 
@@ -166,7 +166,7 @@ export const ROADMAPS: Record<string, Roadmap> = {
       { title: "2. IA & app shell", goal: "Sidebar structure, command palette, breadcrumbs", docs: ["information-architecture", "navigation", "search-design", "web-dashboards"] },
       { title: "3. Wireframes, copy & edge states", goal: "Real data shapes; empty/loading/error/zero-results for every view", docs: ["ux-writing", "cards-lists-modals", "mobile-empty-states-buttons", "i18n-localization"] },
       { title: "4. Design system & data-viz", goal: "Token system + governance; density mode; tables/forms/charts standardized", docs: ["design-systems-methodology", "theming-off-the-shelf", "data-visualization", ...CORE_FOUNDATION, "forms-inputs", "buttons"] },
-      { title: "5. Hi-fi & craft", goal: "Dense screens first; keyboard support; dark mode; clean & maintainable; hardened at the header level", docs: [...CORE_CRAFT, "clean-app-design", "design-engineering", "ai-product-ux", "motion-microinteractions", "principles-heuristics", "web-security-headers"] },
+      { title: "5. Hi-fi & craft", goal: "Dense screens first; keyboard support; dark mode; clean & maintainable; hardened at the header level and across sign-in, session and account-recovery flows", docs: [...CORE_CRAFT, "clean-app-design", "design-engineering", "ai-product-ux", "motion-microinteractions", "principles-heuristics", "web-security-headers", "auth-and-session-ux"] },
       { title: "6. Pricing, onboarding & retention", goal: "Value-based pricing; time-to-value <60s; activation instrumented; honest, non-manipulative flows", docs: ["pricing-strategy", "web-pricing-sections", "mobile-onboarding-paywall", "hooked-retention", "growth-frameworks", "conversion-ux", "email-marketing", "ethical-design"] },
       { title: "7. Validate & iterate", goal: "Task-based tests; heuristic score; clean design→dev handoff; metrics + experiments", docs: [...CORE_VALIDATE, "design-handoff", "analytics-experimentation"] },
     ],
