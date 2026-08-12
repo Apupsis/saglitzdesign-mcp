@@ -333,6 +333,51 @@ headers.set('Content-Security-Policy', "default-src 'self'; object-src 'none'; b
   });
 });
 
+describe("config rules — declaration-context matching covers the common header-setting APIs", () => {
+  // A first pass at rejecting header-name-array references matched only the
+  // literal substring ".set(" / ".append(", which is not the same as
+  // matching the call's own method name: it missed res.setHeader (raw Node
+  // / Express — at least as common as the bare .set() form), Fastify's
+  // reply.header, and any call where characters sit between the dot and the
+  // matched text. The result was a false csp-missing on a project that sets
+  // its CSP correctly through any of those APIs — the exact
+  // opposite-direction harm this whole context check exists to prevent.
+  const CSP = "default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
+
+  it.each([
+    ["res.setHeader (raw Node / Express)", `res.setHeader("Content-Security-Policy", "${CSP}")`],
+    ["reply.header (Fastify)", `reply.header("Content-Security-Policy", "${CSP}")`],
+    ["response.setHeader", `response.setHeader("Content-Security-Policy", "${CSP}")`],
+    ["ctx.set (Koa)", `ctx.set("Content-Security-Policy", "${CSP}")`],
+  ])("finds a CSP declared via %s", (_label, source) => {
+    const ids = cfgIds([{ path: "middleware.ts", source }]);
+    expect(ids).not.toContain("csp-missing");
+    expect(ids.filter((r) => r.startsWith("csp-"))).toEqual([]);
+  });
+
+  it("still finds a declaration behind a long inline comment between ( and the header name", () => {
+    // Binary-searched by an earlier review: a fixed character-count lookback
+    // stopped recognising the declaration once the padding between `(` and
+    // the header name crossed the window's width. The fix scans back to the
+    // nearest statement boundary instead, so there is no width to cross.
+    const padding = "x".repeat(200);
+    const source = `h.set(/* ${padding} */"Content-Security-Policy", "${CSP}")`;
+    const ids = cfgIds([{ path: "middleware.ts", source }]);
+    expect(ids).not.toContain("csp-missing");
+    expect(ids.filter((r) => r.startsWith("csp-"))).toEqual([]);
+  });
+
+  it("still rejects the header-name array with the widened context matching in place", () => {
+    const source = `
+export const ALLOWED_RESPONSE_HEADERS = [
+  "Content-Security-Policy",
+  "Strict-Transport-Security",
+];
+`;
+    expect(cfgIds([{ path: "headers.ts", source }])).toContain("csp-missing");
+  });
+});
+
 describe("config rules — commented-out header mentions", () => {
   it("does not treat a commented-out Content-Security-Policy as a real declaration", () => {
     const source = [

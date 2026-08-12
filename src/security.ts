@@ -427,34 +427,75 @@ function maskComments(source: string, path: string): string {
   return out;
 }
 
+// The method names that actually set a response header, across the runtimes
+// this tool is likely to see: the fetch-standard Headers/Response `.set()`/
+// `.append()`, raw Node's `res.setHeader()`, and Fastify's `reply.header()`.
+// Matched as the call's own last identifier segment (see
+// `isHeaderDeclarationContext`), never a substring — `.set(` alone would
+// also (wrongly) accept `.reset(` or `.offset(`, and a bare substring check
+// for `set`/`append` misses `setHeader`/`header` entirely, which is exactly
+// the regression a first pass at this shipped: `res.setHeader(...)` and
+// `reply.header(...)` are at least as common as the bare `.set()` form, and
+// silently not recognising them produced a false `csp-missing` on a project
+// that sets its CSP correctly — the one direction this module refuses.
+const HEADER_METHOD_NAMES = new Set(["set", "setheader", "append", "header"]);
+
+/**
+ * Scan back from `idx` to the nearest statement/block boundary — `;`, `{`
+ * or `}` — rather than a fixed character count. A `.set(` call reformatted
+ * across several lines (a common Prettier shape for a call with more
+ * arguments than fit on one line), or a long inline comment between `(` and
+ * the header name, both still sit inside a single statement; a fixed-width
+ * window has no relationship to where that statement actually starts and
+ * can cut a real declaration off, producing the same false `csp-missing`
+ * this function exists to prevent. Capped a few thousand characters back
+ * purely as a safety valve against a pathological file with no boundary
+ * character for a very long stretch (e.g. minified code) — not the real
+ * bound, which is the syntax itself.
+ */
+function statementStart(text: string, idx: number): number {
+  const cap = Math.max(0, idx - 4000);
+  let i = idx - 1;
+  while (i >= cap && text[i] !== ";" && text[i] !== "{" && text[i] !== "}") i--;
+  return i + 1;
+}
+
 /**
  * True when the header-name occurrence ending at `idx` in `text` sits in a
  * shape that actually declares a value:
  *   - bare at the start of its own line (only whitespace precedes it back to
  *     the previous newline) — the `_headers` / netlify.toml shape, where the
  *     header name is never quoted;
- *   - immediately after `.set(`/`.append(` (a fetch Headers / Response call);
+ *   - immediately after a call whose own method name is one of
+ *     `HEADER_METHOD_NAMES` (`res.setHeader(`, `reply.header(`,
+ *     `headers.set(`, `headers.append(`, …) — matched on the identifier
+ *     itself, not a substring of it;
  *   - immediately after a `key`/`value`-style property (`key: 'X'` or the
  *     JSON `"key": "X"`), optionally quoted, colon or `=`.
  * Anything else — most importantly a header name sitting in a plain list
  * (`["Content-Security-Policy", "Strict-Transport-Security"]`, e.g. an
  * `ALLOWED_RESPONSE_HEADERS` reference array) — is not a declaration. That
  * shape has no assignment context at all: the character before the opening
- * quote is `[` or `,`, and there is no `.set(`/`key:` anywhere nearby. This
- * is a positive allowlist, not a blocklist of `[`/`,`, precisely because an
- * unrecognised shape should be read as "not proven to declare anything"
- * rather than guessed at — a missed declaration surfaces as `*-missing`,
- * which is a visible, quickly-disproved false alarm; a fabricated one
- * silently swallows a real absence, which is the failure this exists to
- * prevent.
+ * quote is `[` or `,`, and there is no recognised call or `key:` anywhere in
+ * the statement. This is a positive allowlist, not a blocklist of `[`/`,`,
+ * precisely because an unrecognised shape should be read as "not proven to
+ * declare anything" rather than guessed at — a missed declaration surfaces
+ * as `*-missing`, which is a visible, quickly-disproved false alarm; a
+ * fabricated one silently swallows a real absence, which is the failure
+ * this exists to prevent. Widening what counts as a declaration context
+ * (this function) is not the same move as weakening that guard — the array
+ * shape must, and does, still fall through to false.
  */
 function isHeaderDeclarationContext(text: string, idx: number): boolean {
   const lineStart = text.lastIndexOf("\n", idx - 1) + 1;
   if (/^[ \t]*$/.test(text.slice(lineStart, idx))) return true;
 
-  const before = text.slice(Math.max(0, idx - 60), idx);
-  return /\.\s*(?:set|append)\s*\(\s*["'`]?$/i.test(before)
-    || /["'`]?key["'`]?\s*[:=]\s*["'`]?$/i.test(before);
+  const before = text.slice(statementStart(text, idx), idx);
+
+  const call = /\.\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*\(\s*["'`]?$/.exec(before);
+  if (call && HEADER_METHOD_NAMES.has(call[1].toLowerCase())) return true;
+
+  return /["'`]?key["'`]?\s*[:=]\s*["'`]?$/i.test(before);
 }
 
 /**
