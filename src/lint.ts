@@ -30,7 +30,7 @@ interface LineRule {
 
 // ── tag scanner ──────────────────────────────────────────────────────────────
 
-interface Tag {
+export interface Tag {
   name: string;
   attrs: string;
   index: number;
@@ -42,7 +42,7 @@ interface Tag {
 // Attribute chunk allows newlines, quoted strings and one level of JSX braces.
 const TAG_RE = /<([A-Za-z][A-Za-z0-9._-]*)((?:"[^"]*"|'[^']*'|\{(?:[^{}]|\{[^{}]*\})*\}|[^>"'{])*?)(\/?)>/g;
 
-function scanTags(src: string): Tag[] {
+export function scanTags(src: string): Tag[] {
   const tags: Tag[] = [];
   TAG_RE.lastIndex = 0;
   let m: RegExpExecArray | null;

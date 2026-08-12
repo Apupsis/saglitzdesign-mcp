@@ -55,8 +55,13 @@ export interface ProjectAudit {
   worstFiles: Array<{ file: string; errors: number; warnings: number; info: number }>;
 }
 
-export function scanProject(root: string, extensions: string[] = UI_EXTENSIONS): ScanResult {
+export function scanProject(
+  root: string,
+  extensions: string[] = UI_EXTENSIONS,
+  filenames: string[] = [],
+): ScanResult {
   const wanted = new Set(extensions.map((e) => e.toLowerCase()));
+  const wantedNames = new Set(filenames);
   const files: ProjectFile[] = [];
   const skippedLarge: string[] = [];
   const unreadable: string[] = [];
@@ -84,7 +89,9 @@ export function scanProject(root: string, extensions: string[] = UI_EXTENSIONS):
         continue;
       }
       if (!entry.isFile()) continue;
-      if (!wanted.has(extname(entry.name).toLowerCase())) continue;
+      const matchesExt = wanted.has(extname(entry.name).toLowerCase());
+      const matchesName = wantedNames.has(entry.name);
+      if (!matchesExt && !matchesName) continue;
 
       let size = 0;
       try {
