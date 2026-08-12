@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { securitySourceRules } from "../dist/security.js";
+import { securitySourceRules, securityConfigRules, extractHeaders } from "../dist/security.js";
 
 const ids = (code: string, filename?: string) =>
   securitySourceRules(code, filename).map((f) => f.rule).sort();
@@ -159,5 +159,137 @@ describe("every finding is actionable", () => {
       expect(f.doc).toBeTruthy();
       expect(f.line).toBeGreaterThan(0);
     }
+  });
+});
+
+const cfgIds = (files: Array<{ path: string; source: string }>) =>
+  securityConfigRules(files).map((f) => f.rule);
+
+describe("config rules — CSP discovery", () => {
+  it("reports csp-missing when no configuration mentions one", () => {
+    expect(cfgIds([{ path: "next.config.js", source: `module.exports = {}` }]))
+      .toContain("csp-missing");
+  });
+
+  it("finds a CSP in vercel.json", () => {
+    const source = JSON.stringify({
+      headers: [{ source: "/(.*)", headers: [
+        { key: "Content-Security-Policy", value: "default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'" },
+      ] }],
+    }, null, 2);
+    expect(cfgIds([{ path: "vercel.json", source }])).not.toContain("csp-missing");
+  });
+
+  it("finds a CSP in a _headers file", () => {
+    const source = `/*\n  Content-Security-Policy: default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'\n`;
+    expect(cfgIds([{ path: "_headers", source }])).not.toContain("csp-missing");
+  });
+
+  it("finds a CSP in netlify.toml", () => {
+    const source = `[[headers]]\n  for = "/*"\n  [headers.values]\n  Content-Security-Policy = "default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"\n`;
+    expect(cfgIds([{ path: "netlify.toml", source }])).not.toContain("csp-missing");
+  });
+
+  it("reports a runtime-assembled CSP as undeterminable, not missing", () => {
+    const source = "headers.set('Content-Security-Policy', `default-src 'self'; script-src 'nonce-${nonce}'`)";
+    const ids = cfgIds([{ path: "middleware.ts", source }]);
+    expect(ids).not.toContain("csp-missing");
+    expect(ids).toContain("csp-undeterminable");
+  });
+
+  it("finds a CSP in proxy.ts, the Next.js 16 name for middleware", () => {
+    // Next.js 16 deprecated and renamed middleware.ts to proxy.ts. Reading only
+    // the old name would report csp-missing on every Next.js 16 project that
+    // sets a CSP correctly — a false positive on the most common modern stack.
+    const source = `export function proxy() { res.headers.set('Content-Security-Policy', "default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'") }`;
+    expect(cfgIds([{ path: "proxy.ts", source }])).not.toContain("csp-missing");
+  });
+});
+
+describe("config rules — CSP weaknesses", () => {
+  const withCsp = (csp: string) => cfgIds([
+    { path: "_headers", source: `/*\n  Content-Security-Policy: ${csp}\n` },
+  ]);
+
+  it("flags unsafe-inline in script-src", () => {
+    expect(withCsp("default-src 'self'; script-src 'self' 'unsafe-inline'")).toContain("csp-unsafe-inline");
+  });
+
+  it("flags unsafe-eval in script-src", () => {
+    expect(withCsp("default-src 'self'; script-src 'self' 'unsafe-eval'")).toContain("csp-unsafe-eval");
+  });
+
+  it("flags a wildcard script-src", () => {
+    expect(withCsp("default-src 'self'; script-src *")).toContain("csp-wildcard");
+  });
+
+  it("flags missing object-src, base-uri and frame-ancestors", () => {
+    const ids = withCsp("default-src 'self'; script-src 'self'");
+    expect(ids).toContain("csp-missing-object-src");
+    expect(ids).toContain("csp-missing-base-uri");
+    expect(ids).toContain("csp-missing-frame-ancestors");
+  });
+
+  it("stays silent on a strict policy — the clean case must be provably clean", () => {
+    const strict = "default-src 'self'; script-src 'nonce-abc123' 'strict-dynamic'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; require-trusted-types-for 'script'";
+    const ids = withCsp(strict);
+    expect(ids.filter((r) => r.startsWith("csp-"))).toEqual([]);
+    expect(ids).not.toContain("trusted-types-absent");
+  });
+});
+
+describe("config rules — the other headers", () => {
+  const headersFile = (body: string) => [{ path: "_headers", source: `/*\n${body}\n` }];
+
+  it("flags missing HSTS", () => {
+    expect(cfgIds(headersFile("  X-Content-Type-Options: nosniff"))).toContain("hsts-missing");
+  });
+
+  it("flags a short HSTS max-age", () => {
+    expect(cfgIds(headersFile("  Strict-Transport-Security: max-age=600"))).toContain("hsts-short-max-age");
+  });
+
+  it("accepts a long HSTS max-age with subdomains", () => {
+    const ids = cfgIds(headersFile("  Strict-Transport-Security: max-age=31536000; includeSubDomains"));
+    expect(ids).not.toContain("hsts-short-max-age");
+    expect(ids).not.toContain("hsts-no-subdomains");
+  });
+
+  it("flags a referrer policy that leaks more than the browser default", () => {
+    expect(cfgIds(headersFile("  Referrer-Policy: unsafe-url"))).toContain("referrer-policy-unsafe");
+  });
+
+  it("does not flag an absent Referrer-Policy", () => {
+    // strict-origin-when-cross-origin has been the browser default since the
+    // November 2020 spec revision, so absence is already the recommended value.
+    // A rule that fires here would fire on correct configuration.
+    expect(cfgIds(headersFile("  X-Content-Type-Options: nosniff"))).not.toContain("referrer-policy-unsafe");
+  });
+
+  it("does not flag strict-origin-when-cross-origin set explicitly", () => {
+    expect(cfgIds(headersFile("  Referrer-Policy: strict-origin-when-cross-origin"))).not.toContain("referrer-policy-unsafe");
+  });
+
+  it("flags production source maps", () => {
+    expect(cfgIds([{ path: "next.config.js", source: `module.exports = { productionBrowserSourceMaps: true }` }]))
+      .toContain("sourcemaps-in-production");
+  });
+});
+
+describe("config rules — committed env files", () => {
+  it("flags a .env that is not gitignored", () => {
+    const files = [
+      { path: ".env", source: "API_KEY=abc" },
+      { path: ".gitignore", source: "node_modules\ndist\n" },
+    ];
+    expect(cfgIds(files)).toContain("env-committed");
+  });
+
+  it("accepts a .env that is gitignored", () => {
+    const files = [
+      { path: ".env", source: "API_KEY=abc" },
+      { path: ".gitignore", source: "node_modules\n.env\n" },
+    ];
+    expect(cfgIds(files)).not.toContain("env-committed");
   });
 });

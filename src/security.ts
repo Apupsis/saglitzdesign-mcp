@@ -269,3 +269,235 @@ export function securitySourceRules(code: string, filename?: string): LintFindin
 
   return deduped.sort((a, b) => a.line - b.line);
 }
+
+// ── configuration rules ──────────────────────────────────────────────────────
+//
+// Header state is inferred from local files. The server makes no network call,
+// so a CDN or reverse proxy can add headers this audit cannot see — the report
+// says so rather than implying the absence is real.
+//
+// Configuration is read as text and never evaluated, the same rule
+// import_design_tokens set for tailwind.config.js.
+
+// `.ts` covers both middleware.ts and proxy.ts — Next.js 16 deprecated the
+// former and renamed it to the latter, so narrowing this list to named files
+// would go blind on every Next.js 16 project.
+export const SECURITY_EXTENSIONS = [
+  ".html", ".htm", ".jsx", ".tsx", ".vue", ".svelte", ".astro", ".ts", ".js", ".mjs", ".cjs", ".json", ".toml",
+];
+
+export const SECURITY_FILENAMES = [
+  "_headers", ".env", ".env.local", ".env.production", ".gitignore", "netlify.toml", "vercel.json",
+];
+
+const HEADER_NAMES = [
+  "Content-Security-Policy",
+  "Content-Security-Policy-Report-Only",
+  "Strict-Transport-Security",
+  "X-Content-Type-Options",
+  "Referrer-Policy",
+  "Permissions-Policy",
+] as const;
+
+export interface HeaderHit {
+  value: string;
+  file: string;
+  line: number;
+  /** The value is assembled at runtime, so its contents cannot be read here. */
+  undeterminable: boolean;
+}
+
+/**
+ * Find each header's declared value across every configuration shape we support:
+ * `key: 'X', value: '…'` (next.config, vercel.json), `X = "…"` (netlify.toml),
+ * `X: …` to end of line (_headers), and `.set('X', v)` (middleware/proxy).
+ */
+export function extractHeaders(files: Array<{ path: string; source: string }>): Map<string, HeaderHit> {
+  const found = new Map<string, HeaderHit>();
+
+  for (const file of files) {
+    for (const header of HEADER_NAMES) {
+      // Hyphens need no escaping in a regex — nothing else in `header` is a
+      // metacharacter either, so it is used as written.
+      const nameRe = new RegExp(header, "gi");
+      let m: RegExpExecArray | null;
+      while ((m = nameRe.exec(file.source)) !== null) {
+        const after = file.source.slice(m.index + header.length, m.index + header.length + 4000);
+        const line = file.source.slice(0, m.index).split("\n").length;
+
+        // `key: 'Content-Security-Policy'` … `value: '…'`
+        let value: string | undefined;
+        let undeterminable = false;
+
+        const quoted = /^["']?\s*(?:,\s*)?(?:["']?value["']?\s*[:=]\s*)?(["'`])([\s\S]*?)\1/.exec(after);
+        const colon = /^\s*[:=]\s*([^\n]+)/.exec(after);
+
+        if (quoted) {
+          value = quoted[2];
+          if (quoted[1] === "`" && /\$\{/.test(value)) undeterminable = true;
+        } else if (colon) {
+          // Strip an outer wrapping quote pair (netlify.toml's `X = "…"`),
+          // but only when the leading and trailing characters are a matching
+          // quote — never a bare trailing-quote strip. A `_headers`-style
+          // value ends in plain text that can itself close with a CSP
+          // keyword like 'unsafe-inline', and stripping "any trailing quote"
+          // was chewing off that keyword's own closing quote, silently
+          // corrupting the last source expression in every directive list.
+          const raw = colon[1].trim();
+          const wrapped = /^(["'`])([\s\S]*)\1,?$/.exec(raw);
+          value = wrapped ? wrapped[2] : raw;
+        }
+
+        if (value === undefined) continue;
+        if (!undeterminable && /\$\{|\+\s*[A-Za-z_$]/.test(value)) undeterminable = true;
+
+        const key = header.toLowerCase();
+        const existing = found.get(key);
+        // Prefer a readable declaration over an undeterminable one.
+        if (!existing || (existing.undeterminable && !undeterminable)) {
+          found.set(key, { value, file: file.path, line, undeterminable });
+        }
+      }
+    }
+  }
+
+  return found;
+}
+
+/** Split a policy into directive → source list. */
+export function parseCsp(value: string): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const part of value.split(";")) {
+    const tokens = part.trim().split(/\s+/).filter(Boolean);
+    if (!tokens.length) continue;
+    out.set(tokens[0].toLowerCase(), tokens.slice(1));
+  }
+  return out;
+}
+
+export function securityConfigRules(files: Array<{ path: string; source: string }>): LintFinding[] {
+  const out: LintFinding[] = [];
+  const push = (
+    file: string, line: number, severity: LintFinding["severity"],
+    rule: string, message: string, fix: string, doc = "web-security-headers",
+  ) => out.push({ line, severity, rule, message: `${file}: ${message}`, fix, doc });
+
+  const headers = extractHeaders(files);
+  const csp = headers.get("content-security-policy") ?? headers.get("content-security-policy-report-only");
+
+  // ── CSP ────────────────────────────────────────────────────────────────────
+  if (!csp) {
+    push("configuration", 1, "error", "csp-missing",
+      `No Content-Security-Policy is declared in any configuration file read here.`,
+      `Start with Content-Security-Policy-Report-Only, collect reports, then enforce a nonce-based policy.`);
+  } else if (csp.undeterminable) {
+    push(csp.file, csp.line, "info", "csp-undeterminable",
+      `A Content-Security-Policy is set from a value assembled at runtime, so its directives cannot be read from source.`,
+      `Verify the emitted header in a response, or extract the static parts into a named constant.`);
+  } else {
+    const directives = parseCsp(csp.value);
+    const scriptSrc = directives.get("script-src") ?? directives.get("default-src") ?? [];
+
+    if (scriptSrc.includes("'unsafe-inline'") && !scriptSrc.some((s) => s.startsWith("'nonce-") || s.startsWith("'sha"))) {
+      push(csp.file, csp.line, "error", "csp-unsafe-inline",
+        `script-src allows 'unsafe-inline', which permits exactly the injected script a policy exists to stop.`,
+        `Replace it with a per-response 'nonce-…' plus 'strict-dynamic'.`);
+    }
+    if (scriptSrc.includes("'unsafe-eval'")) {
+      push(csp.file, csp.line, "error", "csp-unsafe-eval",
+        `script-src allows 'unsafe-eval', which re-opens string-to-code execution.`,
+        `Remove it and replace any eval/new Function use in the bundle.`);
+    }
+    if (scriptSrc.includes("*") || scriptSrc.includes("http:") || scriptSrc.includes("https:")) {
+      push(csp.file, csp.line, "error", "csp-wildcard",
+        `script-src permits any host, which makes the policy decorative.`,
+        `Use 'nonce-…' with 'strict-dynamic' instead of a host list.`);
+    }
+    for (const [directive, rule] of [
+      ["object-src", "csp-missing-object-src"],
+      ["base-uri", "csp-missing-base-uri"],
+      ["frame-ancestors", "csp-missing-frame-ancestors"],
+    ] as const) {
+      if (!directives.has(directive)) {
+        push(csp.file, csp.line, "warning", rule,
+          `${directive} is not set, so it falls back to a permissive default.`,
+          `Add ${directive} 'none' unless the site genuinely needs otherwise.`);
+      }
+    }
+    if (!directives.has("require-trusted-types-for")) {
+      push(csp.file, csp.line, "info", "trusted-types-absent",
+        `Trusted Types is not enabled; DOM XSS remains a case-by-case problem rather than an eliminated class.`,
+        `Add require-trusted-types-for 'script' in report-only first.`);
+    }
+  }
+
+  // ── HSTS ───────────────────────────────────────────────────────────────────
+  const hsts = headers.get("strict-transport-security");
+  if (!hsts) {
+    push("configuration", 1, "warning", "hsts-missing",
+      `No Strict-Transport-Security header, so the first visit over HTTP is downgradeable.`,
+      `Set max-age=31536000; includeSubDomains once every subdomain serves HTTPS.`);
+  } else if (!hsts.undeterminable) {
+    const age = /max-age\s*=\s*(\d+)/i.exec(hsts.value);
+    if (age && Number(age[1]) < 15552000) {
+      push(hsts.file, hsts.line, "warning", "hsts-short-max-age",
+        `HSTS max-age is ${age[1]}s; below 180 days (15552000) it gives little protection and is not preload-eligible.`,
+        `Raise it to 31536000 once you are confident in the HTTPS setup.`);
+    }
+    if (!/includeSubDomains/i.test(hsts.value)) {
+      push(hsts.file, hsts.line, "info", "hsts-no-subdomains",
+        `HSTS omits includeSubDomains, leaving subdomains downgradeable.`,
+        `Add includeSubDomains — but only once every subdomain serves HTTPS, because it is disruptive to undo.`);
+    }
+  }
+
+  // ── the cheap ones ─────────────────────────────────────────────────────────
+  if (!headers.has("x-content-type-options")) {
+    push("configuration", 1, "warning", "x-content-type-options-missing",
+      `X-Content-Type-Options is not set, so browsers may MIME-sniff a response into a script.`,
+      `Set X-Content-Type-Options: nosniff. It has no downside.`);
+  }
+  // There is deliberately no "referrer-policy-missing" rule. Since the November
+  // 2020 spec revision, strict-origin-when-cross-origin IS the browser default
+  // (verified against MDN) — an absent header already behaves the way we would
+  // have recommended, so flagging its absence would fire on correct
+  // configuration. Only an explicitly worse value is a finding.
+  const LEAKY_REFERRER = /^(unsafe-url|no-referrer-when-downgrade|origin-when-cross-origin)$/i;
+  const ref = headers.get("referrer-policy");
+  if (ref && !ref.undeterminable && LEAKY_REFERRER.test(ref.value.trim())) {
+    push(ref.file, ref.line, "warning", "referrer-policy-unsafe",
+      `Referrer-Policy "${ref.value.trim()}" sends more than the browser default, leaking full URLs — including any token in a path or query — to other origins.`,
+      `Remove the header to get strict-origin-when-cross-origin, or set that value explicitly.`);
+  }
+  if (!headers.has("permissions-policy")) {
+    push("configuration", 1, "warning", "permissions-policy-missing",
+      `No Permissions-Policy, so embedded content may request camera, microphone and geolocation.`,
+      `Set Permissions-Policy: camera=(), microphone=(), geolocation=() and open up only what you use.`);
+  }
+
+  // ── build configuration ────────────────────────────────────────────────────
+  for (const file of files) {
+    if (/productionBrowserSourceMaps\s*:\s*true|sourcemap\s*:\s*true/.test(file.source)) {
+      const line = file.source.slice(0, file.source.search(/productionBrowserSourceMaps|sourcemap/)).split("\n").length;
+      push(file.path, line, "warning", "sourcemaps-in-production",
+        `Production source maps publish your original sources, comments and internal paths.`,
+        `Disable them, or upload them privately to your error reporter instead of serving them.`,
+        "frontend-attack-surface");
+    }
+  }
+
+  // ── committed env files ────────────────────────────────────────────────────
+  const gitignore = files.find((f) => f.path.endsWith(".gitignore"))?.source ?? "";
+  const ignored = new Set(gitignore.split("\n").map((l) => l.trim().replace(/^\/+|\/+$/g, "")));
+  for (const file of files) {
+    const base = file.path.split("/").pop() ?? file.path;
+    if (!/^\.env(\.|$)/.test(base)) continue;
+    if (ignored.has(base) || ignored.has(".env*") || ignored.has(".env")) continue;
+    push(file.path, 1, "error", "env-committed",
+      `${base} sits in the project and is not covered by .gitignore; once committed it stays in git history after deletion.`,
+      `Add it to .gitignore, rotate every value it holds, and purge it from history if it was pushed.`,
+      "frontend-attack-surface");
+  }
+
+  return out;
+}
