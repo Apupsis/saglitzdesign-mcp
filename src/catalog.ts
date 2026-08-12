@@ -54,12 +54,14 @@ export const REVIEW_MAP: Record<string, string[]> = {
     "modern-css-design-primitives", "ux-writing", "naming-features-and-labels", "i18n-localization",
     "technical-seo", "on-page-seo", "seo-for-designers", "geo-tactics-checklist", "analytics-experimentation",
     "ethical-design", "ecommerce-checkout", "web-security-headers", "frontend-attack-surface",
+    "privacy-consent-and-tracking",
   ],
   "landing-page": [
     "conversion-ux", "storybrand-copywriting", "value-proposition-jtbd", "influence-persuasion", "psychology-of-design",
     "web-hero-sections", "web-feature-sections", "web-social-proof-footer", "web-landing-signup", "buttons",
     "typography", "color-systems", "spacing-layout", "visual-craft-standards", "clean-app-design", "iconography",
     "seo-for-designers", "on-page-seo", "geo-tactics-checklist", "accessibility", "ethical-design",
+    "privacy-consent-and-tracking",
   ],
   dashboard: [
     "navigation", "search-design", "web-dashboards", "cards-lists-modals", "data-visualization", "design-systems-methodology",
@@ -108,7 +110,7 @@ export const ROADMAPS: Record<string, Roadmap> = {
       { title: "3. Architecture & SEO/GEO foundations", goal: "Page map by search intent; rendering, schema, llms.txt planned", docs: ["information-architecture", "on-page-seo", "technical-seo", "geo-tactics-checklist", "navigation"] },
       { title: "4. Wireframe & visual design", goal: "Real copy in layouts; conversion patterns; clean craft pass", docs: ["conversion-ux", "web-hero-sections", "web-feature-sections", "web-pricing-sections", "web-landing-signup", "web-social-proof-footer", "ecommerce-checkout", "clean-app-design", "web-trends-2026", "modern-css-design-primitives", "design-engineering", "i18n-localization", ...CORE_FOUNDATION, ...CORE_CRAFT] },
       { title: "5. Build, performance & hardening", goal: "CWV budget met; semantic, extractable HTML; security headers set and the injection sinks swept before launch, not after an audit", docs: ["seo-for-designers", "design-engineering", "modern-css-design-primitives", "accessibility", "motion-microinteractions", "web-security-headers", "frontend-attack-surface"] },
-      { title: "6. Launch & growth loop", goal: "Instrumented funnel; growth loops; one-variable tests; GEO visibility; distribution; honest conversion", docs: ["marketing-website-roadmap", "growth-frameworks", "analytics-experimentation", "geo-fundamentals", "content-distribution", "email-marketing", "email-html-development", "ad-creative", "ethical-design", "design-critique-scoring"] },
+      { title: "6. Launch & growth loop", goal: "Instrumented funnel; growth loops; one-variable tests; GEO visibility; distribution; honest conversion", docs: ["marketing-website-roadmap", "growth-frameworks", "analytics-experimentation", "geo-fundamentals", "content-distribution", "email-marketing", "email-html-development", "ad-creative", "ethical-design", "privacy-consent-and-tracking", "design-critique-scoring"] },
     ],
   },
   "landing-page": {
