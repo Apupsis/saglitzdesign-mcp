@@ -274,6 +274,24 @@ describe("config rules — commented-out header mentions", () => {
     expect(ids).toContain("csp-missing");
     expect(ids).not.toContain("csp-unsafe-inline");
   });
+
+  // A `//` inside a string literal is not a comment start. Masking it
+  // regardless (the earlier "not preceded by :" guard missed this — nothing
+  // precedes the `//` here but the opening quote) hid the real .set(...)
+  // call later on the same line and fabricated csp-missing on a project
+  // that correctly sets a strict policy — a false negative on correct
+  // configuration, the wrong-direction failure this module refuses to ship.
+  it("does not mask a real CSP declaration because an earlier string literal on the same line contains //", () => {
+    const source = `const fallback = "//cdn.example.com"; requestHeaders.set('Content-Security-Policy', "default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")`;
+    const ids = cfgIds([{ path: "middleware.ts", source }]);
+    expect(ids).not.toContain("csp-missing");
+    expect(ids.filter((r) => r.startsWith("csp-"))).toEqual([]);
+  });
+
+  it("still finds a second header on the same line after a first header's value contains //", () => {
+    const source = `headers.set('X-Custom-Header', "//not-a-real-comment").set('Content-Security-Policy', "default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")`;
+    expect(cfgIds([{ path: "middleware.ts", source }])).not.toContain("csp-missing");
+  });
 });
 
 describe("config rules — CSP weaknesses", () => {

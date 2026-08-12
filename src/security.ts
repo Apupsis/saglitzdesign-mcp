@@ -322,9 +322,21 @@ export interface HeaderHit {
  *     there — a `//` inside a URL string in vercel.json must survive.
  *   - `<!-- -->` universally; its four-character open and explicit close
  *     make it unambiguous wherever it appears.
- * A `//` immediately preceded by `:` (i.e. `http://` / `https://`) is left
- * alone even in JS/TS files — the single most common false trigger for a
- * naive line-comment scan.
+ *
+ * In JS/TS-like files, a `'`/`"`/`` ` `` opens a string, tracked per line
+ * (reset at each newline — this is not a tokenizer, and a template literal
+ * that spans multiple lines is out of scope), and nothing inside that
+ * string can open a comment; an escaped quote does not close it. This
+ * replaced an earlier guard of "`//` not immediately preceded by `:`",
+ * which approximated "inside a URL" when the real predicate is "inside a
+ * string literal" — it missed `"//cdn.example.com"` (a protocol-relative
+ * URL with nothing before the `//` on the line), which masked a real CSP
+ * declaration on the rest of that line as `csp-missing`: a false negative
+ * on correct configuration, the one direction this module refuses to ship.
+ * Between under-masking a real comment (at worst reproduces the
+ * commented-out-header case, which just stays a live finding) and
+ * over-masking real code (fabricates `csp-missing` on a correct policy),
+ * this errs toward the former wherever the two heuristics would disagree.
  */
 function maskComments(source: string, path: string): string {
   const isHeadersFile = /(^|\/)_headers$/.test(path);
@@ -334,19 +346,52 @@ function maskComments(source: string, path: string): string {
   let out = "";
   let i = 0;
   const n = source.length;
+  let quote: string | null = null; // the open quote char, or null when not inside a string
+
   while (i < n) {
+    const ch = source[i];
+
+    if (ch === "\n") {
+      quote = null;
+      out += ch;
+      i++;
+      continue;
+    }
+
+    if (isJsLike) {
+      if (quote) {
+        // Inside a string literal: nothing here can open a comment, and an
+        // escaped quote does not close it.
+        if (ch === "\\" && i + 1 < n) {
+          out += ch + source[i + 1];
+          i += 2;
+          continue;
+        }
+        if (ch === quote) quote = null;
+        out += ch;
+        i++;
+        continue;
+      }
+      if (ch === '"' || ch === "'" || ch === "`") {
+        quote = ch;
+        out += ch;
+        i++;
+        continue;
+      }
+    }
+
     const two = source.slice(i, i + 2);
     if (isJsLike && two === "/*") {
       const end = source.indexOf("*/", i + 2);
       const stop = end === -1 ? n : end + 2;
       for (let j = i; j < stop; j++) out += source[j] === "\n" ? "\n" : " ";
       i = stop;
-    } else if (isJsLike && two === "//" && source[i - 1] !== ":") {
+    } else if (isJsLike && two === "//") {
       const end = source.indexOf("\n", i);
       const stop = end === -1 ? n : end;
       out += " ".repeat(stop - i);
       i = stop;
-    } else if (isHashComment && source[i] === "#") {
+    } else if (isHashComment && ch === "#") {
       const end = source.indexOf("\n", i);
       const stop = end === -1 ? n : end;
       out += " ".repeat(stop - i);
@@ -357,7 +402,7 @@ function maskComments(source: string, path: string): string {
       for (let j = i; j < stop; j++) out += source[j] === "\n" ? "\n" : " ";
       i = stop;
     } else {
-      out += source[i];
+      out += ch;
       i++;
     }
   }
