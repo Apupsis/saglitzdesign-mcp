@@ -183,7 +183,8 @@ Fired over `.html`, `.htm`, `.jsx`, `.tsx`, `.vue`, `.svelte`, `.astro`, `.ts`, 
 
 | Rule | Severity |
 |---|---|
-| `blank-without-noopener` — `target="_blank"` without `rel="noopener"` | error |
+| `window-open-without-noopener` — `window.open()` with no `noopener` in its features | warning |
+| `blank-without-noopener` — `target="_blank"` without `rel="noopener"` | info |
 | `external-script-no-sri` — cross-origin `<script src>` without `integrity` | error |
 | `http-subresource` — `src`/`href` on `http://` | error |
 | `token-in-localstorage` — `localStorage.setItem` keyed on token/jwt/auth/session | error |

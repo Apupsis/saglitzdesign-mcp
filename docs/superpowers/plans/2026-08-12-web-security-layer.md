@@ -586,7 +586,7 @@ UI_EXTENSIONS is untouched and existing calls keep their behaviour."
 - Consumes: `LintFinding` and `scanTags` from `src/lint.js`.
 - Produces:
   - `export function securitySourceRules(code: string, filename?: string): LintFinding[]`
-  - Rule ids: `blank-without-noopener`, `external-script-no-sri`, `http-subresource`, `token-in-localstorage`, `public-env-secret`, `hardcoded-secret`, `dangerous-html`, `iframe-no-sandbox`, `postmessage-wildcard-origin`, `inline-event-handler`, `inline-script-no-nonce`, `password-autocomplete`.
+  - Rule ids: `blank-without-noopener` (info), `window-open-without-noopener`, `external-script-no-sri`, `http-subresource`, `token-in-localstorage`, `public-env-secret`, `hardcoded-secret`, `dangerous-html`, `iframe-no-sandbox`, `postmessage-wildcard-origin`, `inline-event-handler`, `inline-script-no-nonce`, `password-autocomplete`. Thirteen rules, not twelve.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -600,8 +600,24 @@ const ids = (code: string, filename?: string) =>
   securitySourceRules(code, filename).map((f) => f.rule).sort();
 
 describe("source rules — fire when they should", () => {
-  it("flags target=_blank without rel=noopener", () => {
-    expect(ids(`<a href="https://x.com" target="_blank">go</a>`)).toContain("blank-without-noopener");
+  it("flags target=_blank without rel=noopener, at info severity", () => {
+    const findings = securitySourceRules(`<a href="https://x.com" target="_blank">go</a>`);
+    const f = findings.find((x) => x.rule === "blank-without-noopener");
+    expect(f).toBeDefined();
+    // Browsers imply noopener on anchors at 95.58% (caniuse). Erroring here
+    // would fire on correct modern markup; the live risk is window.open().
+    expect(f!.severity).toBe("info");
+  });
+
+  it("flags window.open without noopener, more severely than the anchor case", () => {
+    const findings = securitySourceRules(`const w = window.open(url, "_blank")`);
+    const f = findings.find((x) => x.rule === "window-open-without-noopener");
+    expect(f).toBeDefined();
+    expect(f!.severity).toBe("warning");
+  });
+
+  it("accepts window.open with noopener in the features string", () => {
+    expect(ids(`window.open(url, "_blank", "noopener,noreferrer")`)).not.toContain("window-open-without-noopener");
   });
 
   it("still flags it when a formatter split the tag over lines", () => {
@@ -763,12 +779,22 @@ export function securitySourceRules(code: string, filename?: string): LintFindin
   for (const tag of scanTags(code)) {
     const name = tag.name.toLowerCase();
 
+    // Severity is deliberately `info`, not `error`. Browsers imply `noopener`
+    // for `target="_blank"` on anchors — 95.58% global (caniuse
+    // `mdn-html_elements_a_implicit_noopener`), and MDN states windows opened
+    // from a `_blank` link "don't get an opener, unless explicitly requested
+    // with rel=opener". Verified twice during Task 3, once by the implementer
+    // and once by an independent reviewer.
+    //
+    // Erroring here would fire on correct modern markup. The attribute is still
+    // worth adding for legacy engines and embedded webviews, which is what an
+    // `info` says. The real residual risk moved to `window.open()` — see below.
     if (name === "a" && /target\s*=\s*["']?_blank/i.test(tag.attrs)) {
       const rel = attr(tag, "rel") ?? "";
       if (!/\bnoopener\b/i.test(rel)) {
-        push(tag.index, "error", "blank-without-noopener",
-          `target="_blank" without rel="noopener" hands the opened page a window.opener reference back to yours.`,
-          `Add rel="noopener noreferrer".`,
+        push(tag.index, "info", "blank-without-noopener",
+          `target="_blank" without rel="noopener". Modern browsers imply noopener here, so this is defence for legacy engines and embedded webviews rather than a live hole.`,
+          `Add rel="noopener noreferrer" — noreferrer also stops the Referer header, which the implicit behaviour does not.`,
           "frontend-attack-surface");
       }
     }
@@ -874,6 +900,18 @@ export function securitySourceRules(code: string, filename?: string): LintFindin
       push(at, "error", "hardcoded-secret",
         `A credential-shaped literal is assigned in source; committed secrets stay in git history after deletion.`,
         `Read it from a server-side environment variable and rotate the value.`,
+        "frontend-attack-surface");
+    }
+
+    // This is where the reverse-tabnabbing risk actually lives now. Unlike an
+    // anchor, `window.open()` still grants `window.opener` by default (MDN,
+    // verified in Task 3), so an omitted `noopener` here is a live hole rather
+    // than a legacy hedge — hence `warning` where the anchor rule is `info`.
+    const opened = /window\.open\s*\(/.exec(line);
+    if (opened && !/noopener/i.test(line)) {
+      push(at, "warning", "window-open-without-noopener",
+        `window.open() without "noopener" in its features string leaves the opened page a window.opener handle back to this one, which it can use to navigate you somewhere else.`,
+        `Pass "noopener" in the third argument, or null the returned handle's opener.`,
         "frontend-attack-surface");
     }
 
@@ -1359,9 +1397,9 @@ describe("the report", () => {
   });
 
   it("states it for a report with findings too", () => {
-    const dirty = securityReport({ source: `<a href="https://x.com" target="_blank">go</a>` });
+    const dirty = securityReport({ source: `<script src="https://cdn.example.com/a.js"></script>` });
     expect(dirty).toMatch(/not visible to this audit/i);
-    expect(dirty).toContain("blank-without-noopener");
+    expect(dirty).toContain("external-script-no-sri");
   });
 });
 ```
@@ -1371,7 +1409,7 @@ Add `"audit_security"` to the `TOOL_NAMES` set in `tests/integrity.test.ts`.
 `tests/server.test.ts` holds a `SMOKE` map (line 28) and asserts that **every registered tool has an entry in it** — a new tool without one fails the suite. Add:
 
 ```ts
-  audit_security: { code: `<a href="https://x.com" target="_blank">go</a>` },
+  audit_security: { code: `<script src="https://cdn.example.com/a.js"></script>` },
 ```
 
 That same suite calls each tool and requires the response body to exceed 40 characters and not begin with "no matches" — the snippet above produces a real finding, so it satisfies both. Its tool-count assertion is a `>=` floor, not an exact number, so nothing there needs changing.
