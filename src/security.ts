@@ -29,11 +29,61 @@ const isCrossOrigin = (url: string): boolean =>
 
 const MARKUP_FILE = /\.(html?|vue|svelte|astro)$/i;
 
-/** Sanitiser imports that make a raw-HTML sink defensible. */
+/** Sanitiser library names that make a raw-HTML sink defensible. */
 const SANITISER = /\b(dompurify|sanitize-html|xss|Sanitizer)\b/i;
 
-const SECRET_WORD = /(SECRET|PRIVATE|TOKEN|PASSWORD|PASSWD|API_?KEY|ACCESS_?KEY)/i;
-const CREDENTIAL_KEY = /(token|jwt|auth|session|credential|refresh)/i;
+/**
+ * True only when a sanitiser name appears in something that reads as an
+ * import/require statement — never anywhere in the file. A bare whole-file
+ * word search is defeated by a comment ("// we already fixed xss here")
+ * sitting above an unsanitised sink; requiring import syntax means the
+ * sanitiser has to actually be pulled into scope to suppress the finding.
+ */
+function hasSanitiserImport(code: string): boolean {
+  return code.split("\n").some((line) => {
+    const trimmed = line.trim();
+    const looksLikeImport = /^import\b/.test(trimmed) || /\brequire\s*\(/.test(trimmed);
+    return looksLikeImport && SANITISER.test(line);
+  });
+}
+
+/**
+ * Identifier segments, split on `_`/`-` and lower→upper case transitions and
+ * upper-cased, so "authToken", "auth_token" and "AUTH_TOKEN" all normalise to
+ * ["AUTH", "TOKEN"] while "tokenizer" stays the single segment "TOKENIZER".
+ * Matching whole segments (rather than a bare substring test) is what keeps
+ * "authToken" flagged and "authorized" / "tokenizer-settings" quiet.
+ */
+function segmentsOf(id: string): string[] {
+  return id
+    .replace(/[_-]+/g, " ")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((s) => s.toUpperCase());
+}
+
+/**
+ * True when a whole segment of `id` equals one of `words`, or an adjacent
+ * pair of segments equals one of `pairs` (each given as "FIRST_SECOND", e.g.
+ * "API_KEY" — so "NEXT_PUBLIC_API_KEY" fires but a lone "KEY" doesn't).
+ */
+function hasKeywordSegment(id: string, words: readonly string[], pairs: readonly string[] = []): boolean {
+  const segs = segmentsOf(id);
+  if (segs.some((s) => words.includes(s))) return true;
+  for (let i = 0; i < segs.length - 1; i++) {
+    if (pairs.includes(`${segs[i]}_${segs[i + 1]}`)) return true;
+  }
+  return false;
+}
+
+// "refresh" is deliberately absent: a bare "refreshRate" is not a credential,
+// and "refreshToken" already fires on the TOKEN segment.
+const CREDENTIAL_WORDS = ["TOKEN", "JWT", "AUTH", "SESSION", "CREDENTIAL"] as const;
+
+const SECRET_WORDS = ["SECRET", "PRIVATE", "TOKEN", "PASSWORD", "PASSWD"] as const;
+const SECRET_PAIRS = ["API_KEY", "ACCESS_KEY"] as const;
 
 export function securitySourceRules(code: string, filename?: string): LintFinding[] {
   const out: LintFinding[] = [];
@@ -124,7 +174,7 @@ export function securitySourceRules(code: string, filename?: string): LintFindin
         "web-security-headers");
     }
 
-    if (/\bdangerouslySetInnerHTML\b/.test(tag.attrs) && !SANITISER.test(code)) {
+    if (/\bdangerouslySetInnerHTML\b/.test(tag.attrs) && !hasSanitiserImport(code)) {
       push(tag.index, "warning", "dangerous-html",
         `dangerouslySetInnerHTML with no sanitiser imported in this file renders untrusted markup as live HTML.`,
         `Sanitise the value first (DOMPurify), or render it as text.`,
@@ -139,7 +189,12 @@ export function securitySourceRules(code: string, filename?: string): LintFindin
     const at = offset;
     offset += line.length + 1;
 
-    if (/\b(v-html|\{@html)\b/.test(line) && !SANITISER.test(code)) {
+    // `\b` before a literal `{` never matches at the start of a tag body
+    // (`<div>{@html …}` has no word char before the brace), which silently
+    // disabled this branch for real Svelte markup. The brace itself is
+    // already an unambiguous boundary, so only the trailing `\b` (which
+    // keeps "{@htmlFoo}" from matching) is needed on that side.
+    if ((/\bv-html\b/.test(line) || /\{@html\b/.test(line)) && !hasSanitiserImport(code)) {
       push(at, "warning", "dangerous-html",
         `Raw HTML binding with no sanitiser imported in this file renders untrusted markup as live HTML.`,
         `Sanitise the value first (DOMPurify), or bind it as text.`,
@@ -147,7 +202,7 @@ export function securitySourceRules(code: string, filename?: string): LintFindin
     }
 
     const ls = /localStorage\.setItem\(\s*["'`]([^"'`]+)/.exec(line);
-    if (ls && CREDENTIAL_KEY.test(ls[1])) {
+    if (ls && hasKeywordSegment(ls[1], CREDENTIAL_WORDS)) {
       push(at, "error", "token-in-localstorage",
         `"${ls[1]}" is stored in localStorage, which any script on this origin can read — one XSS becomes lasting account takeover.`,
         `Keep the session in an HttpOnly, Secure, SameSite cookie, or hold the token in memory with a silent refresh.`,
@@ -155,7 +210,7 @@ export function securitySourceRules(code: string, filename?: string): LintFindin
     }
 
     const env = /\b(?:NEXT_PUBLIC|VITE|PUBLIC|REACT_APP)_([A-Z0-9_]+)/.exec(line);
-    if (env && SECRET_WORD.test(env[1])) {
+    if (env && hasKeywordSegment(env[1], SECRET_WORDS, SECRET_PAIRS)) {
       push(at, "error", "public-env-secret",
         `A build-time public variable named "${env[0]}" is inlined into the client bundle and is public the moment it ships.`,
         `Move it to a server-only variable and rotate the value — anything already shipped is compromised.`,
@@ -170,7 +225,12 @@ export function securitySourceRules(code: string, filename?: string): LintFindin
         "frontend-attack-surface");
     }
 
-    if (/postMessage\s*\([^)]*,\s*["'`]\*["'`]\s*\)/.test(line)) {
+    // The origin is postMessage's second argument. Requiring the quoted "*"
+    // to be immediately followed by the closing paren missed calls with a
+    // third `transfer` argument (`postMessage(data, "*", [port])`), which is
+    // a real, common part of the API — so the boundary here is "more args
+    // follow" (a comma) or "the call ends" (the paren), not just the paren.
+    if (/postMessage\s*\(\s*[^,]*,\s*["'`]\*["'`]\s*(?:,|\))/.test(line)) {
       push(at, "warning", "postmessage-wildcard-origin",
         `postMessage with a "*" target origin delivers the payload to whatever document currently occupies that frame.`,
         `Pass the exact origin you intend, and check event.origin on the receiving side.`,
@@ -182,15 +242,17 @@ export function securitySourceRules(code: string, filename?: string): LintFindin
     // browsers now imply noopener for (95.58% support, caniuse
     // mdn-html_elements_a_implicit_noopener), so that case is not re-flagged
     // here at the same severity.
-    const wo = /\bwindow\.open\s*\(/.exec(line);
-    if (wo) {
-      const args = line.slice(wo.index + wo[0].length);
-      if (!/noopener/i.test(args)) {
-        push(at, "warning", "window-open-without-noopener",
-          `window.open() grants the new window a window.opener reference back to this page by default.`,
-          `Pass "noopener" in the third argument: window.open(url, target, "noopener").`,
-          "frontend-attack-surface");
-      }
+    //
+    // Capture only the argument list between the call's own parens, not the
+    // rest of the line: scanning to end-of-line let a trailing `// TODO
+    // ensure noopener elsewhere` comment satisfy the check without a real
+    // "noopener" ever reaching the call.
+    const wo = /\bwindow\.open\s*\(([^)]*)\)/.exec(line);
+    if (wo && !/noopener/i.test(wo[1])) {
+      push(at, "warning", "window-open-without-noopener",
+        `window.open() grants the new window a window.opener reference back to this page by default.`,
+        `Pass "noopener" in the third argument: window.open(url, target, "noopener").`,
+        "frontend-attack-surface");
     }
   }
 

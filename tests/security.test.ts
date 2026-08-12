@@ -42,12 +42,32 @@ describe("source rules — fire when they should", () => {
     expect(ids(`localStorage.setItem("authToken", jwt)`)).toContain("token-in-localstorage");
   });
 
+  it("flags other credential-shaped localStorage keys", () => {
+    expect(ids(`localStorage.setItem("auth_token", val)`)).toContain("token-in-localstorage");
+    expect(ids(`localStorage.setItem("jwt", val)`)).toContain("token-in-localstorage");
+    expect(ids(`localStorage.setItem("refreshToken", val)`)).toContain("token-in-localstorage");
+    expect(ids(`localStorage.setItem("sessionId", val)`)).toContain("token-in-localstorage");
+  });
+
   it("flags a secret-named public env var", () => {
     expect(ids(`const k = process.env.NEXT_PUBLIC_STRIPE_SECRET_KEY`)).toContain("public-env-secret");
   });
 
+  it("flags NEXT_PUBLIC_API_KEY as a secret-named public env var", () => {
+    expect(ids(`const k = process.env.NEXT_PUBLIC_API_KEY`)).toContain("public-env-secret");
+  });
+
   it("flags dangerouslySetInnerHTML with no sanitiser in the file", () => {
     expect(ids(`<div dangerouslySetInnerHTML={{ __html: body }} />`)).toContain("dangerous-html");
+  });
+
+  it("flags Svelte {@html} with no sanitiser in the file, in realistic markup", () => {
+    expect(ids(`<div>{@html body}</div>`)).toContain("dangerous-html");
+  });
+
+  it("flags dangerouslySetInnerHTML even when a comment merely mentions a sanitiser by name", () => {
+    const code = `// we already fixed xss here\n<div dangerouslySetInnerHTML={{ __html: body }} />`;
+    expect(ids(code)).toContain("dangerous-html");
   });
 
   it("flags a cross-origin iframe without sandbox", () => {
@@ -56,6 +76,14 @@ describe("source rules — fire when they should", () => {
 
   it("flags postMessage to a wildcard origin", () => {
     expect(ids(`win.postMessage(payload, "*")`)).toContain("postmessage-wildcard-origin");
+  });
+
+  it("flags postMessage to a wildcard origin even with a transfer list argument", () => {
+    expect(ids(`win.postMessage(data, "*", [port])`)).toContain("postmessage-wildcard-origin");
+  });
+
+  it("flags window.open without noopener even when a trailing comment mentions noopener", () => {
+    expect(ids(`window.open(url, "_blank"); // TODO ensure noopener elsewhere`)).toContain("window-open-without-noopener");
   });
 
   it("flags an inline event handler in HTML", () => {
@@ -98,8 +126,22 @@ describe("source rules — stay quiet when they should", () => {
     expect(ids(`const url = process.env.NEXT_PUBLIC_SITE_URL`)).not.toContain("public-env-secret");
   });
 
+  it("accepts public env vars whose name merely contains a secret word as a substring", () => {
+    expect(ids(`const a = process.env.NEXT_PUBLIC_TOKENIZER_URL`)).not.toContain("public-env-secret");
+    expect(ids(`const a = process.env.NEXT_PUBLIC_PRIVATEBETA_URL`)).not.toContain("public-env-secret");
+    expect(ids(`const a = process.env.NEXT_PUBLIC_PASSWDLESS_FLAG`)).not.toContain("public-env-secret");
+    expect(ids(`const a = process.env.NEXT_PUBLIC_TOKENGATE_ENABLED`)).not.toContain("public-env-secret");
+  });
+
   it("accepts localStorage for a non-credential key", () => {
     expect(ids(`localStorage.setItem("theme", "dark")`)).not.toContain("token-in-localstorage");
+  });
+
+  it("accepts localStorage keys whose name merely contains a credential word as a substring", () => {
+    expect(ids(`localStorage.setItem("tokenizer-settings", val)`)).not.toContain("token-in-localstorage");
+    expect(ids(`localStorage.setItem("authorized-theme", val)`)).not.toContain("token-in-localstorage");
+    expect(ids(`localStorage.setItem("credentialsPolicy", "same-origin")`)).not.toContain("token-in-localstorage");
+    expect(ids(`localStorage.setItem("refreshRate", "60")`)).not.toContain("token-in-localstorage");
   });
 
   it("returns nothing at all for clean markup", () => {
