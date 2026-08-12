@@ -254,7 +254,13 @@ Required sections and claims:
 
 Every claim verified against the OWASP cheat sheets and MDN listed above.
 
-- [ ] **Step 2: Run tests**
+- [ ] **Step 2: Wire it in — the suite fails otherwise**
+
+`tests/integrity.test.ts:131` asserts no document is orphaned from every checklist and roadmap (only `seo`, `geo` and design-language docs are exempt). A new security document that is not referenced fails the suite, so wiring is part of this task, not Task 10.
+
+In `src/catalog.ts`, add `"auth-and-session-ux"` to `REVIEW_MAP.dashboard` and to a phase of `ROADMAPS["saas-web-app"]`. Not `website` or `landing-page`: a marketing site rarely has sessions, and a checklist padded with documents that do not apply stops being read.
+
+- [ ] **Step 3: Run tests**
 
 ```bash
 npm test
@@ -262,7 +268,7 @@ npm test
 
 Expected: PASS — source allowlist and the ≥3-sources assertion both hold.
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
 git add knowledge/security/auth-and-session-ux.md
@@ -312,7 +318,13 @@ Required sections and claims:
 6. **`## Third-party scripts`** — every analytics, chat, A/B or tag-manager snippet is arbitrary script execution on your origin with your users' session. SRI, self-hosting, a subresource budget, and gating on consent. Tag managers specifically let a non-engineer ship script to production.
 7. **`## Secrets in the bundle`** — `NEXT_PUBLIC_*` and `VITE_*` are inlined into client JavaScript at build time and are public forever once shipped; rotate anything that has been. Source maps in production expose original sources. `.env` committed to git stays in history after deletion.
 
-- [ ] **Step 2: Run tests**
+- [ ] **Step 2: Wire it in — the suite fails otherwise**
+
+`tests/integrity.test.ts:131` asserts no document is orphaned from every checklist and roadmap (only `seo`, `geo` and design-language docs are exempt). A new security document that is not referenced fails the suite, so wiring is part of this task, not Task 10.
+
+In `src/catalog.ts`, add `"frontend-attack-surface"` to `REVIEW_MAP.website` and `REVIEW_MAP.dashboard`, and to the build/hardening phase of `ROADMAPS["website"]` and `ROADMAPS["saas-web-app"]`.
+
+- [ ] **Step 3: Run tests**
 
 ```bash
 npm test
@@ -320,7 +332,7 @@ npm test
 
 Expected: PASS.
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
 git add knowledge/security/frontend-attack-surface.md
@@ -372,7 +384,13 @@ Required sections and claims:
 
 The document opens with a one-line notice: this is engineering and design guidance, not legal advice.
 
-- [ ] **Step 2: Run tests**
+- [ ] **Step 2: Wire it in — the suite fails otherwise**
+
+`tests/integrity.test.ts:131` asserts no document is orphaned from every checklist and roadmap (only `seo`, `geo` and design-language docs are exempt). A new security document that is not referenced fails the suite, so wiring is part of this task, not Task 10.
+
+In `src/catalog.ts`, add `"privacy-consent-and-tracking"` to `REVIEW_MAP.website` and `REVIEW_MAP["landing-page"]` — both already carry `ethical-design`, which is the document it sits beside — and to a phase of `ROADMAPS["website"]`.
+
+- [ ] **Step 3: Run tests**
 
 ```bash
 npm test
@@ -380,7 +398,7 @@ npm test
 
 Expected: PASS.
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
 git add knowledge/security/privacy-consent-and-tracking.md
@@ -430,7 +448,13 @@ Required sections and claims:
 
 Cross-link `ai-product-ux` for the non-security side of these interfaces.
 
-- [ ] **Step 2: Run tests**
+- [ ] **Step 2: Wire it in — the suite fails otherwise**
+
+`tests/integrity.test.ts:131` asserts no document is orphaned from every checklist and roadmap (only `seo`, `geo` and design-language docs are exempt). A new security document that is not referenced fails the suite, so wiring is part of this task, not Task 10.
+
+In `src/catalog.ts`, add `"ai-feature-security"` to `REVIEW_MAP.dashboard` and `REVIEW_MAP["mobile-app"]` — both already list `ai-product-ux`, which is the document it pairs with — and to a phase of `ROADMAPS["saas-web-app"]`.
+
+- [ ] **Step 3: Run tests**
 
 ```bash
 npm test
@@ -438,7 +462,7 @@ npm test
 
 Expected: PASS.
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
 git add knowledge/security/ai-feature-security.md
@@ -1484,38 +1508,59 @@ file is not neutral, it is harmful."
 ### Task 10: Wire the documents into the orchestration surfaces
 
 **Files:**
-- Modify: `src/catalog.ts` (`REVIEW_MAP`, `ROADMAPS`), `README.md`, `CHANGELOG.md`
+- Modify: `README.md`, `CHANGELOG.md`, and any `src/catalog.ts` wiring Tasks 1-5 did not already do
 - Test: `tests/integrity.test.ts`
 
 **Interfaces:**
 - Consumes: all five doc ids from Tasks 1-5, the tool from Task 9.
-- Produces: nothing new; this closes the loop so the documents are reachable from the workflows people actually run.
+- Produces: nothing new; this verifies the loop is closed and updates the public-facing counts.
+
+**Scope correction, discovered during Task 1.** `tests/integrity.test.ts:131` asserts that no knowledge document is orphaned from every checklist and roadmap — exempting only `seo`, `geo` and design-language docs. A new `security` document therefore **cannot be committed unwired**: its own task must add it to `REVIEW_MAP`/`ROADMAPS` or the suite fails. Tasks 1-5 each do their own wiring as a result, and this task verifies the total rather than performing it.
+
+That test is doing exactly its job — it is the check added after v0.14.0, where roadmaps referenced docs by ids that did not exist and those docs silently vanished from every checklist.
+
+**`REVIEW_MAP` has five keys**, not three: `mobile-app`, `macos-app`, `website`, `landing-page`, `dashboard`. `website` and `dashboard` are written as bare identifiers rather than quoted strings, so a grep for `"key":` misses them. `ROADMAPS` has six: `website`, `landing-page`, `ios-app`, `android-app`, `macos-app`, `saas-web-app`.
 
 - [ ] **Step 1: Write the failing test**
 
 Add to `tests/integrity.test.ts`:
 
-`REVIEW_MAP` has exactly three keys — `mobile-app`, `macos-app`, `landing-page` — and `landing-page` is the only web one. `ROADMAPS` has six: `website`, `landing-page`, `ios-app`, `android-app`, `macos-app`, `saas-web-app`. The test targets the real keys:
+The orphan test already guarantees each document is referenced *somewhere*. What it cannot guarantee is that the web-facing surfaces carry security at all — every security doc could be parked on `mobile-app` and the test would pass. This asserts the intent:
 
 ```ts
 describe("security documents are reachable from the workflows", () => {
-  it("appears in the web-facing review checklist", () => {
-    const list = REVIEW_MAP["landing-page"] ?? [];
-    const hasSecurity = list.some((id) => docs.find((d) => d.id === id)?.category === "security");
-    expect(hasSecurity).toBe(true);
+  it("puts security in every web-facing review checklist", () => {
+    for (const key of ["website", "landing-page", "dashboard"]) {
+      const list = REVIEW_MAP[key] ?? [];
+      const hasSecurity = list.some((id) => docs.find((d) => d.id === id)?.category === "security");
+      expect(`${key}:${hasSecurity}`).toBe(`${key}:true`);
+    }
   });
 
-  it("appears in the web-facing roadmaps", () => {
+  it("puts security in every web-facing roadmap", () => {
     for (const key of ["website", "landing-page", "saas-web-app"]) {
       const ids = (ROADMAPS[key]?.phases ?? []).flatMap((p) => p.docs);
       const hasSecurity = ids.some((id) => docs.find((d) => d.id === id)?.category === "security");
       expect(`${key}:${hasSecurity}`).toBe(`${key}:true`);
     }
   });
+
+  it("references all five security documents, not just the one that satisfies the orphan check", () => {
+    const referenced = new Set<string>();
+    for (const list of Object.values(REVIEW_MAP)) list.forEach((id) => referenced.add(id));
+    for (const rm of Object.values(ROADMAPS)) {
+      rm.fullGuides.forEach((id) => referenced.add(id));
+      rm.phases.forEach((p) => p.docs.forEach((id) => referenced.add(id)));
+    }
+    const unreferenced = docs
+      .filter((d) => d.category === "security" && !referenced.has(d.id))
+      .map((d) => d.id);
+    expect(unreferenced).toEqual([]);
+  });
 });
 ```
 
-Read the `Roadmap` interface before writing the second test — if the phase array is not named `phases`, use the real property name.
+`Roadmap` carries `fullGuides` and `phases` (each phase `{ title, goal, docs }`) — confirmed against `src/catalog.ts`.
 
 - [ ] **Step 2: Run to verify it fails**
 
@@ -1527,13 +1572,19 @@ Expected: FAIL — no security doc in those lists.
 
 - [ ] **Step 3: Wire them in**
 
-In `src/catalog.ts`:
+Tasks 1-5 each wired their own document (the orphan test forced it). Read the current `REVIEW_MAP` and `ROADMAPS`, then add only what the three tests above still find missing. The intended placement, for reference:
 
-- `REVIEW_MAP["landing-page"]` — add `"web-security-headers"`, `"frontend-attack-surface"`, `"privacy-consent-and-tracking"`. It already carries `ethical-design`, which is where the consent document belongs alongside.
-- `REVIEW_MAP["mobile-app"]` — add `"ai-feature-security"`, next to the `ai-product-ux` it already lists. The other four are web-only and do not belong in a native checklist.
-- `ROADMAPS["website"]`, `["landing-page"]`, `["saas-web-app"]` — extend the final phase (or add one) with the security docs, matching the existing `{ title, goal, docs }` shape. `saas-web-app` is the one that needs `auth-and-session-ux`; a marketing site rarely has sessions.
+| Document | `REVIEW_MAP` | `ROADMAPS` |
+|---|---|---|
+| `web-security-headers` | `website`, `dashboard` | `website` p5, `saas-web-app` p5 |
+| `frontend-attack-surface` | `website`, `dashboard` | `website` p5, `saas-web-app` p5 |
+| `auth-and-session-ux` | `dashboard` | `saas-web-app` |
+| `privacy-consent-and-tracking` | `website`, `landing-page` | `website` |
+| `ai-feature-security` | `dashboard`, `mobile-app` | `saas-web-app` |
 
-`integrity.test.ts` already asserts that every id referenced from `catalog.ts` exists in the knowledge base — that check is what caught the v0.14.0 bug where roadmaps named docs that did not exist. A typo here fails the suite rather than silently orphaning a document.
+`auth-and-session-ux` belongs to `dashboard`/`saas-web-app` rather than `website` — a marketing site rarely has sessions, and padding a checklist with documents that do not apply to it is how checklists stop being read.
+
+`integrity.test.ts` already asserts that every id referenced from `catalog.ts` exists in the knowledge base — the check added after v0.14.0, where roadmaps named docs that did not exist. A typo here fails the suite rather than silently orphaning a document.
 
 - [ ] **Step 4: Update README and CHANGELOG**
 
