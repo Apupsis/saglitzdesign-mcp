@@ -121,7 +121,7 @@ export const ROADMAPS: Record<string, Roadmap> = {
       { title: "1. Offer & message", goal: "Value prop + headline/subhead/CTA + risk reducers written first", docs: ["positioning-messaging", "value-proposition-jtbd", "branding-identity", "storybrand-copywriting", "conversion-ux"] },
       { title: "2. Page narrative", goal: "Hero → proof → benefits → objections → final CTA", docs: ["conversion-ux", "web-hero-sections", "web-feature-sections", "web-social-proof-footer", "web-landing-signup", "influence-persuasion", "psychology-of-design"] },
       { title: "3. Design & craft", goal: "CTA pops (squint test); clean & mobile-first", docs: ["buttons", ...CORE_FOUNDATION, "clean-app-design", "web-trends-2026", "visual-craft-standards", "refactoring-ui"] },
-      { title: "4. Performance, SEO/GEO & launch", goal: "Lighthouse ≥90; schema + answer-first content; funnel instrumented; paid creative aligned", docs: ["seo-for-designers", "on-page-seo", "geo-tactics-checklist", "ad-creative", "accessibility"] },
+      { title: "4. Performance, SEO/GEO & launch", goal: "Lighthouse ≥90; schema + answer-first content; funnel instrumented; paid creative aligned; consent banner and tracking scripts reviewed before launch", docs: ["seo-for-designers", "on-page-seo", "geo-tactics-checklist", "ad-creative", "accessibility", "privacy-consent-and-tracking"] },
     ],
   },
   "ios-app": {

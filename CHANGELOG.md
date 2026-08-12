@@ -4,6 +4,68 @@ All notable changes to SaglitzDesign MCP are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.20.0] — 2026-08-12
+
+88 documents, and not one of them contained the string `Content-Security-Policy`
+— nor `OWASP`, `XSS`, `CSRF`, `SameSite`, `HttpOnly`, `HSTS` or `Subresource
+Integrity`, anywhere in the knowledge base. A site built end to end from this
+server's guidance shipped with whatever header and cookie defaults the
+framework happened to pick. This release adds a `security` category to close
+that.
+
+### Added
+
+- **Five knowledge documents, a new `security` category — 93 documents:**
+  - `web-security-headers` — CSP (nonce/hash, `strict-dynamic`, Trusted
+    Types), HSTS, `X-Content-Type-Options`, `Referrer-Policy`, Subresource
+    Integrity, and the headers that are dead weight now (`X-Frame-Options`
+    superseded by `frame-ancestors`; `X-XSS-Protection` actively harmful in a
+    modern browser).
+  - `frontend-attack-surface` — XSS sinks, unsandboxed third-party iframes,
+    wildcard `postMessage`, mixed content, credentials in `localStorage`,
+    secret-shaped `NEXT_PUBLIC_`/`VITE_` env vars.
+  - `auth-and-session-ux` — session cookie attributes (`HttpOnly`, `Secure`,
+    `SameSite`), CSRF defenses, passkeys, account-recovery flows that don't
+    become the weak link.
+  - `privacy-consent-and-tracking` — consent-before-load for tracking
+    scripts, cookie categories, GDPR/UK-GDPR/KVKK-shaped requirements.
+  - `ai-feature-security` — prompt injection from untrusted content and
+    insecure output handling in AI features, mapped from the OWASP LLM Top 10
+    to a frontend.
+  - Every claim is sourced to a spec or a first-party vendor doc — a security
+    document citing a blog is now a test failure, not a style note — and
+    re-verified on a 90-day clock, the tightest staleness threshold in the
+    table: a reader who believes a stale security claim thinks they're
+    covered when they're not.
+- **`audit_security`** — audits a directory or a pasted snippet for the
+  defects above: missing or weak CSP, absent HSTS, unpinned cross-origin
+  scripts, mixed content, `localStorage` credentials, secret-named public env
+  vars, unsandboxed iframes, wildcard `postMessage`, unsanitised raw-HTML
+  sinks, production source maps, un-ignored `.env` files. Header and CSP
+  state is inferred by reading `next.config` / `vercel.json` / `netlify.toml`
+  / `_headers` / middleware as text — never evaluated — so it also reports
+  what it could not see rather than guessing. **30 tools** in total.
+- The five documents are wired into every web-facing `design_review_checklist`
+  (`website`, `landing-page`, `dashboard`) and roadmap (`website`,
+  `landing-page`, `saas-web-app`) — a document nothing references is a
+  document nobody reads. `tests/integrity.test.ts` now asserts the wiring
+  directly, rather than only that each document is referenced from somewhere.
+
+### Notes
+
+Writing these turned up several widely repeated claims that don't hold up
+against the spec or the vendor's own current docs:
+
+- Trusted Types is no longer Chromium-only.
+- `strict-origin-when-cross-origin` has been the browser default
+  `Referrer-Policy` since 2020 — its absence from a response is not a
+  finding, and an auditor that flags it anyway is simply wrong.
+- Browsers imply `noopener` on `target="_blank"` anchors automatically;
+  `window.open()` still does not, and still needs it spelled out.
+- MDN states `SameSite=Lax` is the browser default; caniuse measures actual
+  support at 76.34%, and only in Chrome and Edge. The two numbers describe
+  different things, and neither one is wrong.
+
 ## [0.19.1] — 2026-08-06
 
 ### Fixed

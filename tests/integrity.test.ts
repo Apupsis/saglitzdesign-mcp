@@ -151,6 +151,37 @@ describe("catalogue references resolve", () => {
   });
 });
 
+describe("security documents are reachable from the workflows", () => {
+  it("puts security in every web-facing review checklist", () => {
+    for (const key of ["website", "landing-page", "dashboard"]) {
+      const list = REVIEW_MAP[key] ?? [];
+      const hasSecurity = list.some((id) => docs.find((d) => d.id === id)?.category === "security");
+      expect(`${key}:${hasSecurity}`).toBe(`${key}:true`);
+    }
+  });
+
+  it("puts security in every web-facing roadmap", () => {
+    for (const key of ["website", "landing-page", "saas-web-app"]) {
+      const ids = (ROADMAPS[key]?.phases ?? []).flatMap((p) => p.docs);
+      const hasSecurity = ids.some((id) => docs.find((d) => d.id === id)?.category === "security");
+      expect(`${key}:${hasSecurity}`).toBe(`${key}:true`);
+    }
+  });
+
+  it("references all five security documents, not just the one that satisfies the orphan check", () => {
+    const referenced = new Set<string>();
+    for (const list of Object.values(REVIEW_MAP)) list.forEach((id) => referenced.add(id));
+    for (const rm of Object.values(ROADMAPS)) {
+      rm.fullGuides.forEach((id) => referenced.add(id));
+      rm.phases.forEach((p) => p.docs.forEach((id) => referenced.add(id)));
+    }
+    const unreferenced = docs
+      .filter((d) => d.category === "security" && !referenced.has(d.id))
+      .map((d) => d.id);
+    expect(unreferenced).toEqual([]);
+  });
+});
+
 describe("cross-links inside the knowledge base resolve", () => {
   it("every [[wiki-link]] points at a real doc", () => {
     const broken: string[] = [];
