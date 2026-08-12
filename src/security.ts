@@ -308,6 +308,63 @@ export interface HeaderHit {
 }
 
 /**
+ * Replace comment text with spaces (preserving length and line numbers) so
+ * `extractHeaders` never treats a commented-out header mention as a real
+ * declaration. Comment styles are gated by file shape rather than applied
+ * blindly:
+ *   - line comments and block comments, only in JS/TS-like files. A
+ *     `_headers` file's route selector line legitimately starts with the
+ *     two characters that open a block comment (meaning "all paths") —
+ *     treating that as an unterminated block comment would blank out every
+ *     header declaration that follows it in the file.
+ *   - `#` only in `.toml` and `_headers` files, where it is their actual
+ *     comment syntax. JSON has no comment syntax, so nothing is masked
+ *     there — a `//` inside a URL string in vercel.json must survive.
+ *   - `<!-- -->` universally; its four-character open and explicit close
+ *     make it unambiguous wherever it appears.
+ * A `//` immediately preceded by `:` (i.e. `http://` / `https://`) is left
+ * alone even in JS/TS files — the single most common false trigger for a
+ * naive line-comment scan.
+ */
+function maskComments(source: string, path: string): string {
+  const isHeadersFile = /(^|\/)_headers$/.test(path);
+  const isJsLike = /\.(?:jsx?|tsx?|mjs|cjs)$/i.test(path);
+  const isHashComment = isHeadersFile || /\.toml$/i.test(path);
+
+  let out = "";
+  let i = 0;
+  const n = source.length;
+  while (i < n) {
+    const two = source.slice(i, i + 2);
+    if (isJsLike && two === "/*") {
+      const end = source.indexOf("*/", i + 2);
+      const stop = end === -1 ? n : end + 2;
+      for (let j = i; j < stop; j++) out += source[j] === "\n" ? "\n" : " ";
+      i = stop;
+    } else if (isJsLike && two === "//" && source[i - 1] !== ":") {
+      const end = source.indexOf("\n", i);
+      const stop = end === -1 ? n : end;
+      out += " ".repeat(stop - i);
+      i = stop;
+    } else if (isHashComment && source[i] === "#") {
+      const end = source.indexOf("\n", i);
+      const stop = end === -1 ? n : end;
+      out += " ".repeat(stop - i);
+      i = stop;
+    } else if (source.slice(i, i + 4) === "<!--") {
+      const end = source.indexOf("-->", i + 4);
+      const stop = end === -1 ? n : end + 3;
+      for (let j = i; j < stop; j++) out += source[j] === "\n" ? "\n" : " ";
+      i = stop;
+    } else {
+      out += source[i];
+      i++;
+    }
+  }
+  return out;
+}
+
+/**
  * Find each header's declared value across every configuration shape we support:
  * `key: 'X', value: '…'` (next.config, vercel.json), `X = "…"` (netlify.toml),
  * `X: …` to end of line (_headers), and `.set('X', v)` (middleware/proxy).
@@ -316,36 +373,75 @@ export function extractHeaders(files: Array<{ path: string; source: string }>): 
   const found = new Map<string, HeaderHit>();
 
   for (const file of files) {
+    const masked = maskComments(file.source, file.path);
+
     for (const header of HEADER_NAMES) {
       // Hyphens need no escaping in a regex — nothing else in `header` is a
       // metacharacter either, so it is used as written.
       const nameRe = new RegExp(header, "gi");
       let m: RegExpExecArray | null;
-      while ((m = nameRe.exec(file.source)) !== null) {
+      // Search the masked text so a commented-out mention is never found in
+      // the first place, but slice the real source for `after` — the mask
+      // exists only to hide matches, not to corrupt the content once a real
+      // one is found.
+      while ((m = nameRe.exec(masked)) !== null) {
         const after = file.source.slice(m.index + header.length, m.index + header.length + 4000);
         const line = file.source.slice(0, m.index).split("\n").length;
 
-        // `key: 'Content-Security-Policy'` … `value: '…'`
         let value: string | undefined;
         let undeterminable = false;
 
-        const quoted = /^["']?\s*(?:,\s*)?(?:["']?value["']?\s*[:=]\s*)?(["'`])([\s\S]*?)\1/.exec(after);
-        const colon = /^\s*[:=]\s*([^\n]+)/.exec(after);
+        // Consume, without ambiguity: an optional quote that merely closes
+        // the header name's own string literal (`.set('X', …)` / `key:
+        // 'X'`), then separators, then an optional `value:`/`value =`
+        // keyword. None of this is allowed to double as the *value's*
+        // opening delimiter. The previous version used one regex with a
+        // shared optional leading-quote group, and on Next.js's own
+        // documented pattern —
+        //   requestHeaders.set('Content-Security-Policy', cspHeaderValue)
+        // — backtracking let that group give back the header name's own
+        // closing quote, which the mandatory capture group then happily
+        // reused as if it were the value's opening quote, lazily scanning
+        // forward to whatever quote character appeared next *anywhere else
+        // in the file* (typically the second `.set(...)` call a few lines
+        // down) and reporting the text in between as a real, readable CSP.
+        const lead = /^(["'`])?[\s,]*(?:["'`]?value["'`]?\s*[:=]\s*)?[\s,]*/.exec(after)!;
+        const rest = after.slice(lead[0].length);
 
-        if (quoted) {
-          value = quoted[2];
-          if (quoted[1] === "`" && /\$\{/.test(value)) undeterminable = true;
-        } else if (colon) {
-          // Strip an outer wrapping quote pair (netlify.toml's `X = "…"`),
-          // but only when the leading and trailing characters are a matching
-          // quote — never a bare trailing-quote strip. A `_headers`-style
-          // value ends in plain text that can itself close with a CSP
-          // keyword like 'unsafe-inline', and stripping "any trailing quote"
-          // was chewing off that keyword's own closing quote, silently
-          // corrupting the last source expression in every directive list.
-          const raw = colon[1].trim();
-          const wrapped = /^(["'`])([\s\S]*)\1,?$/.exec(raw);
-          value = wrapped ? wrapped[2] : raw;
+        const openQuote = /^(["'`])/.exec(rest);
+        if (openQuote) {
+          const q = openQuote[1];
+          const closeIdx = rest.indexOf(q, 1);
+          if (closeIdx === -1) {
+            // Opened but never closed within the scan window — can't be
+            // read confidently either way.
+            value = "";
+            undeterminable = true;
+          } else {
+            value = rest.slice(1, closeIdx);
+            if (q === "`" && /\$\{/.test(value)) undeterminable = true;
+          }
+        } else {
+          const colon = /^\s*[:=]\s*([^\n]+)/.exec(after);
+          if (colon) {
+            // Strip an outer wrapping quote pair (netlify.toml's `X = "…"`),
+            // but only when the leading and trailing characters are a
+            // matching quote — never a bare trailing-quote strip. A
+            // `_headers`-style value ends in plain text that can itself
+            // close with a CSP keyword like 'unsafe-inline', and stripping
+            // "any trailing quote" was chewing off that keyword's own
+            // closing quote, silently corrupting the last source expression
+            // in every directive list.
+            const raw = colon[1].trim();
+            const wrapped = /^(["'`])([\s\S]*)\1,?$/.exec(raw);
+            value = wrapped ? wrapped[2] : raw;
+          } else if (/^[A-Za-z_$]/.test(rest)) {
+            // A bare identifier or expression follows (`value:
+            // cspHeaderValue`, `.set('X', cspHeaderValue.replace(...))`) —
+            // its contents cannot be read from source without evaluating it.
+            value = "";
+            undeterminable = true;
+          }
         }
 
         if (value === undefined) continue;
@@ -362,6 +458,36 @@ export function extractHeaders(files: Array<{ path: string; source: string }>): 
   }
 
   return found;
+}
+
+/**
+ * A conservative subset of .gitignore pattern matching for one relative file
+ * path — exact/basename names, a leading `/` (root-anchored), a trailing `/`
+ * (directory-only, so it can never match a file), a leading double-star
+ * segment meaning "any depth", and `*` / `?` glob wildcards within one path
+ * segment. This is not a full .gitignore implementation. A pattern shaped
+ * some other way (negation, an un-anchored internal `/`, a double-star in
+ * the middle) is treated as not matching rather than guessed at:
+ * `env-committed` is `error` severity, so a pattern we do not actually
+ * understand should not be stretched into exempting — or, in the other
+ * direction, into flagging — a file we cannot really evaluate the rule for.
+ */
+function matchesGitignorePattern(pattern: string, filePath: string): boolean {
+  let p = pattern.trim();
+  if (!p || p.startsWith("#") || p.startsWith("!") || p.endsWith("/")) return false;
+
+  const anchored = p.startsWith("/");
+  if (anchored) p = p.slice(1);
+  else if (p.startsWith("**/")) p = p.slice(3);
+  else if (p.includes("/")) return false; // un-anchored internal slash: beyond this matcher
+
+  const toRegExp = (glob: string) =>
+    new RegExp(`^${glob.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^/]*").replace(/\?/g, "[^/]")}$`);
+
+  const path = filePath.replace(/^\/+/, "");
+  if (anchored) return toRegExp(p).test(path);
+  const base = path.split("/").pop() ?? path;
+  return toRegExp(p).test(base);
 }
 
 /** Split a policy into directive → source list. */
@@ -488,11 +614,11 @@ export function securityConfigRules(files: Array<{ path: string; source: string 
 
   // ── committed env files ────────────────────────────────────────────────────
   const gitignore = files.find((f) => f.path.endsWith(".gitignore"))?.source ?? "";
-  const ignored = new Set(gitignore.split("\n").map((l) => l.trim().replace(/^\/+|\/+$/g, "")));
+  const patterns = gitignore.split("\n").map((l) => l.trim()).filter(Boolean);
   for (const file of files) {
     const base = file.path.split("/").pop() ?? file.path;
     if (!/^\.env(\.|$)/.test(base)) continue;
-    if (ignored.has(base) || ignored.has(".env*") || ignored.has(".env")) continue;
+    if (patterns.some((p) => matchesGitignorePattern(p, file.path))) continue;
     push(file.path, 1, "error", "env-committed",
       `${base} sits in the project and is not covered by .gitignore; once committed it stays in git history after deletion.`,
       `Add it to .gitignore, rotate every value it holds, and purge it from history if it was pushed.`,

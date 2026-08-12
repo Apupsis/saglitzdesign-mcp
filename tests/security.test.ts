@@ -204,6 +204,76 @@ describe("config rules — CSP discovery", () => {
     const source = `export function proxy() { res.headers.set('Content-Security-Policy', "default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'") }`;
     expect(cfgIds([{ path: "proxy.ts", source }])).not.toContain("csp-missing");
   });
+
+  // Next.js's own documented CSP-with-nonce example builds the value in a
+  // variable and sets it by reference — the single most common real-world
+  // CSP pattern — rather than passing a literal string straight into
+  // .set(...). A naive extractor that backtracks its "optional leading
+  // quote" group can end up reusing the header name's own closing quote as
+  // if it opened the value, then lazily scanning forward to whatever quote
+  // character happens to appear next in the file (typically the second
+  // .set(...) call a few lines down) and reporting that as a readable,
+  // determinate policy. Both the one-occurrence and two-occurrence (request
+  // + response) forms must report csp-undeterminable — never csp-missing,
+  // and never a parsed, determinate policy.
+  it("reports the Next.js documented nonce-CSP pattern as undeterminable (one occurrence)", () => {
+    const source = `
+      const cspHeader = "default-src 'self'"
+      const contentSecurityPolicyHeaderValue = cspHeader.replace(/\\s{2,}/g, ' ').trim()
+      const requestHeaders = new Headers()
+      requestHeaders.set('Content-Security-Policy', contentSecurityPolicyHeaderValue)
+    `;
+    const ids = cfgIds([{ path: "middleware.ts", source }]);
+    expect(ids).not.toContain("csp-missing");
+    expect(ids).toContain("csp-undeterminable");
+    expect(ids.filter((r) => r.startsWith("csp-missing") || r === "trusted-types-absent")).toEqual([]);
+  });
+
+  it("reports the Next.js documented nonce-CSP pattern as undeterminable (request + response occurrences)", () => {
+    const source = `
+      export function middleware(request) {
+        const cspHeader = "default-src 'self'"
+        const contentSecurityPolicyHeaderValue = cspHeader.replace(/\\s{2,}/g, ' ').trim()
+        const requestHeaders = new Headers(request.headers)
+        requestHeaders.set('Content-Security-Policy', contentSecurityPolicyHeaderValue)
+        const response = NextResponse.next({ request: { headers: requestHeaders } })
+        response.headers.set('Content-Security-Policy', contentSecurityPolicyHeaderValue)
+        return response
+      }
+    `;
+    const ids = cfgIds([{ path: "middleware.ts", source }]);
+    expect(ids).not.toContain("csp-missing");
+    expect(ids).toContain("csp-undeterminable");
+    expect(ids.filter((r) => r.startsWith("csp-missing") || r === "trusted-types-absent")).toEqual([]);
+  });
+});
+
+describe("config rules — commented-out header mentions", () => {
+  it("does not treat a commented-out Content-Security-Policy as a real declaration", () => {
+    const source = [
+      "// Reminder for ops runbook:",
+      "// Content-Security-Policy: default-src 'self'; script-src 'unsafe-inline'",
+      "export function noop() {}",
+    ].join("\n");
+    const ids = cfgIds([{ path: "middleware.ts", source }]);
+    expect(ids).toContain("csp-missing");
+    expect(ids).not.toContain("csp-unsafe-inline");
+  });
+
+  it("still reads a real CSP that sits right after an unrelated comment", () => {
+    const source = [
+      "// Reminder for ops runbook: keep this in sync with the CDN",
+      "headers.set('Content-Security-Policy', \"default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'\")",
+    ].join("\n");
+    expect(cfgIds([{ path: "middleware.ts", source }])).not.toContain("csp-missing");
+  });
+
+  it("does not treat a commented-out header in a _headers file as real, while real # comments there are still just comments", () => {
+    const source = "/*\n  # Content-Security-Policy: default-src 'self'; script-src 'unsafe-inline'\n  X-Content-Type-Options: nosniff\n";
+    const ids = cfgIds([{ path: "_headers", source }]);
+    expect(ids).toContain("csp-missing");
+    expect(ids).not.toContain("csp-unsafe-inline");
+  });
 });
 
 describe("config rules — CSP weaknesses", () => {
@@ -289,6 +359,34 @@ describe("config rules — committed env files", () => {
     const files = [
       { path: ".env", source: "API_KEY=abc" },
       { path: ".gitignore", source: "node_modules\n.env\n" },
+    ];
+    expect(cfgIds(files)).not.toContain("env-committed");
+  });
+
+  it("flags .env.production when .gitignore covers only the literal .env, not every .env* variant", () => {
+    // A bare ".env" gitignore entry exempts exactly that file, not its
+    // siblings — git would not treat it as covering .env.production, and
+    // treating it that way here would miss real committed production
+    // secrets.
+    const files = [
+      { path: ".env.production", source: "API_KEY=abc" },
+      { path: ".gitignore", source: "node_modules\n.env\n" },
+    ];
+    expect(cfgIds(files)).toContain("env-committed");
+  });
+
+  it("accepts a nested .env correctly covered by a **/.env gitignore pattern", () => {
+    const files = [
+      { path: "apps/web/.env", source: "API_KEY=abc" },
+      { path: ".gitignore", source: "node_modules\n**/.env\n" },
+    ];
+    expect(cfgIds(files)).not.toContain("env-committed");
+  });
+
+  it("accepts every .env* variant when .gitignore uses the .env* wildcard", () => {
+    const files = [
+      { path: ".env.local", source: "API_KEY=abc" },
+      { path: ".gitignore", source: ".env*\n" },
     ];
     expect(cfgIds(files)).not.toContain("env-committed");
   });
