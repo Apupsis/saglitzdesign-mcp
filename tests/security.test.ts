@@ -162,6 +162,48 @@ describe("every finding is actionable", () => {
   });
 });
 
+describe("source rules — prose and examples inside comments are not code", () => {
+  // A JSDoc anti-pattern example, an ESLint rule description, or a code
+  // sample in a doc comment reads exactly like the real defect to a regex
+  // that never looks at context. Any security-conscious codebase — this
+  // tool's own audience — is disproportionately likely to contain exactly
+  // this shape of comment.
+  it("finds nothing in a /** */ block quoting window.open, localStorage.setItem and dangerouslySetInnerHTML", () => {
+    const code = [
+      "/**",
+      " * Anti-patterns to avoid:",
+      " * localStorage.setItem(\"authToken\", token);",
+      " * window.open(url);",
+      " * <div dangerouslySetInnerHTML={{__html: userInput}} />",
+      " */",
+      "export function noop() {}",
+    ].join("\n");
+    expect(securitySourceRules(code, "utils.ts")).toEqual([]);
+  });
+
+  it("an ESLint rule description mentioning window.open(url) does not trip window-open-without-noopener", () => {
+    const code = `// Disallow window.open(url) without a noopener/noreferrer argument.`;
+    expect(ids(code, "eslint-rule.ts")).not.toContain("window-open-without-noopener");
+  });
+
+  it("still fires on the same three constructs as real code outside comments", () => {
+    const localStorage = `localStorage.setItem("authToken", token);`;
+    const windowOpen = `window.open(url);`;
+    const dangerousHtml = `<div dangerouslySetInnerHTML={{__html: userInput}} />`;
+
+    expect(ids(localStorage, "utils.ts")).toContain("token-in-localstorage");
+    expect(ids(windowOpen, "utils.ts")).toContain("window-open-without-noopener");
+    expect(ids(dangerousHtml, "Component.tsx")).toContain("dangerous-html");
+  });
+
+  it("does not flag a commented-out anchor in an HTML file, but does flag the same anchor outside the comment", () => {
+    const commented = `<!-- <a href="https://x.com" target="_blank"> -->`;
+    const real = `<a href="https://x.com" target="_blank">go</a>`;
+    expect(ids(commented, "page.html")).not.toContain("blank-without-noopener");
+    expect(ids(real, "page.html")).toContain("blank-without-noopener");
+  });
+});
+
 const cfgIds = (files: Array<{ path: string; source: string }>) =>
   securityConfigRules(files).map((f) => f.rule);
 
@@ -245,6 +287,49 @@ describe("config rules — CSP discovery", () => {
     expect(ids).not.toContain("csp-missing");
     expect(ids).toContain("csp-undeterminable");
     expect(ids.filter((r) => r.startsWith("csp-missing") || r === "trusted-types-absent")).toEqual([]);
+  });
+});
+
+describe("config rules — a header-name reference is not a declaration", () => {
+  // extractHeaders used to take the *next* array element as a header's
+  // value whenever a header name appeared with no real assignment context
+  // at all — a plain list, e.g. an ALLOWED_RESPONSE_HEADERS constant. That
+  // silently swallowed the two highest-signal findings (csp-missing,
+  // hsts-missing) behind six low-signal ones anchored to a file that
+  // configures nothing.
+  const HEADER_NAME_ARRAY = `
+export const ALLOWED_RESPONSE_HEADERS = [
+  "Content-Security-Policy",
+  "Strict-Transport-Security",
+  "X-Content-Type-Options",
+  "Referrer-Policy",
+];
+`;
+
+  it("still reports csp-missing and hsts-missing for a plain array of header names", () => {
+    const ids = cfgIds([{ path: "headers.ts", source: HEADER_NAME_ARRAY }]);
+    expect(ids).toContain("csp-missing");
+    expect(ids).toContain("hsts-missing");
+  });
+
+  it("does not anchor any low-signal CSP/HSTS finding to the array", () => {
+    const ids = cfgIds([{ path: "headers.ts", source: HEADER_NAME_ARRAY }]);
+    for (const bogus of [
+      "csp-missing-object-src", "csp-missing-base-uri", "csp-missing-frame-ancestors",
+      "csp-undeterminable", "csp-unsafe-inline", "csp-unsafe-eval", "csp-wildcard",
+      "trusted-types-absent", "hsts-short-max-age", "hsts-no-subdomains",
+    ]) {
+      expect(ids).not.toContain(bogus);
+    }
+  });
+
+  it("still reads a real declaration living in the same file as such an array", () => {
+    const source = HEADER_NAME_ARRAY + `
+headers.set('Content-Security-Policy', "default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
+`;
+    const ids = cfgIds([{ path: "headers.ts", source }]);
+    expect(ids).not.toContain("csp-missing");
+    expect(ids.filter((r) => r.startsWith("csp-"))).toEqual([]);
   });
 });
 

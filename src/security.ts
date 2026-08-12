@@ -97,8 +97,19 @@ export function securitySourceRules(code: string, filename?: string): LintFindin
     doc: string,
   ) => out.push({ line: lineOf(code, index), severity, rule, message, fix, doc });
 
+  // A code example in a doc comment, or a rule description quoting the very
+  // API this module warns about ("Disallow window.open(url) without a
+  // noopener…"), reads exactly like the real defect to a regex that never
+  // looks at context. `maskComments` blanks comment text (same length, same
+  // line numbers) before any rule sees it, so every check below — the tag
+  // scanner and the line rules alike — only ever matches live code. Matched
+  // text always comes from `masked`, so a genuine match still reports the
+  // real source characters (masking only touches comment regions, which by
+  // definition can never be where a genuine match is).
+  const masked = maskComments(code, filename ?? "");
+
   // ── markup rules ───────────────────────────────────────────────────────────
-  for (const tag of scanTags(code)) {
+  for (const tag of scanTags(masked)) {
     const name = tag.name.toLowerCase();
 
     if (name === "a" && /target\s*=\s*["']?_blank/i.test(tag.attrs)) {
@@ -124,7 +135,7 @@ export function securitySourceRules(code: string, filename?: string): LintFindin
           `Add integrity="sha384-…" and crossorigin="anonymous", or self-host the file.`,
           "web-security-headers");
       }
-      const body = code.slice(tag.end, code.indexOf("</script", tag.end));
+      const body = masked.slice(tag.end, masked.indexOf("</script", tag.end));
       if (!src && body.trim() && !hasAttr(tag, "nonce") && !hasAttr(tag, "integrity")) {
         push(tag.index, "warning", "inline-script-no-nonce",
           `Inline <script> with neither a nonce nor an integrity hash cannot run under a strict Content-Security-Policy.`,
@@ -175,7 +186,7 @@ export function securitySourceRules(code: string, filename?: string): LintFindin
         "web-security-headers");
     }
 
-    if (/\bdangerouslySetInnerHTML\b/.test(tag.attrs) && !hasSanitiserImport(code)) {
+    if (/\bdangerouslySetInnerHTML\b/.test(tag.attrs) && !hasSanitiserImport(masked)) {
       push(tag.index, "warning", "dangerous-html",
         `dangerouslySetInnerHTML with no sanitiser imported in this file renders untrusted markup as live HTML.`,
         `Sanitise the value first (DOMPurify), or render it as text.`,
@@ -184,7 +195,7 @@ export function securitySourceRules(code: string, filename?: string): LintFindin
   }
 
   // ── line rules ─────────────────────────────────────────────────────────────
-  const lines = code.split("\n");
+  const lines = masked.split("\n");
   let offset = 0;
   for (const line of lines) {
     const at = offset;
@@ -195,7 +206,7 @@ export function securitySourceRules(code: string, filename?: string): LintFindin
     // disabled this branch for real Svelte markup. The brace itself is
     // already an unambiguous boundary, so only the trailing `\b` (which
     // keeps "{@htmlFoo}" from matching) is needed on that side.
-    if ((/\bv-html\b/.test(line) || /\{@html\b/.test(line)) && !hasSanitiserImport(code)) {
+    if ((/\bv-html\b/.test(line) || /\{@html\b/.test(line)) && !hasSanitiserImport(masked)) {
       push(at, "warning", "dangerous-html",
         `Raw HTML binding with no sanitiser imported in this file renders untrusted markup as live HTML.`,
         `Sanitise the value first (DOMPurify), or bind it as text.`,
@@ -300,6 +311,8 @@ const HEADER_NAMES = [
   "Permissions-Policy",
 ] as const;
 
+const HEADER_NAME_SET = new Set(HEADER_NAMES.map((h) => h.toLowerCase()));
+
 export interface HeaderHit {
   value: string;
   file: string;
@@ -310,19 +323,23 @@ export interface HeaderHit {
 
 /**
  * Replace comment text with spaces (preserving length and line numbers) so
- * `extractHeaders` never treats a commented-out header mention as a real
- * declaration. Comment styles are gated by file shape rather than applied
- * blindly:
- *   - line comments and block comments, only in JS/TS-like files. A
- *     `_headers` file's route selector line legitimately starts with the
+ * neither `extractHeaders` nor `securitySourceRules` treats commented-out
+ * text — a header mention, or a code example in a doc comment — as real.
+ * Comment styles are gated by file shape rather than applied blindly:
+ *   - line comments and block comments in JS/TS-like files (`.js`, `.jsx`,
+ *     `.ts`, `.tsx`, `.mjs`, `.cjs`) and in `.vue`/`.svelte`, which embed a
+ *     real `<script>` block using the same syntax alongside their markup.
+ *     A `_headers` file's route selector line legitimately starts with the
  *     two characters that open a block comment (meaning "all paths") —
  *     treating that as an unterminated block comment would blank out every
- *     header declaration that follows it in the file.
+ *     header declaration that follows it in the file, so `_headers` is
+ *     deliberately excluded from this group.
  *   - `#` only in `.toml` and `_headers` files, where it is their actual
  *     comment syntax. JSON has no comment syntax, so nothing is masked
  *     there — a `//` inside a URL string in vercel.json must survive.
  *   - `<!-- -->` universally; its four-character open and explicit close
- *     make it unambiguous wherever it appears.
+ *     make it unambiguous wherever it appears — this is what covers
+ *     `.html`/`.astro` templates, and the markup half of `.vue`/`.svelte`.
  *
  * In JS/TS-like files, a `'`/`"`/`` ` `` opens a string, tracked per line
  * (reset at each newline — this is not a tokenizer, and a template literal
@@ -341,7 +358,7 @@ export interface HeaderHit {
  */
 function maskComments(source: string, path: string): string {
   const isHeadersFile = /(^|\/)_headers$/.test(path);
-  const isJsLike = /\.(?:jsx?|tsx?|mjs|cjs)$/i.test(path);
+  const isJsLike = /\.(?:jsx?|tsx?|mjs|cjs|vue|svelte)$/i.test(path);
   const isHashComment = isHeadersFile || /\.toml$/i.test(path);
 
   let out = "";
@@ -411,6 +428,36 @@ function maskComments(source: string, path: string): string {
 }
 
 /**
+ * True when the header-name occurrence ending at `idx` in `text` sits in a
+ * shape that actually declares a value:
+ *   - bare at the start of its own line (only whitespace precedes it back to
+ *     the previous newline) — the `_headers` / netlify.toml shape, where the
+ *     header name is never quoted;
+ *   - immediately after `.set(`/`.append(` (a fetch Headers / Response call);
+ *   - immediately after a `key`/`value`-style property (`key: 'X'` or the
+ *     JSON `"key": "X"`), optionally quoted, colon or `=`.
+ * Anything else — most importantly a header name sitting in a plain list
+ * (`["Content-Security-Policy", "Strict-Transport-Security"]`, e.g. an
+ * `ALLOWED_RESPONSE_HEADERS` reference array) — is not a declaration. That
+ * shape has no assignment context at all: the character before the opening
+ * quote is `[` or `,`, and there is no `.set(`/`key:` anywhere nearby. This
+ * is a positive allowlist, not a blocklist of `[`/`,`, precisely because an
+ * unrecognised shape should be read as "not proven to declare anything"
+ * rather than guessed at — a missed declaration surfaces as `*-missing`,
+ * which is a visible, quickly-disproved false alarm; a fabricated one
+ * silently swallows a real absence, which is the failure this exists to
+ * prevent.
+ */
+function isHeaderDeclarationContext(text: string, idx: number): boolean {
+  const lineStart = text.lastIndexOf("\n", idx - 1) + 1;
+  if (/^[ \t]*$/.test(text.slice(lineStart, idx))) return true;
+
+  const before = text.slice(Math.max(0, idx - 60), idx);
+  return /\.\s*(?:set|append)\s*\(\s*["'`]?$/i.test(before)
+    || /["'`]?key["'`]?\s*[:=]\s*["'`]?$/i.test(before);
+}
+
+/**
  * Find each header's declared value across every configuration shape we support:
  * `key: 'X', value: '…'` (next.config, vercel.json), `X = "…"` (netlify.toml),
  * `X: …` to end of line (_headers), and `.set('X', v)` (middleware/proxy).
@@ -431,6 +478,13 @@ export function extractHeaders(files: Array<{ path: string; source: string }>): 
       // exists only to hide matches, not to corrupt the content once a real
       // one is found.
       while ((m = nameRe.exec(masked)) !== null) {
+        // A header name can appear as a plain reference — a list of allowed/
+        // known header names, an enum, documentation — with no value beside
+        // it at all. Only an occurrence that actually sits where a value
+        // would be assigned counts as a declaration; skip everything else
+        // before it gets anywhere near being read as one.
+        if (!isHeaderDeclarationContext(masked, m.index)) continue;
+
         const after = file.source.slice(m.index + header.length, m.index + header.length + 4000);
         const line = file.source.slice(0, m.index).split("\n").length;
 
@@ -491,6 +545,14 @@ export function extractHeaders(files: Array<{ path: string; source: string }>): 
         }
 
         if (value === undefined) continue;
+        // A second, independent guard against the same failure
+        // isHeaderDeclarationContext defends against: a real header value is
+        // never exactly another header's name. This catches a declaration
+        // shape the context check doesn't recognise (rather than one it
+        // does), which is exactly what happened auditing this module's own
+        // HEADER_NAMES array — CSP immediately followed by CSP-Report-Only,
+        // each read as if it were the other's value.
+        if (HEADER_NAME_SET.has(value.trim().toLowerCase())) continue;
         if (!undeterminable && /\$\{|\+\s*[A-Za-z_$]/.test(value)) undeterminable = true;
 
         const key = header.toLowerCase();
