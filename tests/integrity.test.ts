@@ -61,6 +61,17 @@ describe("knowledge base metadata", () => {
     const missing = [...new Set(docs.map((d) => d.category))].filter((c) => !(c in STALE_DAYS));
     expect(missing).toEqual([]);
   });
+
+  it("declares a security category with documents in it", () => {
+    expect(CATEGORIES).toContain("security");
+    const sec = docs.filter((d) => d.category === "security");
+    expect(sec.length).toBeGreaterThan(0);
+  });
+
+  it("gives every category a staleness threshold", () => {
+    const missing = [...CATEGORIES].filter((c) => STALE_DAYS[c] === undefined);
+    expect(missing).toEqual([]);
+  });
 });
 
 describe("catalogue references resolve", () => {
@@ -260,5 +271,47 @@ describe("release metadata is in sync", () => {
 
   it("keeps the registry description within the 100-char limit", () => {
     expect(manifest.description.length).toBeLessThanOrEqual(100);
+  });
+});
+
+// Security guidance is only worth shipping if it is traceable to a standard or a
+// first-party vendor doc. Blog-tier sourcing is how confidently-wrong security
+// advice spreads, so the allowlist is enforced rather than merely documented.
+const PERMITTED_SOURCE_HOSTS = new Set([
+  "w3.org", "www.w3.org", "w3c.github.io", "whatwg.org", "html.spec.whatwg.org",
+  "datatracker.ietf.org", "rfc-editor.org", "developer.mozilla.org",
+  "web.dev", "developer.chrome.com", "developers.google.com", "webkit.org",
+  "hacks.mozilla.org", "owasp.org", "cheatsheetseries.owasp.org",
+  "fidoalliance.org", "passkeys.dev", "nextjs.org", "docs.astro.build",
+  "svelte.dev", "vite.dev", "edpb.europa.eu", "ico.org.uk", "kvkk.gov.tr",
+  "eur-lex.europa.eu", "caniuse.com",
+]);
+
+describe("security documents cite permitted sources only", () => {
+  it("uses no blog-tier source", () => {
+    const offenders: string[] = [];
+    for (const d of docs.filter((x) => x.category === "security")) {
+      for (const url of d.sources ?? []) {
+        let host: string;
+        try {
+          host = new URL(url).hostname.replace(/^www\./, "");
+        } catch {
+          offenders.push(`${d.id}: unparseable source ${url}`);
+          continue;
+        }
+        if (!PERMITTED_SOURCE_HOSTS.has(host) && !PERMITTED_SOURCE_HOSTS.has(`www.${host}`)) {
+          offenders.push(`${d.id}: ${host}`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it("cites at least three sources per document", () => {
+    const thin = docs
+      .filter((d) => d.category === "security")
+      .filter((d) => (d.sources ?? []).length < 3)
+      .map((d) => d.id);
+    expect(thin).toEqual([]);
   });
 });

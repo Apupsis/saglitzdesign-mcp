@@ -99,7 +99,7 @@ export interface MergeResult {
 }
 
 const KNOWN_CATEGORIES = new Set([
-  "design-language", "component", "ux", "seo", "geo", "pattern", "craft", "book", "process", "marketing",
+  "design-language", "component", "ux", "seo", "geo", "pattern", "craft", "book", "process", "marketing", "security",
 ]);
 
 /**

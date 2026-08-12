@@ -9,7 +9,7 @@ expert‑level guidance on **web, iOS, Android and macOS design** — plus the
 **UX, copywriting, SEO, GEO and marketing** knowledge that makes a product
 actually convert.
 
-88 curated knowledge documents · 29 tools · 8 build/review/port workflows · MCP resources with id autocomplete · a one‑call design‑system builder · real token/color/type/elevation/motion/a11y generators · design & UX‑copy linters · production component recipes · phased roadmaps · real‑world visual examples
+89 curated knowledge documents · 29 tools · 8 build/review/port workflows · MCP resources with id autocomplete · a one‑call design‑system builder · real token/color/type/elevation/motion/a11y generators · design & UX‑copy linters · production component recipes · phased roadmaps · real‑world visual examples
 
 [![npm](https://img.shields.io/npm/v/saglitzdesign-mcp?color=cb3837&logo=npm)](https://www.npmjs.com/package/saglitzdesign-mcp)
 [![CI](https://github.com/HalidSaglam/saglitzdesign-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/HalidSaglam/saglitzdesign-mcp/actions/workflows/ci.yml)
@@ -50,7 +50,7 @@ instead of guessing.
 
 ## What's inside
 
-**88 knowledge documents across 10 categories:**
+**89 knowledge documents across 11 categories:**
 
 | Category | Coverage |
 |---|---|
@@ -63,6 +63,7 @@ instead of guessing.
 | 📣 **Marketing** | Branding & identity · email marketing · **HTML email development** (Outlook, dark mode, bulletproof) · ad creative · paywall benchmarks (RevenueCat 2026) · growth frameworks (loops/AARRR/PLG) · pricing strategy · analytics & experimentation · value proposition & JTBD · **content & distribution** (topic clusters, community, referral) · **App Store Optimization (ASO)** |
 | 🔎 **SEO** | Technical SEO (Core Web Vitals) · on‑page & E‑E‑A‑T · SEO for designers |
 | 🤖 **GEO** | Generative Engine Optimization — visibility in ChatGPT / Perplexity / AI Overviews, llms.txt, citation tactics |
+| 🔐 **Security** | Web security headers & CSP — strict nonce/hash policies, `strict-dynamic`, Trusted Types, HSTS, SRI, cross-origin isolation, and the superseded headers auditors still ask for. Every claim sourced to a spec or vendor doc, re-verified on a 90-day clock. |
 | 🖼️ **Patterns & examples** | Real‑world patterns studied from top apps & sites (incl. **e‑commerce & checkout** and **fintech / trust** flows), plus a curated library of real‑world example screens |
 
 ## Workflows (`/` prompts) — "build me a…"
@@ -288,7 +289,7 @@ Drop a Markdown file anywhere under `knowledge/` with frontmatter:
 ---
 id: my-topic
 title: "My Topic"
-category: ux            # design-language | component | ux | seo | geo | pattern | craft | book | process | marketing
+category: ux            # design-language | component | ux | seo | geo | pattern | craft | book | process | marketing | security
 platform: both          # mobile | web | macos | both
 tags: [tag1, tag2]
 sources: ["https://…"]
