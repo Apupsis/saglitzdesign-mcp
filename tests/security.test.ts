@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { securitySourceRules, securityConfigRules, extractHeaders } from "../dist/security.js";
+import { securitySourceRules, securityConfigRules, extractHeaders, securityReport } from "../dist/security.js";
 
 const ids = (code: string, filename?: string) =>
   securitySourceRules(code, filename).map((f) => f.rule).sort();
@@ -407,5 +407,19 @@ describe("config rules — committed env files", () => {
       { path: ".gitignore", source: ".env*\n" },
     ];
     expect(cfgIds(files)).not.toContain("env-committed");
+  });
+});
+
+describe("the report", () => {
+  it("always states what it could not see", () => {
+    const clean = securityReport({ source: `<main><h1>Hi</h1></main>` });
+    expect(clean).toMatch(/not visible to this audit/i);
+    expect(clean).toMatch(/CDN|proxy/i);
+  });
+
+  it("states it for a report with findings too", () => {
+    const dirty = securityReport({ source: `<script src="https://cdn.example.com/a.js"></script>` });
+    expect(dirty).toMatch(/not visible to this audit/i);
+    expect(dirty).toContain("external-script-no-sri");
   });
 });

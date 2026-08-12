@@ -10,6 +10,7 @@
 // with the rest.
 
 import { scanTags, type LintFinding, type Tag } from "./lint.js";
+import { scanProject } from "./project.js";
 
 const lineOf = (src: string, index: number): number =>
   src.slice(0, index).split("\n").length;
@@ -671,4 +672,73 @@ export function securityConfigRules(files: Array<{ path: string; source: string 
   }
 
   return out;
+}
+
+// ── report ───────────────────────────────────────────────────────────────────
+
+const NOT_VISIBLE = `
+## Not visible to this audit
+
+This audit reads local files only — it makes no request to your site. It cannot see:
+
+- Headers added by a CDN, WAF or reverse proxy (Cloudflare, Fastly, nginx) after your app responds.
+- Headers set by runtime logic that depends on the request.
+- Any value assembled from variables, which is reported as undeterminable rather than absent.
+- Server-side concerns entirely: authorization, injection, and access control are out of scope for a design server.
+
+A clean result here means these files declare nothing wrong. Confirm the emitted headers on a real response before treating it as coverage.`;
+
+export function securityReport(input: { source?: string; filename?: string; root?: string }): string {
+  const lines: string[] = ["# Security audit", ""];
+  let findings: LintFinding[] = [];
+  let scanned = "";
+
+  if (input.root) {
+    const scan = scanProject(input.root, SECURITY_EXTENSIONS, SECURITY_FILENAMES);
+    const files = scan.files.map((f) => ({ path: f.path, source: f.source }));
+    for (const f of files) {
+      // The file is folded into the message (colon-separated, matching the
+      // convention securityConfigRules already uses for its own findings)
+      // rather than appended after the line number — the bullet below shows
+      // the line once, from `f.line`. Repeating it here as `path:line —`
+      // would put the same number in the reader's eye twice for one finding.
+      findings.push(...securitySourceRules(f.source, f.path).map((x) => ({ ...x, message: `${f.path}: ${x.message}` })));
+    }
+    findings.push(...securityConfigRules(files));
+    scanned = `Scanned ${scan.files.length} files under \`${input.root}\`.`;
+    if (scan.hitFileCap) scanned += ` Stopped at the ${scan.files.length}-file cap — results are partial.`;
+    if (scan.skippedLarge.length) scanned += ` Skipped ${scan.skippedLarge.length} oversized file(s).`;
+  } else {
+    findings = securitySourceRules(input.source ?? "", input.filename);
+    scanned = "Scanned one snippet. Configuration rules need a directory — pass `path` to check headers.";
+  }
+
+  const errors = findings.filter((f) => f.severity === "error");
+  const warnings = findings.filter((f) => f.severity === "warning");
+  const info = findings.filter((f) => f.severity === "info");
+
+  lines.push(scanned, "");
+  lines.push(`**${errors.length} error · ${warnings.length} warning · ${info.length} info**`, "");
+
+  if (!findings.length) {
+    lines.push("No findings in what was read.", "");
+  } else {
+    for (const group of [
+      { title: "Errors", items: errors },
+      { title: "Warnings", items: warnings },
+      { title: "Notes", items: info },
+    ]) {
+      if (!group.items.length) continue;
+      lines.push(`## ${group.title}`, "");
+      for (const f of group.items) {
+        lines.push(`- **${f.rule}** (line ${f.line}) — ${f.message}`);
+        lines.push(`  - Fix: ${f.fix}`);
+        if (f.doc) lines.push(`  - Read: \`get_design_doc("${f.doc}")\``);
+      }
+      lines.push("");
+    }
+  }
+
+  lines.push(NOT_VISIBLE);
+  return lines.join("\n");
 }

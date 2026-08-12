@@ -31,6 +31,7 @@ import { measure } from "./screenshot.js";
 import { renderMarkdown, renderHtml } from "./report.js";
 import { importTokensReport } from "./importtokens.js";
 import { projectAuditReport } from "./project.js";
+import { securityReport } from "./security.js";
 import { createDesignSystem, type DSPlatform } from "./designsystem.js";
 import { normalizeHex } from "./tokens.js";
 
@@ -811,6 +812,36 @@ tool(
       return text(`\`${abs}\` is a file, not a directory. Use design_lint for a single file, or pass its parent folder.`);
     }
     return text(projectAuditReport(abs, extensions?.length ? extensions : undefined));
+  },
+);
+
+// ── Tool 30: audit security ──────────────────────────────────────────────────
+tool(
+  "audit_security",
+  "Audit a web project or snippet for security defects a frontend actually ships: missing or weak Content-Security-Policy, absent HSTS, unpinned cross-origin scripts, mixed content, credentials in localStorage, secret-named NEXT_PUBLIC_/VITE_ variables, unsandboxed third-party iframes, wildcard postMessage, raw-HTML sinks with no sanitiser, production source maps and un-ignored .env files. Header state is inferred from next.config / vercel.json / netlify.toml / _headers / middleware, read as text and never evaluated — this makes no network request, so it also reports what it could not see. Pair with audit_project for design drift and audit_accessibility for WCAG.",
+  {
+    path: z.string().optional().describe("Directory to audit. Absolute paths are strongly preferred. Required for configuration and header rules — a snippet cannot show them."),
+    code: z.string().optional().describe("A single snippet to audit instead of a directory. Source rules only."),
+    filename: z.string().optional().describe("Filename for the snippet, e.g. 'page.html' or 'Page.tsx'. Some rules depend on it: an inline onclick is a defect in HTML and normal JSX in a .tsx file."),
+  },
+  async ({ path, code, filename }) => {
+    if (!path && !code) {
+      return text("Pass `path` for a project audit, or `code` for a single snippet. A project audit is the useful one — header and CSP rules need configuration files.");
+    }
+    if (path) {
+      const abs = isAbsolute(path) ? path : resolve(process.cwd(), path);
+      let stat;
+      try {
+        stat = statSync(abs);
+      } catch {
+        return text(`There is no directory at \`${abs}\`. Pass an absolute path to the folder you want audited.`);
+      }
+      if (!stat.isDirectory()) {
+        return text(`\`${abs}\` is a file, not a directory. Pass its parent folder, or use \`code\` for a single snippet.`);
+      }
+      return text(securityReport({ root: abs }));
+    }
+    return text(securityReport({ source: code, filename }));
   },
 );
 
