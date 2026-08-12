@@ -281,7 +281,7 @@ const PERMITTED_SOURCE_HOSTS = new Set([
   "w3.org", "www.w3.org", "w3c.github.io", "whatwg.org", "html.spec.whatwg.org",
   "datatracker.ietf.org", "rfc-editor.org", "developer.mozilla.org",
   "web.dev", "developer.chrome.com", "developers.google.com", "webkit.org",
-  "hacks.mozilla.org", "owasp.org", "cheatsheetseries.owasp.org",
+  "hacks.mozilla.org", "owasp.org", "cheatsheetseries.owasp.org", "genai.owasp.org",
   "fidoalliance.org", "passkeys.dev", "nextjs.org", "docs.astro.build",
   "svelte.dev", "vite.dev", "edpb.europa.eu", "ico.org.uk", "kvkk.gov.tr",
   "eur-lex.europa.eu", "caniuse.com",

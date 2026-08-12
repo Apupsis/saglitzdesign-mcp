@@ -23,7 +23,7 @@ The most common wrong mental model in frontend security is that escaping is one 
 | **HTML body** | `<div>DATA</div>` | HTML-entity encode `&`, `<`, `>`, `"`, `'` | `.textContent` — "It is a Safe Sink" |
 | **HTML attribute** | `<div title="DATA">` | Encode all characters as `&#xHH;`, **and quote the attribute**. Unquoted attributes are escapable with a space. | `.setAttribute()` / `[attribute]`, which HTML-attribute-encode for you |
 | **JavaScript** | `<script>var x = "DATA";</script>` | The "only 'safe' location for placing variables in JavaScript is inside a quoted data value", encoded as `\xHH`. Not `\"`-style backslash escaping. | Don't. Emit `<script type="application/json">` and `JSON.parse` it, or read a `data-` attribute. |
-| **URL** | `<a href="DATA">` | URL-encode as `%HH` **and** allowlist the scheme: "Allow-list http and HTTPS URLs only (Avoid the JavaScript Protocol)" | `new URL()` + a protocol check — see [Links and redirects](#links-and-redirects) |
+| **URL** | `<a href="DATA">` | URL-encode as `%HH` **and** allowlist the scheme: "Allow-list http and HTTPS URLs only" | `new URL()` + a protocol check — see [Links and redirects](#links-and-redirects) |
 | **CSS** | `style="width: DATA"` | CSS hex encoding, and only ever in a property **value** | `style.property = x` — "This is a Safe Sink" |
 
 And the slots where **no** encoding saves you, per OWASP: directly inside a `<script>` block, inside an HTML comment, in an attribute *name*, in a tag name, and directly in CSS. If untrusted data is reaching one of those, the fix is a different design, not a better escape function.
