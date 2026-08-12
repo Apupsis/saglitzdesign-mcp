@@ -83,7 +83,12 @@ false sense of coverage. So sourcing is a hard constraint here, not a preference
    MDN, FIDO Alliance/WebAuthn specs.
 2. The implementers — web.dev, Chrome Developers, WebKit, Mozilla security blog,
    the framework's own security documentation (Next.js, Astro, SvelteKit).
-3. OWASP — Top 10, ASVS, and the Cheat Sheet Series.
+3. OWASP — Top 10, ASVS, the Cheat Sheet Series, and the GenAI Security Project.
+   OWASP moved that project to its own `genai.owasp.org` domain and the
+   `owasp.org` page is now a legacy archive, so the allowlist names the
+   subdomain explicitly. Enumerating hosts means a project that moves goes
+   silently unciteable until the list catches up — Task 5 hit exactly that and
+   had to label the current LLM Top 10 as superseded 2023 numbering.
 4. Regulators for the privacy document — EDPB guidelines, the ICO, the KVKK
    authority. Not law-firm marketing pages.
 
