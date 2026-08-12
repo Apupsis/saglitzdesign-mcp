@@ -210,7 +210,7 @@ Fired over `next.config.*`, `vercel.json`, `netlify.toml`, `_headers`,
 | `env-committed` — a `.env` present and not covered by `.gitignore` | error |
 | `hsts-missing` / `hsts-short-max-age` (< 15552000) / `hsts-no-subdomains` | warning |
 | `csp-missing-object-src` / `csp-missing-base-uri` / `csp-missing-frame-ancestors` | warning |
-| `referrer-policy-missing-or-unsafe` | warning |
+| `referrer-policy-unsafe` — set to a value that leaks more than the browser default | warning |
 | `permissions-policy-missing` | warning |
 | `x-content-type-options-missing` | warning |
 | `sourcemaps-in-production` | warning |

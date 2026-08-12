@@ -973,6 +973,14 @@ describe("config rules — CSP discovery", () => {
     expect(ids).not.toContain("csp-missing");
     expect(ids).toContain("csp-undeterminable");
   });
+
+  it("finds a CSP in proxy.ts, the Next.js 16 name for middleware", () => {
+    // Next.js 16 deprecated and renamed middleware.ts to proxy.ts. Reading only
+    // the old name would report csp-missing on every Next.js 16 project that
+    // sets a CSP correctly — a false positive on the most common modern stack.
+    const source = `export function proxy() { res.headers.set('Content-Security-Policy', "default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'") }`;
+    expect(cfgIds([{ path: "proxy.ts", source }])).not.toContain("csp-missing");
+  });
 });
 
 describe("config rules — CSP weaknesses", () => {
@@ -1024,8 +1032,19 @@ describe("config rules — the other headers", () => {
     expect(ids).not.toContain("hsts-no-subdomains");
   });
 
-  it("flags an unsafe referrer policy", () => {
-    expect(cfgIds(headersFile("  Referrer-Policy: unsafe-url"))).toContain("referrer-policy-missing-or-unsafe");
+  it("flags a referrer policy that leaks more than the browser default", () => {
+    expect(cfgIds(headersFile("  Referrer-Policy: unsafe-url"))).toContain("referrer-policy-unsafe");
+  });
+
+  it("does not flag an absent Referrer-Policy", () => {
+    // strict-origin-when-cross-origin has been the browser default since the
+    // November 2020 spec revision, so absence is already the recommended value.
+    // A rule that fires here would fire on correct configuration.
+    expect(cfgIds(headersFile("  X-Content-Type-Options: nosniff"))).not.toContain("referrer-policy-unsafe");
+  });
+
+  it("does not flag strict-origin-when-cross-origin set explicitly", () => {
+    expect(cfgIds(headersFile("  Referrer-Policy: strict-origin-when-cross-origin"))).not.toContain("referrer-policy-unsafe");
   });
 
   it("flags production source maps", () => {
@@ -1075,6 +1094,9 @@ Append to `src/security.ts`:
 // Configuration is read as text and never evaluated, the same rule
 // import_design_tokens set for tailwind.config.js.
 
+// `.ts` covers both middleware.ts and proxy.ts — Next.js 16 deprecated the
+// former and renamed it to the latter, so narrowing this list to named files
+// would go blind on every Next.js 16 project.
 export const SECURITY_EXTENSIONS = [
   ".html", ".htm", ".jsx", ".tsx", ".vue", ".svelte", ".astro", ".ts", ".js", ".mjs", ".cjs", ".json", ".toml",
 ];
@@ -1239,12 +1261,17 @@ export function securityConfigRules(files: Array<{ path: string; source: string 
       `X-Content-Type-Options is not set, so browsers may MIME-sniff a response into a script.`,
       `Set X-Content-Type-Options: nosniff. It has no downside.`);
   }
+  // There is deliberately no "referrer-policy-missing" rule. Since the November
+  // 2020 spec revision, strict-origin-when-cross-origin IS the browser default
+  // (verified against MDN) — an absent header already behaves the way we would
+  // have recommended, so flagging its absence would fire on correct
+  // configuration. Only an explicitly worse value is a finding.
+  const LEAKY_REFERRER = /^(unsafe-url|no-referrer-when-downgrade|origin-when-cross-origin)$/i;
   const ref = headers.get("referrer-policy");
-  if (!ref || (!ref.undeterminable && /unsafe-url|^no-referrer-when-downgrade$/i.test(ref.value.trim()))) {
-    push(ref?.file ?? "configuration", ref?.line ?? 1, "warning", "referrer-policy-missing-or-unsafe",
-      ref ? `Referrer-Policy "${ref.value.trim()}" leaks full URLs, including any token in a path or query, to other origins.`
-          : `No Referrer-Policy, so full URLs may be sent to other origins.`,
-      `Set Referrer-Policy: strict-origin-when-cross-origin.`);
+  if (ref && !ref.undeterminable && LEAKY_REFERRER.test(ref.value.trim())) {
+    push(ref.file, ref.line, "warning", "referrer-policy-unsafe",
+      `Referrer-Policy "${ref.value.trim()}" sends more than the browser default, leaking full URLs — including any token in a path or query — to other origins.`,
+      `Remove the header to get strict-origin-when-cross-origin, or set that value explicitly.`);
   }
   if (!headers.has("permissions-policy")) {
     push("configuration", 1, "warning", "permissions-policy-missing",
