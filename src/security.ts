@@ -10,23 +10,77 @@
 // with the rest.
 
 import { scanTags, type LintFinding, type Tag } from "./lint.js";
-import { scanProject } from "./project.js";
+import { scanProject, MAX_FILES } from "./project.js";
 
 const lineOf = (src: string, index: number): number =>
   src.slice(0, index).split("\n").length;
 
+// `\b` is the wrong boundary for an attribute name: `-` is a non-word
+// character, so `\bsrc` matches inside `data-src`, `\bhref` inside
+// `data-href`, and — the dangerous one — `\bnonce` inside `data-nonce`, which
+// silently *suppressed* a real inline-script finding. An attribute name can
+// only begin at the start of the attribute chunk or after whitespace (or the
+// closing quote of the previous attribute's value), and never after a `-`.
+const ATTR_START = `(?:^|[\\s"'])`;
+
 const attr = (tag: Tag, name: string): string | undefined => {
-  const re = new RegExp(`\\b${name}\\s*=\\s*("([^"]*)"|'([^']*)'|\\{[^}]*\\})`, "i");
+  const re = new RegExp(`${ATTR_START}${name}\\s*=\\s*("([^"]*)"|'([^']*)'|\\{[^}]*\\})`, "i");
   const m = re.exec(tag.attrs);
   if (!m) return undefined;
   return m[2] ?? m[3] ?? m[1];
 };
 
+// Valueless attributes are real (`<iframe sandbox>`), so the name may be
+// followed by `=`, whitespace, the tag's own end, or nothing — but not by a
+// further name character, which is what keeps `nonce` out of `nonce-value`.
 const hasAttr = (tag: Tag, name: string): boolean =>
-  new RegExp(`\\b${name}\\b`, "i").test(tag.attrs);
+  new RegExp(`${ATTR_START}${name}(?=[\\s=/>]|$)`, "i").test(tag.attrs);
 
 const isCrossOrigin = (url: string): boolean =>
   /^https?:\/\//i.test(url) || url.startsWith("//");
+
+/**
+ * Elements that fetch a *subresource* — something the page loads and then
+ * uses as part of itself. Mixed-content blocking applies to these. It does
+ * not apply to a navigation: `<a href="http://example.org/rfc">` is a link to
+ * another page, browsers follow it, and flagging it as blocked mixed content
+ * was both a false positive and a false statement about how browsers behave.
+ * The same goes for a namespace URI like `http://www.w3.org/1999/xhtml`,
+ * which is an identifier and is never fetched at all.
+ */
+const SUBRESOURCE_TAGS = new Set([
+  "script", "img", "link", "iframe", "source", "video", "audio", "embed", "object", "track", "input",
+]);
+const SUBRESOURCE_ATTRS = ["src", "href", "data"] as const;
+
+/** `<link>` only fetches for some `rel` values; `alternate`/`canonical` do not. */
+const FETCHING_REL = /\b(stylesheet|preload|modulepreload|prefetch|prerender|icon|manifest|apple-touch-icon)\b/i;
+
+const isFetchedLink = (tag: Tag, name: string): boolean =>
+  name !== "link" || FETCHING_REL.test(attr(tag, "rel") ?? "");
+
+/**
+ * Script types the CSP `script-src` directive actually gates.
+ *
+ * A `<script type="application/ld+json">` is a *data block*: the spec's
+ * "prepare the script element" steps classify it as data and return before
+ * the CSP inline check ever runs, so it needs no nonce and never did. This
+ * server ships three documents (technical-seo, on-page-seo,
+ * geo-tactics-checklist) telling readers to add exactly that block — and then
+ * flagged them for following the advice.
+ *
+ * `module`, `importmap` and `speculationrules` *are* gated and stay flagged;
+ * an importmap in particular is a high-value injection target. Anything with
+ * an unrecognised type (a template, `text/x-handlebars`, a bundler's own
+ * marker) is data too.
+ */
+const JS_MIME = /^(?:application|text)\/(?:x-)?(?:java|ecma)script\s*(?:;.*)?$/i;
+const GATED_SCRIPT_TYPES = new Set(["", "module", "importmap", "speculationrules"]);
+
+const isCspGatedScript = (tag: Tag): boolean => {
+  const type = (attr(tag, "type") ?? "").trim().toLowerCase();
+  return GATED_SCRIPT_TYPES.has(type) || JS_MIME.test(type);
+};
 
 const MARKUP_FILE = /\.(html?|vue|svelte|astro)$/i;
 
@@ -86,6 +140,23 @@ const CREDENTIAL_WORDS = ["TOKEN", "JWT", "AUTH", "SESSION", "CREDENTIAL"] as co
 const SECRET_WORDS = ["SECRET", "PRIVATE", "TOKEN", "PASSWORD", "PASSWD"] as const;
 const SECRET_PAIRS = ["API_KEY", "ACCESS_KEY"] as const;
 
+/**
+ * A credential whose own name declares it public. Mapbox `pk.*` tokens,
+ * Stripe publishable keys and Supabase anon keys are *designed* to ship in
+ * the bundle — that is what row-level security and referrer restrictions are
+ * for — so an error telling the reader to rotate them is a false positive,
+ * and the loud kind: it asks for work that would break the site.
+ * NEXT_PUBLIC_SUPABASE_ANON_KEY is already silent (no whole SECRET segment,
+ * and ANON_KEY is not one of SECRET_PAIRS); this makes the same intent
+ * explicit for names that also carry a credential word.
+ */
+// Deliberately not "PUBLIC": every name here already carries a public prefix,
+// so accepting that segment would exempt VITE_PUBLIC_STRIPE_SECRET_KEY too.
+const PUBLIC_BY_DESIGN = ["PUBLISHABLE", "ANON"] as const;
+
+const isDeclaredPublicCredential = (id: string): boolean =>
+  hasKeywordSegment(id, PUBLIC_BY_DESIGN);
+
 export function securitySourceRules(code: string, filename?: string): LintFinding[] {
   const out: LintFinding[] = [];
   const push = (
@@ -135,22 +206,34 @@ export function securitySourceRules(code: string, filename?: string): LintFindin
           `Add integrity="sha384-…" and crossorigin="anonymous", or self-host the file.`,
           "web-security-headers");
       }
-      const body = masked.slice(tag.end, masked.indexOf("</script", tag.end));
-      if (!src && body.trim() && !hasAttr(tag, "nonce") && !hasAttr(tag, "integrity")) {
+      // `indexOf` returns -1 when the tag is never closed, and `slice(end, -1)`
+      // then reads to the end of the file — so an unclosed <script> used to
+      // fire this rule unconditionally, body or no body.
+      const close = masked.indexOf("</script", tag.end);
+      const body = masked.slice(tag.end, close === -1 ? undefined : close);
+      // `integrity` is meaningless on an inline script — there is no fetched
+      // resource to hash — so it never justified suppressing this. A nonce
+      // does; so does not being script at all.
+      if (!src && body.trim() && !hasAttr(tag, "nonce") && isCspGatedScript(tag)) {
+        const type = (attr(tag, "type") ?? "").trim().toLowerCase();
         push(tag.index, "warning", "inline-script-no-nonce",
-          `Inline <script> with neither a nonce nor an integrity hash cannot run under a strict Content-Security-Policy.`,
-          `Move it to a file, or render it with a per-response nonce.`,
+          `Inline <script${type ? ` type="${type}"` : ""}> without a nonce cannot run under a strict Content-Security-Policy.`,
+          type === "speculationrules"
+            ? `Serve the rules from a JSON file named by a Speculation-Rules header, or allow 'inline-speculation-rules' in script-src.`
+            : `Move it to a file, or render it with a per-response nonce.`,
           "web-security-headers");
       }
     }
 
-    for (const a of ["src", "href"] as const) {
-      const v = attr(tag, a);
-      if (v && /^http:\/\//i.test(v)) {
-        push(tag.index, "error", "http-subresource",
-          `${a}="${v}" loads over plain HTTP; browsers block it as mixed content and it is modifiable in transit.`,
-          `Use https://, or a protocol-relative path on your own origin.`,
-          "web-security-headers");
+    if (SUBRESOURCE_TAGS.has(name) && isFetchedLink(tag, name)) {
+      for (const a of SUBRESOURCE_ATTRS) {
+        const v = attr(tag, a);
+        if (v && /^http:\/\//i.test(v)) {
+          push(tag.index, "error", "http-subresource",
+            `<${name} ${a}="${v}"> loads a subresource over plain HTTP; browsers block it as mixed content on an HTTPS page, and it is modifiable in transit.`,
+            `Use https://, or a root-relative path on your own origin.`,
+            "web-security-headers");
+        }
       }
     }
 
@@ -222,10 +305,19 @@ export function securitySourceRules(code: string, filename?: string): LintFindin
     }
 
     const env = /\b(?:NEXT_PUBLIC|VITE|PUBLIC|REACT_APP)_([A-Z0-9_]+)/.exec(line);
-    if (env && hasKeywordSegment(env[1], SECRET_WORDS, SECRET_PAIRS)) {
+    if (env && hasKeywordSegment(env[1], SECRET_WORDS, SECRET_PAIRS) && !isDeclaredPublicCredential(env[1])) {
+      // Some credentials are *designed* to ship in the bundle: a Mapbox
+      // `pk.*` access token, a Supabase anon key, a Stripe publishable key.
+      // Their names say so, and the segment check honours that. What remains
+      // is a name that merely ends in TOKEN — plausibly a publishable one —
+      // so the "already compromised" clause, which asks the reader to rotate
+      // every secret in sight, is softened to a question for that case only.
+      const tokenOnly = !hasKeywordSegment(env[1], ["SECRET", "PRIVATE", "PASSWORD", "PASSWD"], SECRET_PAIRS);
       push(at, "error", "public-env-secret",
         `A build-time public variable named "${env[0]}" is inlined into the client bundle and is public the moment it ships.`,
-        `Move it to a server-only variable and rotate the value — anything already shipped is compromised.`,
+        tokenOnly
+          ? `If this is a publishable token (a Mapbox pk.*, a Stripe publishable key), rename it to say so — PUBLISHABLE or ANON — so the next reader does not have to guess. If it is not, move it to a server-only variable and rotate the value.`
+          : `Move it to a server-only variable and rotate the value — anything already shipped is compromised.`,
         "frontend-attack-surface");
     }
 
@@ -295,11 +387,30 @@ export function securitySourceRules(code: string, filename?: string): LintFindin
 // former and renamed it to the latter, so narrowing this list to named files
 // would go blind on every Next.js 16 project.
 export const SECURITY_EXTENSIONS = [
-  ".html", ".htm", ".jsx", ".tsx", ".vue", ".svelte", ".astro", ".ts", ".js", ".mjs", ".cjs", ".json", ".toml",
+  ".html", ".htm", ".jsx", ".tsx", ".vue", ".svelte", ".astro",
+  ".ts", ".js", ".mjs", ".cjs", ".mts", ".cts", ".json", ".toml",
 ];
 
+/**
+ * Files read by name rather than extension — and, in `scanProject`, read
+ * *before* the extension matches and exempt from the file cap. Every name
+ * here is somewhere a project declares its response headers, and a header
+ * audit that never opened the header configuration is worse than no audit:
+ * it reports the headers absent. Most of these also match on extension, so
+ * listing them changes nothing about *whether* they are read — only about
+ * whether 400 components can push them out of the scan.
+ */
 export const SECURITY_FILENAMES = [
-  "_headers", ".env", ".env.local", ".env.production", ".gitignore", "netlify.toml", "vercel.json",
+  "_headers", ".env", ".env.local", ".env.production", ".gitignore",
+  "netlify.toml", "vercel.json", "staticwebapp.config.json", "wrangler.toml", "firebase.json",
+  "next.config.js", "next.config.mjs", "next.config.cjs", "next.config.ts",
+  "nuxt.config.js", "nuxt.config.ts",
+  "svelte.config.js", "svelte.config.ts",
+  "astro.config.js", "astro.config.mjs", "astro.config.ts",
+  "vite.config.js", "vite.config.ts",
+  "remix.config.js", "react-router.config.ts",
+  "middleware.ts", "middleware.js", "proxy.ts", "proxy.js",
+  "hooks.server.ts", "hooks.server.js",
 ];
 
 const HEADER_NAMES = [
@@ -319,6 +430,8 @@ export interface HeaderHit {
   line: number;
   /** The value is assembled at runtime, so its contents cannot be read here. */
   undeterminable: boolean;
+  /** Delivered by `<meta http-equiv>`, where some directives are ignored. */
+  viaMeta?: boolean;
 }
 
 /**
@@ -357,8 +470,26 @@ export interface HeaderHit {
  * this errs toward the former wherever the two heuristics would disagree.
  */
 function maskComments(source: string, path: string): string {
+  // `.astro` is two languages in one file with a hard, unambiguous boundary:
+  // the frontmatter fence. Inside it the content is TypeScript, where `//`
+  // opens a comment; outside it the content is markup, where it does not.
+  // Adding `.astro` to `isJsLike` wholesale would mask real template text
+  // after any `//` — the over-masking the note above warns about, which
+  // fabricates absence. Splitting on the fence gets both halves right, and
+  // because `maskComments` is length-preserving the two masked halves
+  // concatenate back to the original offsets.
+  if (/\.astro$/i.test(path)) {
+    const open = /^---[ \t]*\r?\n/.exec(source);
+    const close = open ? source.indexOf("\n---", open[0].length - 1) : -1;
+    if (open && close !== -1) {
+      return maskComments(source.slice(0, close + 1), "frontmatter.ts")
+        + maskComments(source.slice(close + 1), "template.html");
+    }
+    return maskComments(source, "template.html");
+  }
+
   const isHeadersFile = /(^|\/)_headers$/.test(path);
-  const isJsLike = /\.(?:jsx?|tsx?|mjs|cjs|vue|svelte)$/i.test(path);
+  const isJsLike = /\.(?:jsx?|tsx?|mjs|cjs|mts|cts|vue|svelte)$/i.test(path);
   const isHashComment = isHeadersFile || /\.toml$/i.test(path);
 
   let out = "";
@@ -471,7 +602,18 @@ function statementStart(text: string, idx: number): number {
  *     `headers.set(`, `headers.append(`, …) — matched on the identifier
  *     itself, not a substring of it;
  *   - immediately after a `key`/`value`-style property (`key: 'X'` or the
- *     JSON `"key": "X"`), optionally quoted, colon or `=`.
+ *     JSON `"key": "X"`), optionally quoted, colon or `=`;
+ *   - a quoted object-literal property name — `"Content-Security-Policy":
+ *     "…"` — which is the canonical shape almost everywhere outside
+ *     Next.js: Nuxt `routeRules.headers`, a Remix/React Router `export const
+ *     headers`, `new Response(body, { headers: { … } })` in a Cloudflare
+ *     Worker / Deno / Bun handler, `new Headers({ … })`, Express
+ *     `res.set({ … })`, and Azure's `staticwebapp.config.json`
+ *     `globalHeaders`. Not recognising it reported "no headers found" — and
+ *     four fabricated findings — on projects with exemplary headers. The
+ *     test is keyed on what *follows* the name (its own closing quote, then
+ *     `:` or `=`) rather than what precedes it, because what precedes a
+ *     property name and what precedes an array element are identical.
  * Anything else — most importantly a header name sitting in a plain list
  * (`["Content-Security-Policy", "Strict-Transport-Security"]`, e.g. an
  * `ALLOWED_RESPONSE_HEADERS` reference array) — is not a declaration. That
@@ -486,9 +628,17 @@ function statementStart(text: string, idx: number): number {
  * (this function) is not the same move as weakening that guard — the array
  * shape must, and does, still fall through to false.
  */
-function isHeaderDeclarationContext(text: string, idx: number): boolean {
+function isHeaderDeclarationContext(text: string, idx: number, headerLength: number): boolean {
   const lineStart = text.lastIndexOf("\n", idx - 1) + 1;
   if (/^[ \t]*$/.test(text.slice(lineStart, idx))) return true;
+
+  // Object-literal property: the header name's own closing quote is followed
+  // by `:` or `=`. A reference array (["Content-Security-Policy", …]) closes
+  // with `,` or `]`, so that shape still falls through to false.
+  const q = text[idx - 1];
+  if (q === '"' || q === "'" || q === "`") {
+    if (new RegExp(`^\\${q}\\s*[:=]`).test(text.slice(idx + headerLength))) return true;
+  }
 
   const before = text.slice(statementStart(text, idx), idx);
 
@@ -499,15 +649,132 @@ function isHeaderDeclarationContext(text: string, idx: number): boolean {
 }
 
 /**
+ * `<meta http-equiv="Content-Security-Policy" content="…">`. It is a weaker
+ * delivery than a real header — `frame-ancestors`, `report-uri` and `sandbox`
+ * are ignored in a meta policy (CSP Level 3) — but it is unambiguously a
+ * declaration, and reporting `csp-missing` at a page that ships one is the
+ * fabricated absence this module exists to avoid. The weakness is reported as
+ * its own finding instead of being read as nothing.
+ */
+function metaHttpEquiv(file: MaskedFile): { key: string; hit: HeaderHit } | null {
+  if (!/\.(?:html?|astro|vue|svelte|[jt]sx)$/i.test(file.path)) return null;
+  for (const tag of scanTags(file.masked)) {
+    if (tag.name.toLowerCase() !== "meta") continue;
+    const equiv = (attr(tag, "http-equiv") ?? "").trim().toLowerCase();
+    if (!HEADER_NAME_SET.has(equiv)) continue;
+    const content = attr(tag, "content");
+    if (content === undefined) continue;
+    return {
+      key: equiv,
+      hit: {
+        value: content,
+        file: file.path,
+        line: lineOf(file.source, tag.index),
+        undeterminable: /\$\{|\{[^}]*\}/.test(content),
+        viaMeta: true,
+      },
+    };
+  }
+  return null;
+}
+
+const CSP_KEYWORDS = new Set([
+  "self", "none", "unsafe-inline", "unsafe-eval", "unsafe-hashes", "wasm-unsafe-eval",
+  "strict-dynamic", "report-sample", "inline-speculation-rules", "nonce",
+]);
+
+/**
+ * SvelteKit declares its CSP in `svelte.config.js` as `kit.csp.directives`,
+ * an object of directive → array of *unquoted* source tokens — the string
+ * "Content-Security-Policy" appears nowhere in the file, so the header scan
+ * above cannot see it and used to call a correctly-configured SvelteKit
+ * project `csp-missing`. The tokens are reassembled into the policy the
+ * adapter will emit (SvelteKit quotes the keyword sources itself), so the
+ * directive rules below can read it like any other policy. Anything that
+ * cannot be read as a literal list — a spread, a variable — makes the whole
+ * policy undeterminable rather than a guess.
+ */
+function svelteKitCsp(file: MaskedFile): { key: string; hit: HeaderHit } | null {
+  if (!/(^|\/)svelte\.config\.[cm]?[jt]s$/i.test(file.path)) return null;
+  const at = file.masked.search(/\bdirectives\s*:\s*\{/);
+  if (at === -1) return null;
+  const open = file.masked.indexOf("{", at);
+  let depth = 0;
+  let close = -1;
+  for (let i = open; i < file.masked.length; i++) {
+    if (file.masked[i] === "{") depth++;
+    else if (file.masked[i] === "}" && --depth === 0) { close = i; break; }
+  }
+  if (close === -1) return null;
+
+  const block = file.source.slice(open + 1, close);
+  const directives: string[] = [];
+  let undeterminable = /\.\.\./.test(block);
+  const entryRe = /["']?([a-z][a-z0-9-]*)["']?\s*:\s*\[([^\]]*)\]/gi;
+  let m: RegExpExecArray | null;
+  while ((m = entryRe.exec(block)) !== null) {
+    const tokens: string[] = [];
+    for (const raw of m[2].split(",")) {
+      const t = raw.trim().replace(/^["'`]|["'`]$/g, "");
+      if (!t) continue;
+      // An unquoted token is a variable reference, not a source expression.
+      if (/[${}]/.test(t) || /^[A-Za-z_$][\w$]*$/.test(raw.trim())) { undeterminable = true; continue; }
+      // SvelteKit's bare `nonce` token emits a real per-response nonce whose
+      // value is generated at render time — present, but not readable here.
+      if (t === "nonce") { tokens.push("'nonce-…'"); continue; }
+      tokens.push(CSP_KEYWORDS.has(t) || /^(?:nonce|sha(?:256|384|512))-/.test(t) ? `'${t}'` : t);
+    }
+    directives.push(`${m[1].toLowerCase()} ${tokens.join(" ")}`.trim());
+  }
+  if (!directives.length) return null;
+
+  return {
+    key: "content-security-policy",
+    hit: {
+      value: directives.join("; "),
+      file: file.path,
+      line: lineOf(file.source, at),
+      undeterminable,
+    },
+  };
+}
+
+/** A file with its comment regions blanked, masked once and shared by every rule. */
+export interface MaskedFile {
+  path: string;
+  source: string;
+  masked: string;
+}
+
+export const maskFiles = (files: Array<{ path: string; source: string }>): MaskedFile[] =>
+  files.map((f) => ({ path: f.path, source: f.source, masked: maskComments(f.source, f.path) }));
+
+/**
  * Find each header's declared value across every configuration shape we support:
  * `key: 'X', value: '…'` (next.config, vercel.json), `X = "…"` (netlify.toml),
- * `X: …` to end of line (_headers), and `.set('X', v)` (middleware/proxy).
+ * `X: …` to end of line (_headers), `.set('X', v)` (middleware/proxy),
+ * `{ 'X': '…' }` (Nuxt, Remix, Workers, Express, Azure), `<meta http-equiv>`
+ * and SvelteKit's `kit.csp.directives`.
  */
 export function extractHeaders(files: Array<{ path: string; source: string }>): Map<string, HeaderHit> {
+  return extractHeadersFrom(maskFiles(files));
+}
+
+export function extractHeadersFrom(files: MaskedFile[]): Map<string, HeaderHit> {
   const found = new Map<string, HeaderHit>();
 
+  const record = (key: string, hit: HeaderHit) => {
+    const existing = found.get(key);
+    // Prefer a readable declaration over an undeterminable one.
+    if (!existing || (existing.undeterminable && !hit.undeterminable)) found.set(key, hit);
+  };
+
   for (const file of files) {
-    const masked = maskComments(file.source, file.path);
+    const masked = file.masked;
+
+    for (const special of [metaHttpEquiv(file), svelteKitCsp(file)]) {
+      if (special) record(special.key, special.hit);
+    }
 
     for (const header of HEADER_NAMES) {
       // Hyphens need no escaping in a regex — nothing else in `header` is a
@@ -524,7 +791,7 @@ export function extractHeaders(files: Array<{ path: string; source: string }>): 
         // it at all. Only an occurrence that actually sits where a value
         // would be assigned counts as a declaration; skip everything else
         // before it gets anywhere near being read as one.
-        if (!isHeaderDeclarationContext(masked, m.index)) continue;
+        if (!isHeaderDeclarationContext(masked, m.index, header.length)) continue;
 
         const after = file.source.slice(m.index + header.length, m.index + header.length + 4000);
         const line = file.source.slice(0, m.index).split("\n").length;
@@ -546,8 +813,14 @@ export function extractHeaders(files: Array<{ path: string; source: string }>): 
         // forward to whatever quote character appeared next *anywhere else
         // in the file* (typically the second `.set(...)` call a few lines
         // down) and reporting the text in between as a real, readable CSP.
-        const lead = /^(["'`])?[\s,]*(?:["'`]?value["'`]?\s*[:=]\s*)?[\s,]*/.exec(after)!;
-        const rest = after.slice(lead[0].length);
+        //
+        // The property separator (`:` in `{ "X": "…" }`, `=` in netlify.toml)
+        // is consumed here too, so the object-literal shape reaches the same
+        // value reader as every other shape.
+        const closing = /^(["'`])/.exec(after);
+        const afterName = closing ? after.slice(1) : after;
+        const lead = /^[\s,]*(?:[:=][\s,]*)?(?:["'`]?value["'`]?\s*[:=]\s*)?[\s,]*/.exec(afterName)!;
+        const rest = afterName.slice(lead[0].length);
 
         const openQuote = /^(["'`])/.exec(rest);
         if (openQuote) {
@@ -561,6 +834,16 @@ export function extractHeaders(files: Array<{ path: string; source: string }>): 
           } else {
             value = rest.slice(1, closeIdx);
             if (q === "`" && /\$\{/.test(value)) undeterminable = true;
+          }
+        } else if (closing) {
+          // The name was quoted, so this is code or JSON: an unquoted value
+          // is an identifier or an expression, never literal header text.
+          if (/^[A-Za-z_$]/.test(rest)) {
+            // (`value: cspHeaderValue`, `.set('X', cspHeaderValue.replace(…))`,
+            // `{ "X": cspValue }`) — its contents cannot be read from source
+            // without evaluating it.
+            value = "";
+            undeterminable = true;
           }
         } else {
           const colon = /^\s*[:=]\s*([^\n]+)/.exec(after);
@@ -576,12 +859,6 @@ export function extractHeaders(files: Array<{ path: string; source: string }>): 
             const raw = colon[1].trim();
             const wrapped = /^(["'`])([\s\S]*)\1,?$/.exec(raw);
             value = wrapped ? wrapped[2] : raw;
-          } else if (/^[A-Za-z_$]/.test(rest)) {
-            // A bare identifier or expression follows (`value:
-            // cspHeaderValue`, `.set('X', cspHeaderValue.replace(...))`) —
-            // its contents cannot be read from source without evaluating it.
-            value = "";
-            undeterminable = true;
           }
         }
 
@@ -596,12 +873,7 @@ export function extractHeaders(files: Array<{ path: string; source: string }>): 
         if (HEADER_NAME_SET.has(value.trim().toLowerCase())) continue;
         if (!undeterminable && /\$\{|\+\s*[A-Za-z_$]/.test(value)) undeterminable = true;
 
-        const key = header.toLowerCase();
-        const existing = found.get(key);
-        // Prefer a readable declaration over an undeterminable one.
-        if (!existing || (existing.undeterminable && !undeterminable)) {
-          found.set(key, { value, file: file.path, line, undeterminable });
-        }
+        record(header.toLowerCase(), { value, file: file.path, line, undeterminable });
       }
     }
   }
@@ -650,19 +922,46 @@ export function parseCsp(value: string): Map<string, string[]> {
   return out;
 }
 
-export function securityConfigRules(files: Array<{ path: string; source: string }>): LintFinding[] {
+/**
+ * `truncated` is true when the scan stopped early — the file cap, the byte
+ * cap. Every "this header is missing" rule is a claim about files that were
+ * *not* read, so under truncation each one is demoted to a note that says so.
+ * A capped scan cannot prove absence, and saying it can is the one failure
+ * mode this module refuses.
+ */
+export interface ConfigRuleOptions {
+  truncated?: boolean;
+}
+
+export function securityConfigRules(
+  files: Array<{ path: string; source: string }>,
+  options: ConfigRuleOptions = {},
+): LintFinding[] {
   const out: LintFinding[] = [];
   const push = (
     file: string, line: number, severity: LintFinding["severity"],
     rule: string, message: string, fix: string, doc = "web-security-headers",
   ) => out.push({ line, severity, rule, message: `${file}: ${message}`, fix, doc });
 
-  const headers = extractHeaders(files);
+  const truncated = options.truncated === true;
+  /** An absence claim: downgraded to an unconfirmed note when the scan was cut short. */
+  const absent = (rule: string, severity: LintFinding["severity"], message: string, fix: string) =>
+    push("configuration", 1, truncated ? "info" : severity, rule,
+      truncated
+        ? `${message} The scan stopped before reading every file, so this absence is unconfirmed — the declaration may sit in a file that was never opened.`
+        : message,
+      truncated ? `Re-run on a narrower path to confirm, then: ${fix}` : fix);
+
+  // One masking pass per file, shared by header extraction and the source
+  // rules below — and, more importantly, used by *every* rule, so none of
+  // them can disagree with the others about what is a comment.
+  const masked = maskFiles(files);
+  const headers = extractHeadersFrom(masked);
   const csp = headers.get("content-security-policy") ?? headers.get("content-security-policy-report-only");
 
   // ── CSP ────────────────────────────────────────────────────────────────────
   if (!csp) {
-    push("configuration", 1, "error", "csp-missing",
+    absent("csp-missing", "error",
       `No Content-Security-Policy is declared in any configuration file read here.`,
       `Start with Content-Security-Policy-Report-Only, collect reports, then enforce a nonce-based policy.`);
   } else if (csp.undeterminable) {
@@ -683,7 +982,15 @@ export function securityConfigRules(files: Array<{ path: string; source: string 
         `script-src allows 'unsafe-eval', which re-opens string-to-code execution.`,
         `Remove it and replace any eval/new Function use in the bundle.`);
     }
-    if (scriptSrc.includes("*") || scriptSrc.includes("http:") || scriptSrc.includes("https:")) {
+    // `'strict-dynamic'` is what makes a host list irrelevant: a browser that
+    // supports it ignores `https:` and `'unsafe-inline'` entirely, which is
+    // precisely why web-security-headers.md ships them as backward-compat
+    // fallbacks in the policy it tells the reader to copy. Firing an error on
+    // that policy — with the fix "use 'nonce-…' with 'strict-dynamic'", which
+    // the reader already did — is a rule attacking its own documentation.
+    // Same guard shape as csp-unsafe-inline above.
+    if (!scriptSrc.includes("'strict-dynamic'") &&
+        (scriptSrc.includes("*") || scriptSrc.includes("http:") || scriptSrc.includes("https:"))) {
       push(csp.file, csp.line, "error", "csp-wildcard",
         `script-src permits any host, which makes the policy decorative.`,
         `Use 'nonce-…' with 'strict-dynamic' instead of a host list.`);
@@ -692,12 +999,26 @@ export function securityConfigRules(files: Array<{ path: string; source: string 
       ["object-src", "csp-missing-object-src"],
       ["base-uri", "csp-missing-base-uri"],
       ["frame-ancestors", "csp-missing-frame-ancestors"],
+      ["form-action", "csp-missing-form-action"],
     ] as const) {
+      // `frame-ancestors` is *ignored* in a meta-delivered policy (CSP Level
+      // 3), so "add it" would be advice that cannot work. The delivery
+      // mechanism is the finding instead — see csp-meta-delivery below.
+      if (directive === "frame-ancestors" && csp.viaMeta) continue;
       if (!directives.has(directive)) {
         push(csp.file, csp.line, "warning", rule,
-          `${directive} is not set, so it falls back to a permissive default.`,
-          `Add ${directive} 'none' unless the site genuinely needs otherwise.`);
+          directive === "form-action"
+            ? `form-action is not set, so injected markup can post your form data to another origin — default-src does not cover this.`
+            : `${directive} is not set, so it falls back to a permissive default.`,
+          directive === "form-action"
+            ? `Add form-action 'self'.`
+            : `Add ${directive} 'none' unless the site genuinely needs otherwise.`);
       }
+    }
+    if (csp.viaMeta) {
+      push(csp.file, csp.line, "info", "csp-meta-delivery",
+        `This policy is delivered by <meta http-equiv>, where frame-ancestors, report-uri and sandbox are ignored (CSP Level 3) — so it carries no clickjacking protection and no reporting.`,
+        `Move the policy to a real Content-Security-Policy response header.`);
     }
     if (!directives.has("require-trusted-types-for")) {
       push(csp.file, csp.line, "info", "trusted-types-absent",
@@ -709,17 +1030,34 @@ export function securityConfigRules(files: Array<{ path: string; source: string 
   // ── HSTS ───────────────────────────────────────────────────────────────────
   const hsts = headers.get("strict-transport-security");
   if (!hsts) {
-    push("configuration", 1, "warning", "hsts-missing",
+    absent("hsts-missing", "warning",
       `No Strict-Transport-Security header, so the first visit over HTTP is downgradeable.`,
-      `Set max-age=31536000; includeSubDomains once every subdomain serves HTTPS.`);
+      `Set max-age=63072000; includeSubDomains once every subdomain serves HTTPS.`);
   } else if (!hsts.undeterminable) {
     const age = /max-age\s*=\s*(\d+)/i.exec(hsts.value);
+    const subdomains = /includeSubDomains/i.test(hsts.value);
+    // 180 days is the low-protection line, and only that. Preload eligibility
+    // is a separate, stricter bar — max-age ≥ 31536000 *and* includeSubDomains
+    // (web-security-headers.md, the preload service's own rule) — so tying the
+    // two together here told the reader that a 200-day max-age was
+    // preload-eligible when it is not.
     if (age && Number(age[1]) < 15552000) {
       push(hsts.file, hsts.line, "warning", "hsts-short-max-age",
-        `HSTS max-age is ${age[1]}s; below 180 days (15552000) it gives little protection and is not preload-eligible.`,
-        `Raise it to 31536000 once you are confident in the HTTPS setup.`);
+        `HSTS max-age is ${age[1]}s; below 180 days (15552000) it gives little protection.`,
+        `Raise it to 63072000 (two years, the value Chrome and OWASP recommend) once you are confident in the HTTPS setup.`);
     }
-    if (!/includeSubDomains/i.test(hsts.value)) {
+    // A `preload` token that does not meet the list's requirements is not a
+    // partial win — it is inert, and it reads to whoever wrote it as done.
+    if (/\bpreload\b/i.test(hsts.value) && (!age || Number(age[1]) < 31536000 || !subdomains)) {
+      const missing = [
+        !age || Number(age[1]) < 31536000 ? "max-age ≥ 31536000 (one year)" : null,
+        subdomains ? null : "includeSubDomains",
+      ].filter(Boolean).join(" and ");
+      push(hsts.file, hsts.line, "warning", "hsts-preload-ineffective",
+        `This \`preload\` token does nothing: the preload list requires ${missing}, which this header does not send.`,
+        `Send max-age=63072000; includeSubDomains; preload — and only after running the shorter max-age values clean for a few months, because preload is effectively one-way.`);
+    }
+    if (!subdomains) {
       push(hsts.file, hsts.line, "info", "hsts-no-subdomains",
         `HSTS omits includeSubDomains, leaving subdomains downgradeable.`,
         `Add includeSubDomains — but only once every subdomain serves HTTPS, because it is disruptive to undo.`);
@@ -728,7 +1066,7 @@ export function securityConfigRules(files: Array<{ path: string; source: string 
 
   // ── the cheap ones ─────────────────────────────────────────────────────────
   if (!headers.has("x-content-type-options")) {
-    push("configuration", 1, "warning", "x-content-type-options-missing",
+    absent("x-content-type-options-missing", "warning",
       `X-Content-Type-Options is not set, so browsers may MIME-sniff a response into a script.`,
       `Set X-Content-Type-Options: nosniff. It has no downside.`);
   }
@@ -745,16 +1083,23 @@ export function securityConfigRules(files: Array<{ path: string; source: string 
       `Remove the header to get strict-origin-when-cross-origin, or set that value explicitly.`);
   }
   if (!headers.has("permissions-policy")) {
-    push("configuration", 1, "warning", "permissions-policy-missing",
+    absent("permissions-policy-missing", "warning",
       `No Permissions-Policy, so embedded content may request camera, microphone and geolocation.`,
       `Set Permissions-Policy: camera=(), microphone=(), geolocation=() and open up only what you use.`);
   }
 
   // ── build configuration ────────────────────────────────────────────────────
-  for (const file of files) {
-    if (/productionBrowserSourceMaps\s*:\s*true|sourcemap\s*:\s*true/.test(file.source)) {
-      const line = file.source.slice(0, file.source.search(/productionBrowserSourceMaps|sourcemap/)).split("\n").length;
-      push(file.path, line, "warning", "sourcemaps-in-production",
+  // Matched against the *masked* source, like every other rule: reading
+  // `file.source` raw meant a commented-out `// sourcemap: true` was reported
+  // while the real `sourcemap: false` two lines below it was not. And the line
+  // number comes from the match's own index — `search()` for either word
+  // returned the first mention anywhere in the file, which for a config that
+  // discusses source maps before setting them pointed at a comment.
+  const SOURCEMAP_ON = /(?:productionBrowserSourceMaps|sourcemap)\s*:\s*true/;
+  for (const file of masked) {
+    const m = SOURCEMAP_ON.exec(file.masked);
+    if (m) {
+      push(file.path, lineOf(file.source, m.index), "warning", "sourcemaps-in-production",
         `Production source maps publish your original sources, comments and internal paths.`,
         `Disable them, or upload them privately to your error reporter instead of serving them.`,
         "frontend-attack-surface");
@@ -762,14 +1107,29 @@ export function securityConfigRules(files: Array<{ path: string; source: string 
   }
 
   // ── committed env files ────────────────────────────────────────────────────
-  const gitignore = files.find((f) => f.path.endsWith(".gitignore"))?.source ?? "";
-  const patterns = gitignore.split("\n").map((l) => l.trim()).filter(Boolean);
+  // A monorepo has one .gitignore per package, and git evaluates each pattern
+  // relative to the directory of the .gitignore that declares it. Consulting
+  // only the first file found — and matching against paths relative to the
+  // audit root — reported `packages/web/.env` as committed when
+  // `packages/web/.gitignore` covers it perfectly: an `error` telling the
+  // reader to rotate every secret they own, on a correctly-configured repo.
+  const gitignores = files
+    .filter((f) => /(?:^|\/)\.gitignore$/.test(f.path))
+    .map((f) => ({
+      dir: f.path.includes("/") ? f.path.slice(0, f.path.lastIndexOf("/") + 1) : "",
+      patterns: f.source.split("\n").map((l) => l.trim()).filter(Boolean),
+    }));
+
   for (const file of files) {
     const base = file.path.split("/").pop() ?? file.path;
     if (!/^\.env(\.|$)/.test(base)) continue;
-    if (patterns.some((p) => matchesGitignorePattern(p, file.path))) continue;
-    push(file.path, 1, "error", "env-committed",
-      `${base} sits in the project and is not covered by .gitignore; once committed it stays in git history after deletion.`,
+    const ignored = gitignores.some(({ dir, patterns }) =>
+      // Only a .gitignore at or above this file's own directory can cover it.
+      file.path.startsWith(dir) &&
+      patterns.some((p) => matchesGitignorePattern(p, file.path.slice(dir.length))));
+    if (ignored) continue;
+    push(file.path, 1, truncated ? "warning" : "error", "env-committed",
+      `${base} sits in the project and is not covered by any .gitignore read here${truncated ? ", though the scan stopped early and a .gitignore covering it may not have been read" : ""}; once committed it stays in git history after deletion.`,
       `Add it to .gitignore, rotate every value it holds, and purge it from history if it was pushed.`,
       "frontend-attack-surface");
   }
@@ -779,8 +1139,22 @@ export function securityConfigRules(files: Array<{ path: string; source: string 
 
 // ── report ───────────────────────────────────────────────────────────────────
 
-const NOT_VISIBLE = `
-## Not visible to this audit
+// The first four bullets all describe one axis — *mechanism*: things that
+// happen somewhere this audit cannot reach. None of them described the other
+// axis, *coverage*: which configuration shapes the audit can actually read.
+// A reader whose framework was not recognised drew the only conclusion the
+// list allowed — "it can't see my CDN, but my config file is right there, so
+// that part must be covered" — and trusted a fabricated `csp-missing`. The
+// last two bullets exist so that reader has somewhere to land.
+const RECOGNISED_SHAPES = [
+  "`next.config` `headers()` `key`/`value` entries",
+  "`vercel.json`, `netlify.toml`, `_headers`, `staticwebapp.config.json`",
+  "quoted object properties (`{ \"Content-Security-Policy\": \"…\" }`) — Nuxt `routeRules`, a Remix/React Router `headers` export, `new Response(body, { headers })`, `new Headers({…})`, `res.set({…})`",
+  "`res.setHeader(…)`, `headers.set/append(…)`, `reply.header(…)`",
+  "SvelteKit's `kit.csp.directives`, and `<meta http-equiv>`",
+].join("; ");
+
+const NOT_VISIBLE = `## Not visible to this audit
 
 This audit reads local files only — it makes no request to your site. It cannot see:
 
@@ -788,6 +1162,8 @@ This audit reads local files only — it makes no request to your site. It canno
 - Headers set by runtime logic that depends on the request.
 - Any value assembled from variables, which is reported as undeterminable rather than absent.
 - Server-side concerns entirely: authorization, injection, and access control are out of scope for a design server.
+- **Header shapes it does not recognise.** It reads ${RECOGNISED_SHAPES}. A library that builds headers without naming them in your source — \`helmet\`, a framework preset, a shared middleware package — is invisible to it, and so is any shape not in that list. If your headers are set some other way, a "missing" finding above is about this audit's reach, not about your site.
+- **A truncated scan cannot prove absence.** If the scan line above says it stopped at a cap, every "missing" finding is unconfirmed and is reported as a note rather than a defect.
 
 A clean result here means these files declare nothing wrong. Confirm the emitted headers on a real response before treating it as coverage.`;
 
@@ -795,6 +1171,7 @@ export function securityReport(input: { source?: string; filename?: string; root
   const lines: string[] = ["# Security audit", ""];
   let findings: LintFinding[] = [];
   let scanned = "";
+  let coverage = "";
 
   if (input.root) {
     const scan = scanProject(input.root, SECURITY_EXTENSIONS, SECURITY_FILENAMES);
@@ -807,10 +1184,21 @@ export function securityReport(input: { source?: string; filename?: string; root
       // would put the same number in the reader's eye twice for one finding.
       findings.push(...securitySourceRules(f.source, f.path).map((x) => ({ ...x, message: `${f.path}: ${x.message}` })));
     }
-    findings.push(...securityConfigRules(files));
+    const truncated = scan.hitFileCap || scan.hitByteCap;
+    findings.push(...securityConfigRules(files, { truncated }));
     scanned = `Scanned ${scan.files.length} files under \`${input.root}\`.`;
-    if (scan.hitFileCap) scanned += ` Stopped at the ${scan.files.length}-file cap — results are partial.`;
+    if (scan.hitFileCap) scanned += ` Stopped at the ${MAX_FILES}-file cap — results are partial, and every "missing" finding below is unconfirmed.`;
+    if (scan.hitByteCap) scanned += ` Stopped at the total-bytes cap — results are partial, and every "missing" finding below is unconfirmed.`;
     if (scan.skippedLarge.length) scanned += ` Skipped ${scan.skippedLarge.length} oversized file(s).`;
+
+    // Which files the header state was actually read from. Without this the
+    // reader has no way to tell "your config sets no CSP" from "your config
+    // is in a shape this audit does not read" — and the second, read as the
+    // first, is the failure this whole module is built around.
+    const sources = [...new Set([...extractHeaders(files).values()].map((h) => h.file))].sort();
+    coverage = sources.length
+      ? `Read header configuration from: ${sources.map((s) => `\`${s}\``).join(", ")}.`
+      : `No configuration file in a recognised header format was found — see "Not visible to this audit" for the shapes this reads.`;
   } else {
     findings = securitySourceRules(input.source ?? "", input.filename);
     scanned = "Scanned one snippet. Configuration rules need a directory — pass `path` to check headers.";
@@ -821,6 +1209,7 @@ export function securityReport(input: { source?: string; filename?: string; root
   const info = findings.filter((f) => f.severity === "info");
 
   lines.push(scanned, "");
+  if (coverage) lines.push(coverage, "");
   lines.push(`**${errors.length} error · ${warnings.length} warning · ${info.length} info**`, "");
 
   if (!findings.length) {

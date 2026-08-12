@@ -216,19 +216,19 @@ describe("config rules — CSP discovery", () => {
   it("finds a CSP in vercel.json", () => {
     const source = JSON.stringify({
       headers: [{ source: "/(.*)", headers: [
-        { key: "Content-Security-Policy", value: "default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'" },
+        { key: "Content-Security-Policy", value: "default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'" },
       ] }],
     }, null, 2);
     expect(cfgIds([{ path: "vercel.json", source }])).not.toContain("csp-missing");
   });
 
   it("finds a CSP in a _headers file", () => {
-    const source = `/*\n  Content-Security-Policy: default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'\n`;
+    const source = `/*\n  Content-Security-Policy: default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'\n`;
     expect(cfgIds([{ path: "_headers", source }])).not.toContain("csp-missing");
   });
 
   it("finds a CSP in netlify.toml", () => {
-    const source = `[[headers]]\n  for = "/*"\n  [headers.values]\n  Content-Security-Policy = "default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"\n`;
+    const source = `[[headers]]\n  for = "/*"\n  [headers.values]\n  Content-Security-Policy = "default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"\n`;
     expect(cfgIds([{ path: "netlify.toml", source }])).not.toContain("csp-missing");
   });
 
@@ -243,7 +243,7 @@ describe("config rules — CSP discovery", () => {
     // Next.js 16 deprecated and renamed middleware.ts to proxy.ts. Reading only
     // the old name would report csp-missing on every Next.js 16 project that
     // sets a CSP correctly — a false positive on the most common modern stack.
-    const source = `export function proxy() { res.headers.set('Content-Security-Policy', "default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'") }`;
+    const source = `export function proxy() { res.headers.set('Content-Security-Policy', "default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'") }`;
     expect(cfgIds([{ path: "proxy.ts", source }])).not.toContain("csp-missing");
   });
 
@@ -325,7 +325,7 @@ export const ALLOWED_RESPONSE_HEADERS = [
 
   it("still reads a real declaration living in the same file as such an array", () => {
     const source = HEADER_NAME_ARRAY + `
-headers.set('Content-Security-Policy', "default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
+headers.set('Content-Security-Policy', "default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
 `;
     const ids = cfgIds([{ path: "headers.ts", source }]);
     expect(ids).not.toContain("csp-missing");
@@ -342,7 +342,7 @@ describe("config rules — declaration-context matching covers the common header
   // matched text. The result was a false csp-missing on a project that sets
   // its CSP correctly through any of those APIs — the exact
   // opposite-direction harm this whole context check exists to prevent.
-  const CSP = "default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
+  const CSP = "default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
 
   it.each([
     ["res.setHeader (raw Node / Express)", `res.setHeader("Content-Security-Policy", "${CSP}")`],
@@ -393,7 +393,7 @@ describe("config rules — commented-out header mentions", () => {
   it("still reads a real CSP that sits right after an unrelated comment", () => {
     const source = [
       "// Reminder for ops runbook: keep this in sync with the CDN",
-      "headers.set('Content-Security-Policy', \"default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'\")",
+      "headers.set('Content-Security-Policy', \"default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'\")",
     ].join("\n");
     expect(cfgIds([{ path: "middleware.ts", source }])).not.toContain("csp-missing");
   });
@@ -412,14 +412,14 @@ describe("config rules — commented-out header mentions", () => {
   // that correctly sets a strict policy — a false negative on correct
   // configuration, the wrong-direction failure this module refuses to ship.
   it("does not mask a real CSP declaration because an earlier string literal on the same line contains //", () => {
-    const source = `const fallback = "//cdn.example.com"; requestHeaders.set('Content-Security-Policy', "default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")`;
+    const source = `const fallback = "//cdn.example.com"; requestHeaders.set('Content-Security-Policy', "default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")`;
     const ids = cfgIds([{ path: "middleware.ts", source }]);
     expect(ids).not.toContain("csp-missing");
     expect(ids.filter((r) => r.startsWith("csp-"))).toEqual([]);
   });
 
   it("still finds a second header on the same line after a first header's value contains //", () => {
-    const source = `headers.set('X-Custom-Header', "//not-a-real-comment").set('Content-Security-Policy', "default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")`;
+    const source = `headers.set('X-Custom-Header', "//not-a-real-comment").set('Content-Security-Policy', "default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")`;
     expect(cfgIds([{ path: "middleware.ts", source }])).not.toContain("csp-missing");
   });
 });
@@ -441,15 +441,41 @@ describe("config rules — CSP weaknesses", () => {
     expect(withCsp("default-src 'self'; script-src *")).toContain("csp-wildcard");
   });
 
-  it("flags missing object-src, base-uri and frame-ancestors", () => {
+  // `https:` and `'unsafe-inline'` are backward-compat fallbacks that any
+  // browser supporting 'strict-dynamic' ignores — which is exactly why
+  // web-security-headers.md ships them in the policy it tells the reader to
+  // copy. An error here is the tool contradicting its own cited document,
+  // with a fix line ("use 'nonce-…' with 'strict-dynamic'") describing what
+  // the reader already did.
+  it("does not call a host source a wildcard when 'strict-dynamic' is present", () => {
+    const ids = withCsp("script-src 'nonce-abc123' 'strict-dynamic' https: 'unsafe-inline'");
+    expect(ids).not.toContain("csp-wildcard");
+    expect(ids).not.toContain("csp-unsafe-inline");
+  });
+
+  it("still flags a host list that has no 'strict-dynamic' to make it irrelevant", () => {
+    expect(withCsp("default-src 'self'; script-src 'self' https:")).toContain("csp-wildcard");
+  });
+
+  it("flags missing object-src, base-uri, frame-ancestors and form-action", () => {
     const ids = withCsp("default-src 'self'; script-src 'self'");
     expect(ids).toContain("csp-missing-object-src");
     expect(ids).toContain("csp-missing-base-uri");
     expect(ids).toContain("csp-missing-frame-ancestors");
+    // The document names four directives; checking three quietly dropped the
+    // one that stops injected markup posting form data to another origin.
+    expect(ids).toContain("csp-missing-form-action");
   });
 
-  it("stays silent on a strict policy — the clean case must be provably clean", () => {
-    const strict = "default-src 'self'; script-src 'nonce-abc123' 'strict-dynamic'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; require-trusted-types-for 'script'";
+  // The fixture is the policy web-security-headers.md presents verbatim as
+  // "One header. Copy it, replace {RANDOM}, ship it" — fallbacks included. An
+  // approximation here (the earlier version stripped `https: 'unsafe-inline'`)
+  // lets the tool and the document drift apart without a test noticing, which
+  // is how csp-wildcard came to fire on the recommended policy.
+  it("stays silent on the exact policy the document tells the reader to ship", () => {
+    const strict = "script-src 'nonce-{RANDOM}' 'strict-dynamic' https: 'unsafe-inline'; "
+      + "object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; "
+      + "require-trusted-types-for 'script'; report-uri https://example.com/csp-reports; report-to csp-endpoint";
     const ids = withCsp(strict);
     expect(ids.filter((r) => r.startsWith("csp-"))).toEqual([]);
     expect(ids).not.toContain("trusted-types-absent");
