@@ -34,13 +34,13 @@ describe("visual rules — fire when they should", () => {
     expect(ids(code, "app/(marketing)/page.tsx")).toContain("default-ui-font");
   });
 
-  it("flags an emoji standing in for an icon in a heading", () => {
-    expect(ids(`<h3>🚀 Lightning fast</h3>`)).toContain("emoji-as-icon");
+  it("flags two defaults declared together — Inter, Roboto is not a custom face", () => {
+    const code = `<h1>Ship faster</h1><a href="/signup">Get started</a><style>body{font-family:Inter,Roboto,sans-serif}</style>`;
+    expect(ids(code, "app/(marketing)/page.tsx")).toContain("default-ui-font");
   });
 
-  it("flags three siblings with byte-identical class strings", () => {
-    const card = `<div class="rounded-2xl border p-6 shadow-lg"><h3>A</h3></div>`;
-    expect(ids(`<div class="grid grid-cols-3">${card}${card}${card}</div>`)).toContain("uniform-card-grid");
+  it("flags an emoji standing in for an icon in a heading", () => {
+    expect(ids(`<h3>🚀 Lightning fast</h3>`)).toContain("emoji-as-icon");
   });
 
   it("flags the stock card chrome triad", () => {
@@ -97,16 +97,21 @@ describe("visual rules — stay quiet when they should", () => {
     expect(ids(`<p>We shipped it 🚀 last Tuesday after a long month.</p>`)).not.toContain("emoji-as-icon");
   });
 
-  it("accepts sibling cards that differ", () => {
-    const a = `<div class="rounded-2xl border p-6 col-span-2"><h3>A</h3></div>`;
-    const b = `<div class="rounded-lg border p-4"><h3>B</h3></div>`;
-    const c = `<div class="rounded-xl border p-8"><h3>C</h3></div>`;
-    expect(ids(`<div class="grid">${a}${b}${c}</div>`)).not.toContain("uniform-card-grid");
+  it("accepts an emoji in a changelog heading that carries a version string", () => {
+    expect(ids(`<h3>v2.4.0 🚀 Faster builds</h3>`)).not.toContain("emoji-as-icon");
   });
 
-  it("accepts two identical siblings — a pair is not a grid of equals", () => {
-    const card = `<div class="rounded-2xl border p-6 shadow-lg"><h3>A</h3></div>`;
-    expect(ids(`<div class="grid grid-cols-2">${card}${card}</div>`)).not.toContain("uniform-card-grid");
+  it("accepts an emoji in a changelog heading with no version number at all", () => {
+    expect(ids(`<h2>✨ New in this release</h2>`)).not.toContain("emoji-as-icon");
+  });
+
+  it("accepts a deliberate teal-to-lime gradient with unrelated indigo/purple colours elsewhere in the file", () => {
+    const code = `.hero { background: linear-gradient(135deg, #14b8a6, #84cc16); }\n.badge { color: #6366f1; }\n.link:hover { color: #a855f7; }`;
+    expect(ids(code)).not.toContain("ai-default-gradient");
+  });
+
+  it("accepts gradient-filled text outside the stock indigo/violet/purple region", () => {
+    expect(ids(`<span class="bg-gradient-to-r from-teal-400 to-lime-400 bg-clip-text text-transparent">99%</span>`)).not.toContain("gradient-text");
   });
 
   it("does not fire on markup inside a comment", () => {
@@ -116,6 +121,38 @@ describe("visual rules — stay quiet when they should", () => {
   it("returns nothing at all for a distinctive snippet", () => {
     const code = `<h1 style="font-family:'Redaction 35'">Nothing here is stock</h1>`;
     expect(genericVisualRules(code)).toEqual([]);
+  });
+});
+
+describe("uniform-card-grid was cut — none of these ever fire it", () => {
+  // A review built real inputs and found the byte/set-identical-class-string
+  // check firing on every one of these. None of them is the "broken feature
+  // grid" the rule was trying to name; all five are ordinary, deliberate
+  // uses of a consistent design system. The rule id must never appear again.
+  it("three identical cards in a grid — the module's own original positive case", () => {
+    const card = `<div class="rounded-2xl border p-6 shadow-lg"><h3>A</h3></div>`;
+    expect(ids(`<div class="grid grid-cols-3">${card}${card}${card}</div>`)).not.toContain("uniform-card-grid");
+  });
+
+  it("three nav links sharing classes, no grid class anywhere in the document", () => {
+    const link = `<a class="text-sm text-gray-500 hover:text-gray-900">Item</a>`;
+    expect(ids(`<nav>${link}${link}${link}</nav>`)).not.toContain("uniform-card-grid");
+  });
+
+  it("three buttons scattered across nav, section and footer sharing a design-system class", () => {
+    const btn = `<button class="rounded-md bg-slate-900 px-4 py-2 text-white">Go</button>`;
+    const code = `<nav>${btn}</nav><section>${btn}</section><footer>${btn}</footer>`;
+    expect(ids(code)).not.toContain("uniform-card-grid");
+  });
+
+  it("three identical dashboard KPI tiles", () => {
+    const tile = `<div class="rounded-lg border p-4"><p>Revenue</p></div>`;
+    expect(ids(`<div class="grid grid-cols-3">${tile}${tile}${tile}</div>`)).not.toContain("uniform-card-grid");
+  });
+
+  it("a three-tier pricing table with identical card chrome", () => {
+    const plan = `<div class="rounded-2xl border p-8"><h3>Plan</h3></div>`;
+    expect(ids(`<div class="grid grid-cols-3">${plan}${plan}${plan}</div>`)).not.toContain("uniform-card-grid");
   });
 });
 

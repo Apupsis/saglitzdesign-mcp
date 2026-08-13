@@ -9,6 +9,18 @@
 // told their deliberate indigo brand is "AI slop" has no external authority to
 // check that against — there is no spec to appeal to — so they stop reading the
 // output entirely. Every negative test in this module's suite is load-bearing.
+//
+// `uniform-card-grid` was cut after a review built real inputs and ran them:
+// three nav links, three consistent buttons, three identical dashboard KPI
+// tiles, a three-tier pricing table — every one fired, because "N siblings
+// share a class string" is true of both a broken feature grid and a working
+// design system. Nothing in the source text says which one a given case is;
+// telling them apart needs to know what the elements *mean* (interchangeable
+// UI atoms vs. distinct content that wants hierarchy), and that is a
+// judgement, not a fact — it belongs in design_review_checklist with a human
+// looking at the render, not in a regex. A rule that can't pass its negative
+// test against its own module's ubiquitous, deliberate patterns doesn't earn
+// its place; see the task report for the two rejected alternatives.
 
 import { scanTags, type LintFinding, type Tag } from "./lint.js";
 import { maskComments } from "./security.js";
@@ -46,12 +58,46 @@ const DEFAULT_HEXES = /#(6366f1|818cf8|a5b4fc|8b5cf6|7c3aed|a78bfa|a855f7|c084fc
 // own OKLCH is not necessarily copying Tailwind's.
 const DEFAULT_OKLCH = /oklch\(\s*0?\.\d+\s+0?\.[12]\d*\s+(2[6-9]\d|3[0-1]\d)(?:\.\d+)?\s*\)/i;
 
+// `blue` and `sky` are not the core region — they sit one step cooler on
+// Tailwind's own ramp order (…cyan, sky, blue, indigo, violet, purple,
+// fuchsia…) — but ai-default-aesthetic.md measures `blue-500 → purple-600`
+// as one of its three named recurring pairs (42.5° hue, 6.5pt lightness), and
+// visual-craft-standards.md separately names "cyan/purple gradients" and "the
+// stock purple-to-blue" as its own slop tell. A rule that cites either
+// document and cannot see that pair is wrong in a way a plain miss is not.
+//
+// The two constants below stay narrow on purpose: `blue`/`sky` only ever
+// count as a stop when paired with a stop from CORE_RAMPS. Two blues alone,
+// or blue reaching only to `cyan` (two steps out, never measured in either
+// doc), stay silent — this is not "add blue to the region", it's "an edge of
+// the core region can reach one step into its cooler neighbour".
+const CORE_RAMPS = new Set(["indigo", "violet", "purple", "fuchsia"]);
+const GRADIENT_STOP_RE = /\b(?:from|via|to)-((indigo|violet|purple|fuchsia|blue|sky)-\d{3})/g;
+
+// Bounds a hex/OKLCH match to the argument list of one `linear-/radial-/
+// conic-gradient(...)` call, one level of nested parens deep (enough for a
+// colour function like `oklch(...)`/`rgb(...)` inside the gradient, without
+// needing a real parser). Two default-region colours that are not both stops
+// of the *same* gradient are not a gradient built from the stock pair — an
+// unrelated badge colour and an unrelated hover colour elsewhere in the file
+// do not make a teal-to-lime gradient a false one. Group 1 is the function
+// name plus its opening paren, so a match's offset can be recovered as
+// `match.index + match[1].length + <offset within group 2>`.
+const GRADIENT_FN_RE = /((?:linear|radial|conic)-gradient\()((?:[^()]|\([^()]*\))*)\)/gi;
+
 // Inter is on typography-craft's reflex-reject list, which is why this rule
 // exists — NOT because a component system ships it as a default. Task 1
 // verified that shadcn/ui's documentation names no typeface at all, and that
 // its stock theme carries no accent hue (`--primary: oklch(0.205 0 0)`). Do not
 // write a message that attributes these faces to any system.
 const DEFAULT_FAMILIES = /\b(Inter|Roboto|Open Sans|DM Sans|Plus Jakarta Sans)\b/i;
+// Same set, `g`-flagged, for the one call site that strips every default
+// family out of a declared list rather than testing for one. Kept as a
+// second constant instead of adding `g` to DEFAULT_FAMILIES itself: a global
+// regex carries `lastIndex` state across calls, and DEFAULT_FAMILIES is also
+// used with `.test()`/`.exec()` below — reusing one global instance for both
+// would make those calls order-dependent and intermittently wrong.
+const DEFAULT_FAMILIES_G = /\b(Inter|Roboto|Open Sans|DM Sans|Plus Jakarta Sans)\b/gi;
 
 // Font-family values arrive two shapes: a quoted name (`"Instrument Serif"`,
 // possibly nested inside an HTML attribute's own quotes) and an unquoted list
@@ -66,6 +112,13 @@ const FONT_FAMILY_RE = /font-family\s*:\s*(?:(["'])((?:(?!\1)[^\\])*)\1|([^;}"']
 
 /** Emoji that stand in for an icon. Not an exhaustive emoji set — these six. */
 const ICON_EMOJI = /[\u{1F680}\u{1F4A1}\u{2728}\u{26A1}\u{1F525}\u{1F3AF}]/u;
+
+// Release notes are a deliberate, widespread convention for exactly this
+// pattern ("v2.4.0 🚀 Faster builds", "✨ New in this release") — a version
+// string or one of the stock changelog phrases in the same heading is enough
+// to treat the emoji as decoration on a known genre rather than an icon
+// standing in for one.
+const CHANGELOG_HEADING = /\bv?\d+\.\d+(?:\.\d+)?\b|\b(new in this release|release notes|changelog|what'?s new|patch notes)\b/i;
 
 const BRAND_PATH = /(landing|marketing|\(marketing\)|home|hero|www)/i;
 const CTA_COPY = /(get started|start free|try .{0,24}free|book a demo|request a demo|sign up free)/i;
@@ -96,51 +149,55 @@ export function genericVisualRules(code: string, filename?: string): LintFinding
     doc: string,
   ) => out.push({ line: lineOf(code, index), severity, rule, message, fix, doc });
 
+  const tags = scanTags(masked);
+
   // ── gradient ───────────────────────────────────────────────────────────────
   // Two different stops from the default region, not one — a single
-  // `bg-indigo-500` is a colour choice, not the stock gradient.
-  //
-  // `blue` and `sky` are not in the core region — they sit one step cooler on
-  // Tailwind's own ramp order (…cyan, sky, blue, indigo, violet, purple,
-  // fuchsia…) — but ai-default-aesthetic.md measures `blue-500 → purple-600`
-  // as one of its three named recurring pairs (42.5° hue, 6.5pt lightness),
-  // so a rule that cites that document and cannot see that pair is wrong in a
-  // way a plain miss is not. The fix stays narrow: `blue`/`sky` only count
-  // when paired with a *core* stop. Two blues alone, or blue reaching to
-  // `cyan` (two steps out, never measured in the doc), stay silent — this
-  // is not "add blue to the region", it's "an edge of the core region can
-  // reach one step into its cooler neighbour".
-  const CORE_RAMPS = new Set(["indigo", "violet", "purple", "fuchsia"]);
-  const gradientStops = [...masked.matchAll(/\b(?:from|via|to)-((indigo|violet|purple|fuchsia|blue|sky)-\d{3})/g)];
-  const distinctStops = new Map<string, string>(gradientStops.map((m) => [m[1], m[2]]));
-  const hasCoreStop = [...distinctStops.values()].some((ramp) => CORE_RAMPS.has(ramp));
-  if (distinctStops.size >= 2 && hasCoreStop) {
-    push(gradientStops[0].index!, "warning", "ai-default-gradient",
+  // `bg-indigo-500` is a colour choice, not the stock gradient. Scoped to one
+  // element's class list, not the whole document: two elements that each
+  // carry a lone `from-`/`to-` utility are not necessarily one gradient.
+  let gradientFired = false;
+  for (const tag of tags) {
+    if (gradientFired) break;
+    const cls = classesOf(tag);
+    if (!cls) continue;
+    const stops = [...cls.matchAll(GRADIENT_STOP_RE)];
+    const distinctStops = new Map<string, string>(stops.map((m) => [m[1], m[2]]));
+    if (distinctStops.size < 2) continue;
+    const hasCoreStop = [...distinctStops.values()].some((ramp) => CORE_RAMPS.has(ramp));
+    if (!hasCoreStop) continue;
+    push(tag.index, "warning", "ai-default-gradient",
       `Gradient built from Tailwind's stock indigo/violet/purple region (${[...distinctStops.keys()].join(" → ")}).`,
       `Pick stops from your own palette, or drop the gradient — see ai-default-aesthetic for why this pair recurs.`,
       "ai-default-aesthetic");
-  } else {
-    // No blue/sky counterpart here, deliberately. This branch already matches
-    // loosely — any two default-region colours found anywhere in the masked
-    // source, not two stops of the same gradient() call — because hex/OKLCH
-    // carry no from-/via-/to- structure to anchor to. Widening it with a
-    // second hue band would mean "a core colour anywhere in the file, plus a
-    // blue anywhere in the file, plus a gradient somewhere" fires — e.g. an
-    // unrelated blue link colour and an unrelated purple badge, nowhere near
-    // each other or the gradient. The class-name branch above can require the
-    // adjacency to be a real pairing (both are `from-`/`via-`/`to-` stops);
-    // this one cannot without becoming a real parser. Left unmatched rather
-    // than approximated.
-    const inGradient = /linear-gradient|radial-gradient|conic-gradient/i.test(masked);
-    const hexes = [...masked.matchAll(new RegExp(DEFAULT_HEXES.source, "gi"))];
-    const oklch = [...masked.matchAll(new RegExp(DEFAULT_OKLCH.source, "gi"))];
-    const distinct = new Set([...hexes, ...oklch].map((m) => m[0].toLowerCase()));
-    if (inGradient && distinct.size >= 2) {
-      const at = (hexes[0] ?? oklch[0]).index!;
-      push(at, "warning", "ai-default-gradient",
-        `Gradient built from two stops in the stock indigo/violet/purple region.`,
-        `Pick stops from your own palette, or drop the gradient.`,
-        "ai-default-aesthetic");
+    gradientFired = true;
+  }
+  if (!gradientFired) {
+    // No blue/sky counterpart here, deliberately. Hex/OKLCH colours carry no
+    // from-/via-/to- structure to anchor a same-element pairing to, so this
+    // branch is bounded to one gradient(...) call's own argument list instead
+    // (see GRADIENT_FN_RE) — two default-region colours have to be stops of
+    // the *same* gradient, not merely present somewhere in the file. Widening
+    // that bound further with a second hue band would reopen exactly the gap
+    // the bound exists to close: an unrelated blue link colour and an
+    // unrelated purple badge, nowhere near each other or any gradient, both
+    // sitting in one file. Left unmatched rather than approximated.
+    let gm: RegExpExecArray | null;
+    GRADIENT_FN_RE.lastIndex = 0;
+    while ((gm = GRADIENT_FN_RE.exec(masked)) !== null) {
+      const args = gm[2];
+      const hexes = [...args.matchAll(new RegExp(DEFAULT_HEXES.source, "gi"))];
+      const oklch = [...args.matchAll(new RegExp(DEFAULT_OKLCH.source, "gi"))];
+      const distinct = new Set([...hexes, ...oklch].map((m) => m[0].toLowerCase()));
+      if (distinct.size >= 2) {
+        const first = hexes[0] ?? oklch[0];
+        const at = gm.index + gm[1].length + first!.index!;
+        push(at, "warning", "ai-default-gradient",
+          `Gradient built from two stops in the stock indigo/violet/purple region.`,
+          `Pick stops from your own palette, or drop the gradient.`,
+          "ai-default-aesthetic");
+        break;
+      }
     }
   }
 
@@ -150,7 +207,7 @@ export function genericVisualRules(code: string, filename?: string): LintFinding
   const onlyDefault =
     families.length > 0 &&
     DEFAULT_FAMILIES.test(declared) &&
-    !/["']?[A-Z][A-Za-z0-9 ]{2,}["']?/.test(declared.replace(DEFAULT_FAMILIES, "").replace(/sans-serif|serif|monospace|system-ui|ui-sans-serif|-apple-system|BlinkMacSystemFont|Segoe UI|Helvetica|Arial/gi, ""));
+    !/["']?[A-Z][A-Za-z0-9 ]{2,}["']?/.test(declared.replace(DEFAULT_FAMILIES_G, "").replace(/sans-serif|serif|monospace|system-ui|ui-sans-serif|-apple-system|BlinkMacSystemFont|Segoe UI|Helvetica|Arial/gi, ""));
   if (onlyDefault && isBrandSurface(code, filename)) {
     const at = masked.search(DEFAULT_FAMILIES);
     push(at < 0 ? 0 : at, "warning", "default-ui-font",
@@ -160,16 +217,6 @@ export function genericVisualRules(code: string, filename?: string): LintFinding
   }
 
   // ── tags ───────────────────────────────────────────────────────────────────
-  const tags = scanTags(masked);
-  // Keyed by the class *set*, not the literal string: a class-sorting
-  // formatter (e.g. prettier-plugin-tailwindcss) reorders a card's classes
-  // without changing what it renders, and a byte-for-byte key would call
-  // three reformatted copies of one card three different cards. Sorting the
-  // tokens before joining makes the key order-independent while still
-  // requiring the exact same set — this is not the fuzzy/partial-overlap
-  // comparison the task brief warns off; cards that merely share a few
-  // utilities still get different keys and stay unflagged.
-  const siblings = new Map<string, { count: number; index: number }>();
   let chromeCount = 0;
   let eyebrowRuns = 0;
   let lastWasEyebrow = false;
@@ -180,7 +227,7 @@ export function genericVisualRules(code: string, filename?: string): LintFinding
 
     if (/^h[1-6]$/.test(name)) {
       const body = masked.slice(tag.end, masked.indexOf("<", tag.end + 1));
-      if (ICON_EMOJI.test(body)) {
+      if (ICON_EMOJI.test(body) && !CHANGELOG_HEADING.test(body)) {
         push(tag.index, "warning", "emoji-as-icon",
           `An emoji is standing in for an icon in a heading.`,
           `Use a real icon from one icon family at one weight — see iconography.`,
@@ -195,16 +242,22 @@ export function genericVisualRules(code: string, filename?: string): LintFinding
     }
 
     if (cls) {
-      const classSet = cls.split(/\s+/).filter(Boolean).sort().join(" ");
-      const rec = siblings.get(classSet);
-      if (rec) rec.count += 1;
-      else siblings.set(classSet, { count: 1, index: tag.index });
       if (/\brounded-2xl\b/.test(cls) && /\bshadow-(lg|xl)\b/.test(cls) && /\bborder\b/.test(cls)) chromeCount += 1;
-      if (/\bbg-clip-text\b/.test(cls) && /\btext-transparent\b/.test(cls) && /\b(?:from|to)-\w+-\d{3}\b/.test(cls)) {
-        push(tag.index, "info", "gradient-text",
-          `Gradient-filled text.`,
-          `Let the type carry weight on its own; reserve gradient fills for a mark, if at all.`,
-          "visual-craft-standards");
+      // Scoped to the same stock region as ai-default-gradient, not any
+      // two-stop gradient: visual-craft-standards.md names "cyan/purple
+      // gradients" and "the stock purple-to-blue" as its own gradient-text
+      // slop tell, so a deliberate teal-to-lime metric — outside that region
+      // — is not the pattern either document is describing.
+      if (/\bbg-clip-text\b/.test(cls) && /\btext-transparent\b/.test(cls)) {
+        const textStops = [...cls.matchAll(GRADIENT_STOP_RE)];
+        const textDistinct = new Map<string, string>(textStops.map((m) => [m[1], m[2]]));
+        const textHasCore = [...textDistinct.values()].some((ramp) => CORE_RAMPS.has(ramp));
+        if (textDistinct.size >= 2 && textHasCore) {
+          push(tag.index, "info", "gradient-text",
+            `Gradient-filled text in the stock indigo/violet/purple region.`,
+            `Let the type carry weight on its own; reserve gradient fills for a mark, if at all.`,
+            "visual-craft-standards");
+        }
       }
       if (/\bbackdrop-blur\b/.test(cls) && /\bbg-white\/(5|10)\b/.test(cls) && /\bborder-white\/10\b/.test(cls)) {
         push(tag.index, "info", "stock-glass-on-dark",
@@ -215,17 +268,10 @@ export function genericVisualRules(code: string, filename?: string): LintFinding
     }
   }
 
-  const repeated = [...siblings.values()].find((r) => r.count >= 3);
-  if (repeated) {
-    push(repeated.index, "info", "uniform-card-grid",
-      `${repeated.count} siblings carry the same class set, so none of them is the primary one.`,
-      `Vary size or emphasis to encode importance — a bento grid without hierarchy is a broken grid.`,
-      "visual-craft-standards");
-  }
   if (chromeCount >= 3) {
     push(0, "info", "stock-card-chrome",
       `The rounded-2xl + shadow-lg + border triad repeats on ${chromeCount} elements.`,
-      `Pick one of the three to carry the separation — see ai-default-aesthetic.`,
+      `Pick one of the three to carry the separation — see ai-default-aesthetic. If this is a design-system doc page enumerating the recipe at several sizes on purpose, ignore this finding.`,
       "ai-default-aesthetic");
   }
   if (eyebrowRuns >= 3) {
