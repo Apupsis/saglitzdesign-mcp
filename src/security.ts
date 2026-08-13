@@ -1134,6 +1134,27 @@ export function securityConfigRules(
   ) => out.push({ line, severity, rule, message: `${file}: ${message}`, fix, doc });
 
   const truncated = options.truncated === true;
+
+  /**
+   * "I found this header here and could not read its value."
+   *
+   * Not grading a value assembled at runtime is right — principle 2, do not
+   * claim what you cannot prove. Going *silent* about it is not: for four of
+   * the five headers there was no equivalent of `csp-undeterminable`, so an
+   * undeterminable hit suppressed the `*-missing` finding and emitted nothing
+   * in its place. A reader scanning a clean report could not tell "nothing
+   * found" from "something found and unparseable" — which is dropping a
+   * signal the `HeaderHit` was already carrying, not withholding a claim.
+   */
+  const undeterminableNote = (rule: string, hit: HeaderHit, what: string, why: string) =>
+    push(hit.file, hit.line, "info", rule,
+      // Same shape as csp-undeterminable, and deliberately no line number in
+      // the text: `push` prefixes the file and the report renders the line
+      // itself, so repeating it here would put one number in the reader's eye
+      // twice for a single finding.
+      `${what} is set from a value assembled at runtime, so ${why}.`,
+      `Confirm the emitted header on a real response, or extract the static parts into a named constant this audit can read.`);
+
   /** An absence claim: downgraded to an unconfirmed note when the scan was cut short. */
   const absent = (rule: string, severity: LintFinding["severity"], message: string, fix: string) =>
     push("configuration", 1, truncated ? "info" : severity, rule,
@@ -1252,13 +1273,20 @@ export function securityConfigRules(
         `HSTS omits includeSubDomains, leaving subdomains downgradeable.`,
         `Add includeSubDomains — but only once every subdomain serves HTTPS, because it is disruptive to undo.`);
     }
+  } else {
+    undeterminableNote("hsts-undeterminable", hsts,
+      `A Strict-Transport-Security header`, `its max-age and directives cannot be read from source`);
   }
 
   // ── the cheap ones ─────────────────────────────────────────────────────────
-  if (!headers.has("x-content-type-options")) {
+  const xcto = headers.get("x-content-type-options");
+  if (!xcto) {
     absent("x-content-type-options-missing", "warning",
       `X-Content-Type-Options is not set, so browsers may MIME-sniff a response into a script.`,
       `Set X-Content-Type-Options: nosniff. It has no downside.`);
+  } else if (xcto.undeterminable) {
+    undeterminableNote("x-content-type-options-undeterminable", xcto,
+      `An X-Content-Type-Options header`, `it cannot be confirmed from source to be nosniff`);
   }
   // There is deliberately no "referrer-policy-missing" rule. Since the November
   // 2020 spec revision, strict-origin-when-cross-origin IS the browser default
@@ -1267,15 +1295,22 @@ export function securityConfigRules(
   // configuration. Only an explicitly worse value is a finding.
   const LEAKY_REFERRER = /^(unsafe-url|no-referrer-when-downgrade|origin-when-cross-origin)$/i;
   const ref = headers.get("referrer-policy");
-  if (ref && !ref.undeterminable && LEAKY_REFERRER.test(ref.value.trim())) {
+  if (ref && ref.undeterminable) {
+    undeterminableNote("referrer-policy-undeterminable", ref,
+      `A Referrer-Policy header`, `its policy token cannot be read from source`);
+  } else if (ref && LEAKY_REFERRER.test(ref.value.trim())) {
     push(ref.file, ref.line, "warning", "referrer-policy-unsafe",
       `Referrer-Policy "${ref.value.trim()}" sends more than the browser default, leaking full URLs — including any token in a path or query — to other origins.`,
       `Remove the header to get strict-origin-when-cross-origin, or set that value explicitly.`);
   }
-  if (!headers.has("permissions-policy")) {
+  const pp = headers.get("permissions-policy");
+  if (!pp) {
     absent("permissions-policy-missing", "warning",
       `No Permissions-Policy, so embedded content may request camera, microphone and geolocation.`,
       `Set Permissions-Policy: camera=(), microphone=(), geolocation=() and open up only what you use.`);
+  } else if (pp.undeterminable) {
+    undeterminableNote("permissions-policy-undeterminable", pp,
+      `A Permissions-Policy header`, `the features it allows cannot be read from source`);
   }
 
   // ── build configuration ────────────────────────────────────────────────────

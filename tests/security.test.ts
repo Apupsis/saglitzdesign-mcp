@@ -853,6 +853,20 @@ describe("one correctly-hardened project per framework produces no findings", ()
     expect(runProject(files)).toMatch(/Read header configuration from: `/);
   });
 
+  // Every value in these fixtures is a readable literal, so no "I found this
+  // and could not read it" note may appear on any of them. The zero-findings
+  // assertion above already proves this; it is stated separately because the
+  // undeterminable family is new and this is the surface it must never touch.
+  const UNDETERMINABLE_RULES = [
+    "csp-undeterminable", "hsts-undeterminable", "x-content-type-options-undeterminable",
+    "referrer-policy-undeterminable", "permissions-policy-undeterminable",
+  ];
+
+  it.each(HARDENED)("%s — no undeterminable note", (_name, files) => {
+    const report = runProject(files);
+    for (const rule of UNDETERMINABLE_RULES) expect(report, rule).not.toContain(rule);
+  });
+
   // The one shape that cannot be finding-free, and should not be: a
   // meta-delivered policy genuinely is weaker than a header — frame-ancestors,
   // report-uri and sandbox are ignored in it (CSP Level 3). What it must not
@@ -879,6 +893,7 @@ describe("one correctly-hardened project per framework produces no findings", ()
     expect(report).toContain("**0 error · 0 warning · 1 info**");
     expect(report).toContain("csp-meta-delivery");
     expect(report).not.toContain("csp-missing");
+    for (const rule of UNDETERMINABLE_RULES) expect(report, rule).not.toContain(rule);
   });
 });
 
@@ -1053,6 +1068,64 @@ describe("the decoy guard covers every header the extractor reads", () => {
     expect(found).toContain("hsts-missing");
     expect(found).not.toContain("hsts-no-subdomains");
     expect(found).not.toContain("hsts-short-max-age");
+  });
+});
+
+// Not grading a value assembled at runtime is right — you cannot prove what
+// you did not read. Going *silent* about it is not. Four of the five headers
+// had no equivalent of csp-undeterminable, so an undeterminable hit suppressed
+// the *-missing finding and emitted nothing at all, leaving a reader unable to
+// tell "nothing found" from "found and unparseable" — a dropped signal, not a
+// withheld claim.
+describe("an unreadable header is reported as unread, not as nothing", () => {
+  const UNDETERMINABLE: Array<[string, string, string, string | null]> = [
+    // header, the setter line, the undeterminable rule, the absence rule it replaces
+    ["Content-Security-Policy", "cspValue", "csp-undeterminable", "csp-missing"],
+    ["Strict-Transport-Security", "hstsValue", "hsts-undeterminable", "hsts-missing"],
+    ["X-Content-Type-Options", "xctoValue", "x-content-type-options-undeterminable", "x-content-type-options-missing"],
+    ["Referrer-Policy", "refValue", "referrer-policy-undeterminable", null],
+    ["Permissions-Policy", "ppValue", "permissions-policy-undeterminable", "permissions-policy-missing"],
+  ];
+
+  const READABLE: Record<string, string> = {
+    "Content-Security-Policy": HARD_CSP,
+    "Strict-Transport-Security": HARD_HSTS,
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "Permissions-Policy": HARD_PP,
+  };
+
+  it.each(UNDETERMINABLE)("%s — a runtime-assembled value says so", (header, ident, rule, missing) => {
+    const found = securityConfigRules([
+      { path: "middleware.ts", source: `res.headers.set('${header}', ${ident})\n` },
+    ]);
+    const hit = found.find((f) => f.rule === rule);
+    expect(hit, rule).toBeDefined();
+    expect(hit!.severity).toBe("info");
+    expect(hit!.doc).toBe("web-security-headers");
+    // What was found, where, and that the real response is the authority.
+    expect(hit!.message).toContain("middleware.ts");
+    expect(hit!.message).toMatch(/assembled at runtime/);
+    // csp-undeterminable's own wording predates the other four and says "in a
+    // response"; the point asserted here is that all five send the reader to
+    // the emitted header rather than leaving the value unmentioned.
+    expect(hit!.fix).toMatch(/(?:in|on) a (?:real )?response/);
+    // The absence claim stays suppressed — that part was already right.
+    if (missing) expect(found.map((f) => f.rule)).not.toContain(missing);
+  });
+
+  it.each(UNDETERMINABLE)("%s — a readable value produces neither finding", (header, _ident, rule, missing) => {
+    const found = cfgIds([
+      { path: "_headers", source: `/*\n  ${header}: ${READABLE[header]}\n` },
+    ]);
+    expect(found).not.toContain(rule);
+    if (missing) expect(found).not.toContain(missing);
+  });
+
+  it("says so for every header at once rather than falling silent on four", () => {
+    const found = cfgIds([{ path: "middleware.ts", source:
+      UNDETERMINABLE.map(([h, ident]) => `res.headers.set('${h}', ${ident})`).join("\n") + "\n" }]);
+    for (const [, , rule] of UNDETERMINABLE) expect(found).toContain(rule);
   });
 });
 
