@@ -1031,6 +1031,50 @@ describe("rules that used to fire on correct code", () => {
     expect(ids(`<link rel="stylesheet" href="http://x.example/a.css">`, "p.html")).toContain("http-subresource");
   });
 
+  // The rule said "browsers block it as mixed content" for every element,
+  // including the three MDN says are auto-upgraded — contradicting
+  // web-security-headers.md, which was verified against MDN in the same
+  // release.
+  it("does not tell an upgraded request it was blocked", () => {
+    const msg = (markup: string) =>
+      securitySourceRules(markup, "p.html").find((f) => f.rule === "http-subresource")!.message;
+
+    for (const markup of [
+      `<img src="http://x.example/a.png" alt="a">`,
+      `<video src="http://x.example/v.mp4"></video>`,
+      `<audio src="http://x.example/a.mp3"></audio>`,
+      `<source src="http://x.example/v.webm">`,
+    ]) {
+      expect(msg(markup), markup).toMatch(/auto-upgrade/);
+      expect(msg(markup), markup).not.toMatch(/browsers block it as mixed content/);
+    }
+
+    // "All mixed content that is not upgradable" keeps the blocking wording.
+    for (const markup of [
+      `<script src="http://x.example/s.js"></script>`,
+      `<iframe src="http://x.example/f.html"></iframe>`,
+      `<link rel="stylesheet" href="http://x.example/a.css">`,
+      `<object data="http://x.example/o.swf"></object>`,
+    ]) {
+      expect(msg(markup), markup).toMatch(/browsers block it as mixed content/);
+      expect(msg(markup), markup).not.toMatch(/auto-upgrade/);
+    }
+
+    // MDN's exception: an otherwise-upgradable request to a literal IP host
+    // is blocked, not upgraded.
+    expect(msg(`<img src="http://93.184.215.14/a.png" alt="a">`)).toMatch(/browsers block it as mixed content/);
+    expect(msg(`<img src="http://[2606:2800:21f:cb07::1]/a.png" alt="a">`)).toMatch(/browsers block it as mixed content/);
+    expect(msg(`<img src="http://example.com/a.png" alt="a">`)).toMatch(/auto-upgrade/);
+  });
+
+  it("keeps the doc id on both halves of the mixed-content split", () => {
+    for (const markup of [`<img src="http://x.example/a.png" alt="a">`, `<script src="http://x.example/s.js"></script>`]) {
+      const f = securitySourceRules(markup, "p.html").find((x) => x.rule === "http-subresource")!;
+      expect(f.doc).toBe("web-security-headers");
+      expect(f.severity).toBe("error");
+    }
+  });
+
   it("does not match an attribute name inside a data- attribute", () => {
     // `-` is a non-word character, so `\bsrc` matched `data-src` — and
     // `\bnonce` matched `data-nonce`, which *suppressed* a real finding.

@@ -53,6 +53,34 @@ const SUBRESOURCE_TAGS = new Set([
 ]);
 const SUBRESOURCE_ATTRS = ["src", "href", "data"] as const;
 
+/**
+ * MDN splits mixed content in two, and the split is a behavioural difference
+ * rather than a nuance: browsers "auto-upgrad[e] image, video, and audio
+ * mixed content requests from HTTP to HTTPS, and block insecure requests for
+ * all other resource types". Telling the reader an `<img>` is blocked sends
+ * them hunting for a block that never happened — the same class of false
+ * statement as calling a navigation mixed content, which this rule already
+ * had to fix once. `knowledge/security/web-security-headers.md` states the
+ * split too; a rule that contradicts its own cited document is a rule the
+ * reader stops believing.
+ *
+ * This is MDN's upgradable list, restricted to what the attribute scan below
+ * can actually see: `<img src>` (an `<img>` whose origin comes from `srcset`
+ * or `<picture>` is blockable, and neither attribute is read here),
+ * `<audio src>`, `<video src>`, `<source>`. Everything else falls in the
+ * other half by MDN's own definition of it — "all mixed content that is not
+ * upgradable".
+ */
+const UPGRADABLE_SUBRESOURCE_TAGS = new Set(["img", "video", "audio", "source"]);
+
+/**
+ * The one exception to the upgrade: MDN — "Mixed content requests that would
+ * otherwise be upgraded are blocked if the URL's host is an IP address rather
+ * than a domain name." So `http://93.184.215.14/a.png` genuinely is blocked
+ * where `http://example.com/a.png` is not, and it gets the blocking wording.
+ */
+const LITERAL_IP_HOST = /^https?:\/\/(?:\d{1,3}(?:\.\d{1,3}){3}|\[[0-9A-Fa-f:.]+\])(?::\d+)?(?:[/?#]|$)/;
+
 /** `<link>` only fetches for some `rel` values; `alternate`/`canonical` do not. */
 const FETCHING_REL = /\b(stylesheet|preload|modulepreload|prefetch|prerender|icon|manifest|apple-touch-icon)\b/i;
 
@@ -234,8 +262,11 @@ export function securitySourceRules(code: string, filename?: string): LintFindin
       for (const a of SUBRESOURCE_ATTRS) {
         const v = attr(tag, a);
         if (v && /^http:\/\//i.test(v)) {
+          const upgradable = UPGRADABLE_SUBRESOURCE_TAGS.has(name) && !LITERAL_IP_HOST.test(v);
           push(tag.index, "error", "http-subresource",
-            `<${name} ${a}="${v}"> loads a subresource over plain HTTP; browsers block it as mixed content on an HTTPS page, and it is modifiable in transit.`,
+            upgradable
+              ? `<${name} ${a}="${v}"> is fetched over plain HTTP. Browsers auto-upgrade image, video and audio requests to HTTPS rather than blocking them, so this one fails only if that host has no HTTPS — a broken resource rather than an insecure one, and an upgrade you are relying on instead of stating.`
+              : `<${name} ${a}="${v}"> loads a subresource over plain HTTP; browsers block it as mixed content on an HTTPS page, and it is modifiable in transit.`,
             `Use https://, or a root-relative path on your own origin.`,
             "web-security-headers");
         }
