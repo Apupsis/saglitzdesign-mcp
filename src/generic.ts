@@ -57,7 +57,17 @@ const DEFAULT_HEXES = /#(6366f1|818cf8|a5b4fc|8b5cf6|7c3aed|a78bfa|a855f7|c084fc
 // chroma at a hue angle in the blue-violet band. Matched loosely on the hue
 // angle, because the exact triples differ per shade and a project writing its
 // own OKLCH is not necessarily copying Tailwind's.
-const DEFAULT_OKLCH = /oklch\(\s*0?\.\d+\s+0?\.[12]\d*\s+(2[6-9]\d|3[0-1]\d)(?:\.\d+)?\s*\)/i;
+//
+// **Both lightness forms.** CSS allows the first component as a number or a
+// percentage, and this pattern accepted only the number — so the rule could
+// not match the values its own cited document tabulates. A fetch of
+// tailwindcss.com/docs/colors while writing this counted 572 percentage-form
+// `oklch()` values against 4 in decimal form: the percentage is what the page
+// publishes and what its copy button hands you. `indigo-500` is
+// `oklch(58.5% 0.233 277.117)` there and in ai-default-aesthetic's own table,
+// and neither was matchable. Accepting only the form the docs do not use is an
+// overclaim, not a narrow rule.
+const DEFAULT_OKLCH = /oklch\(\s*(?:0?\.\d+|\d{1,3}(?:\.\d+)?%)\s+0?\.[12]\d*\s+(2[6-9]\d|3[0-1]\d)(?:\.\d+)?\s*\)/i;
 
 // `blue` and `sky` are not the core region — they sit one step cooler on
 // Tailwind's own ramp order (…cyan, sky, blue, indigo, violet, purple,

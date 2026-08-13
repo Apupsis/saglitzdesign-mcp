@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { genericVisualRules, genericCopyRules, genericScore, genericReport, isBrandSurface, RULE_WEIGHTS } from "../dist/generic.js";
@@ -20,6 +20,37 @@ describe("visual rules — fire when they should", () => {
 
   it("flags it written in OKLCH, which is how Tailwind v4 actually ships the palette", () => {
     expect(ids(`.hero { background: linear-gradient(135deg, oklch(0.585 0.233 277.117), oklch(0.627 0.265 303.9)); }`)).toContain("ai-default-gradient");
+  });
+
+  // CSS writes an OKLCH lightness as a number *or* a percentage, and the rule
+  // accepted only the number — while tailwindcss.com/docs/colors publishes and
+  // copies the percentage form, and so does this repo's own
+  // ai-default-aesthetic table. The tool could not match the values its own
+  // cited document tabulates.
+  //
+  // Read from that document rather than retyped from it, so the claim and the
+  // rule cannot drift apart silently: if the table is ever restated in another
+  // notation, this fails instead of quietly becoming untrue again.
+  describe("the OKLCH values the cited document tabulates", () => {
+    const doc = readFileSync(join(__dirname, "..", "knowledge", "craft", "ai-default-aesthetic.md"), "utf8");
+    const rows = [...doc.matchAll(/\|\s*`((?:indigo|violet|purple)-\d{3})`\s*\|\s*`(oklch\([^`]*\))`/g)]
+      .map((m) => ({ token: m[1], oklch: m[2] }));
+
+    it("finds the table, so the cases below are not vacuous", () => {
+      expect(rows.length).toBeGreaterThanOrEqual(5);
+      expect(rows.some((r) => /%/.test(r.oklch))).toBe(true);
+    });
+
+    it.each(rows.flatMap((a, i) => rows.slice(i + 1).map((b) => [`${a.token} → ${b.token}`, a.oklch, b.oklch])))(
+      "flags a gradient built from %s", (_name, from, to) => {
+        expect(ids(`.hero { background: linear-gradient(135deg, ${from}, ${to}); }`))
+          .toContain("ai-default-gradient");
+      });
+  });
+
+  it("flags the percentage form mixed with the decimal one in a single gradient", () => {
+    const code = `.hero { background: linear-gradient(135deg, oklch(0.585 0.233 277.117), oklch(55.8% 0.288 302.321)); }`;
+    expect(ids(code)).toContain("ai-default-gradient");
   });
 
   it("flags the v4 direction utility as readily as the v3 one", () => {
@@ -93,6 +124,18 @@ describe("visual rules — stay quiet when they should", () => {
 
   it("accepts an OKLCH gradient outside the blue-violet band", () => {
     expect(ids(`.hero { background: linear-gradient(135deg, oklch(0.72 0.19 45), oklch(0.55 0.21 25)); }`)).not.toContain("ai-default-gradient");
+  });
+
+  // Accepting the percentage lightness form must not widen anything else: the
+  // hue band and the chroma floor are still what decide, in either notation.
+  it("accepts a percentage-form OKLCH gradient outside the blue-violet band", () => {
+    expect(ids(`.hero { background: linear-gradient(135deg, oklch(72% 0.19 45), oklch(55% 0.21 25)); }`)).not.toContain("ai-default-gradient");
+  });
+
+  it("accepts percentage-form neutrals in the band whose chroma is near zero", () => {
+    // Tailwind's own `zinc`/`gray` steps sit at these hues with 0.006 chroma —
+    // in the band, and nothing to do with the stock accent.
+    expect(ids(`.hero { background: linear-gradient(135deg, oklch(21% 0.006 285.885), oklch(27.4% 0.006 286.033)); }`)).not.toContain("ai-default-gradient");
   });
 
   it("accepts Inter in application UI", () => {
