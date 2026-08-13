@@ -352,3 +352,21 @@ Then, on the deployed site, in DevTools:
 - Load two pages and compare the nonce. **Same nonce twice = the nonce is fake.** This is the check nobody runs.
 - Confirm `self.crossOriginIsolated` only if you actually needed it.
 - Read the Console for CSP violations on the real page, with real third parties, not on localhost.
+
+## Ship checklist
+
+- [ ] CSP delivered as a **response header**, not a `<meta>` tag — otherwise `frame-ancestors`, `report-uri` and `sandbox` are silently ignored
+- [ ] `script-src` uses a per-response nonce or a build-time hash with `'strict-dynamic'` — no host allowlist for scripts, no `'unsafe-inline'` relied on, no `'unsafe-eval'` outside dev
+- [ ] Nonce is ≥128 bits from a CSPRNG, newly generated per response, and the page is not statically cached or prerendered — two loads, two different nonces
+- [ ] `object-src 'none'`, `base-uri 'none'`, `frame-ancestors`, `form-action 'self'` all present; none of them is covered by `default-src`
+- [ ] `require-trusted-types-for 'script'` shipped in report-only, with a plan to enforce and named policies rather than a broad default one
+- [ ] `default-src` plus explicit `img-src`/`connect-src` on any page that renders untrusted or model-generated content — the exfiltration policy, not just the XSS one
+- [ ] Report-only header ran against real traffic for 1–2 weeks before enforcing, and stays on for the next tightening
+- [ ] `Reporting-Endpoints` + both `report-to` and `report-uri` wired to an endpoint someone reads
+- [ ] HSTS `max-age` soaked upward over ~3 months before `includeSubDomains`; `preload` only after a subdomain inventory, and understood as effectively one-way
+- [ ] No mixed content: every subresource `https:`; `upgrade-insecure-requests` treated as a migration aid, not as a replacement for HSTS
+- [ ] `X-Content-Type-Options: nosniff`, an explicit `Referrer-Policy`, and a deny-by-default `Permissions-Policy`
+- [ ] SRI + `crossorigin="anonymous"` on every cross-origin script and stylesheet — or, better, the file self-hosted and pinned
+- [ ] COOP/COEP only if `SharedArrayBuffer`, memory measurement or high-resolution timers are actually used, and verified with `self.crossOriginIsolated`
+- [ ] No `X-XSS-Protection: 1`, no `Expect-CT`, no `document.domain`, no `X-Frame-Options` shipped alone
+- [ ] Headers verified with `curl -sI` against the **deployed** origin, not against a local dev server
