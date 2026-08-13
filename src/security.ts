@@ -1329,6 +1329,41 @@ export function securityConfigRules(
 
 // ── report ───────────────────────────────────────────────────────────────────
 
+/**
+ * Every header-declaring shape this audit can read, as distinctive tokens.
+ *
+ * Three surfaces describe this list in prose, for three different readers:
+ * the "Not visible to this audit" block below (the human reading a report),
+ * the `audit_security` MCP tool description (the *client*, deciding whether
+ * to call the tool at all), and the README's tool table. They have drifted
+ * once already — the README was brought up to date and the tool description
+ * was not, which is the more consequential of the two: an agent that reads
+ * "next.config / vercel.json / netlify.toml / _headers / middleware" will not
+ * reach for this tool on a Nuxt or Remix project, and the tool's reach is
+ * exactly what the reader cannot otherwise find out.
+ *
+ * `tests/integrity.test.ts` asserts every token below appears in all three,
+ * so a shape added to the extractor cannot be announced in one place only.
+ */
+export const HEADER_SOURCE_TOKENS = [
+  "next.config", "vercel.json", "netlify.toml", "_headers", "staticwebapp.config.json",
+  "routeRules", "Remix", "hooks.server", "kit.csp", "middleware",
+  "new Response", "new Headers", "res.set", "res.setHeader", "meta http-equiv",
+] as const;
+
+/**
+ * The header-source clause of the `audit_security` tool description, kept
+ * here beside `HEADER_SOURCE_TOKENS` rather than inline in `index.ts` so the
+ * machine-facing description and this module's own account of its reach are
+ * one edit, not two.
+ */
+export const HEADER_SOURCES_SENTENCE =
+  "Header state is inferred from wherever your stack declares it — next.config, vercel.json, "
+  + "netlify.toml, _headers, staticwebapp.config.json, Nuxt routeRules, a Remix/React Router headers "
+  + "export, SvelteKit hooks.server.ts and kit.csp, Next.js and Astro middleware, new Response(body, "
+  + "{ headers }) and new Headers({…}) on Cloudflare Workers/Deno/Bun, Express res.set and "
+  + "res.setHeader, and <meta http-equiv> — read as text and never evaluated";
+
 // The first four bullets all describe one axis — *mechanism*: things that
 // happen somewhere this audit cannot reach. None of them described the other
 // axis, *coverage*: which configuration shapes the audit can actually read.
@@ -1340,8 +1375,8 @@ const RECOGNISED_SHAPES = [
   "`next.config` `headers()` `key`/`value` entries",
   "`vercel.json`, `netlify.toml`, `_headers`, `staticwebapp.config.json`",
   "quoted object properties (`{ \"Content-Security-Policy\": \"…\" }`) — Nuxt `routeRules`, a Remix/React Router `headers` export, `new Response(body, { headers })`, `new Headers({…})`, `res.set({…})`",
-  "`res.setHeader(…)`, `headers.set/append(…)`, `reply.header(…)`",
-  "SvelteKit's `kit.csp.directives`, and `<meta http-equiv>`",
+  "`res.setHeader(…)`, `headers.set/append(…)`, `reply.header(…)` — including from Next.js and Astro `middleware`",
+  "SvelteKit's `hooks.server.ts` and `kit.csp.directives`, and `<meta http-equiv>`",
 ].join("; ");
 
 const NOT_VISIBLE = `## Not visible to this audit

@@ -5,6 +5,7 @@ import { loadKnowledge, findDoc, platformMatches } from "../dist/knowledge.js";
 import { CATEGORIES, PLATFORMS, DESIGN_LANGUAGES, REVIEW_MAP, FOCUS_MAP, ROADMAPS, STALE_DAYS } from "../dist/catalog.js";
 import { loadRecipes } from "../dist/recipes.js";
 import { loadExamples } from "../dist/examples.js";
+import { securityReport, HEADER_SOURCE_TOKENS, HEADER_SOURCES_SENTENCE } from "../dist/security.js";
 
 // Structural guarantees for the curated content. These are the checks that
 // would have caught the v0.14.0 bug where roadmaps referenced pattern docs by
@@ -346,4 +347,38 @@ describe("security documents cite permitted sources only", () => {
       .map((d) => d.id);
     expect(thin).toEqual([]);
   });
+});
+
+// Three surfaces describe what audit_security can read, for three different
+// readers: the report's "Not visible to this audit" block (a human), the MCP
+// tool description (the client, deciding whether to call the tool at all), and
+// the README's tool table. They drifted once — the README was brought up to
+// date and the machine-facing description was not, which is the worse half to
+// miss: an agent reading the short list will not reach for this tool on a Nuxt
+// or Remix project.
+describe("every surface that lists audit_security's header sources lists all of them", () => {
+  const securitySrc = readFileSync(join(root, "src", "security.ts"), "utf8");
+  const indexSrc = readFileSync(join(root, "src", "index.ts"), "utf8");
+  // The README uses non-breaking hyphens in its tool table; normalise them so
+  // a token like "meta http-equiv" is compared on its content, not its glyphs.
+  const readme = readFileSync(join(root, "README.md"), "utf8").replace(/‑/g, "-");
+  const readmeRow = readme.split("\n").find((l) => l.includes("**`audit_security`**")) ?? "";
+
+  const notVisible = securityReport({ root: join(root, "does-not-exist-so-only-the-boilerplate-renders") });
+
+  it("the README has an audit_security row to check", () => {
+    expect(readmeRow).not.toBe("");
+  });
+
+  it("the tool description is built from the shared constant, not a copy of it", () => {
+    expect(indexSrc).toContain("HEADER_SOURCES_SENTENCE");
+    expect(HEADER_SOURCE_TOKENS.length).toBeGreaterThan(0);
+  });
+
+  it.each(HEADER_SOURCE_TOKENS.map((t) => [t]))(
+    "%s is named in the tool description, the report and the README", (token) => {
+      expect(HEADER_SOURCES_SENTENCE, "MCP tool description").toContain(token);
+      expect(notVisible, "report's Not visible block").toContain(token);
+      expect(readmeRow, "README tool table row").toContain(token);
+    });
 });
