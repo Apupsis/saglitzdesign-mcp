@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { genericVisualRules, genericCopyRules, genericScore, genericReport, isBrandSurface, RULE_WEIGHTS } from "../dist/generic.js";
+import { loadKnowledge, findDoc } from "../dist/knowledge.js";
 
 const ids = (code: string, filename?: string) =>
   genericVisualRules(code, filename).map((f) => f.rule).sort();
@@ -527,6 +528,101 @@ describe("copy rules — say goodbye to: kept as a fixed collocation, not narrow
   });
 });
 
+// Two inputs built to fire every one of the ten rules at least once. Shared,
+// not duplicated: two tests below depend on the "all ten fire" property, and a
+// second copy of these strings would let one of them quietly stop covering
+// what it claims to cover.
+const ALL_TEN_VISUAL = `
+  <div class="from-indigo-500 to-purple-600 bg-clip-text text-transparent backdrop-blur bg-white/10 border-white/10 rounded-2xl shadow-lg border"><h3>🚀 Fast</h3></div>
+  <div class="rounded-2xl shadow-lg border">A</div>
+  <div class="rounded-2xl shadow-lg border">B</div>
+  <span class="text-xs uppercase tracking-wide">Eyebrow</span><h2>One</h2>
+  <span class="text-xs uppercase tracking-wide">Eyebrow</span><h2>Two</h2>
+  <span class="text-xs uppercase tracking-wide">Eyebrow</span><h2>Three</h2>
+  <h1>Ship faster</h1><a href="/signup">Get started</a><style>body{font-family:Inter,sans-serif}</style>
+`;
+const ALL_TEN_COPY = `<h1>Unlock the power of seamlessly modern tooling</h1><a>Get Started</a><a>Learn More</a><p>Seamlessly integrate your effortlessly modern workflow.</p>`;
+
+// The check that would have caught `eyebrow-over-every-heading` citing
+// `visual-craft-standards` — a document with no mention of eyebrows, kickers,
+// tracked uppercase or small section labels — on the day it shipped. The suite
+// asserted `f.doc` was truthy, and a doc id that resolves to nothing is
+// truthy. A finding whose "Read: get_design_doc(...)" line names a document
+// that does not exist sends the reader somewhere empty at exactly the moment
+// they went looking for the authority behind the claim.
+describe("every doc a rule cites resolves to a real knowledge document", () => {
+  const docs = loadKnowledge(join(__dirname, "..", "knowledge"));
+  const findings = [
+    ...genericVisualRules(ALL_TEN_VISUAL, "app/(marketing)/page.tsx"),
+    ...genericCopyRules(ALL_TEN_COPY),
+  ];
+
+  it("loads the knowledge base, so the check below is not vacuous", () => {
+    expect(docs.length).toBeGreaterThan(0);
+  });
+
+  it("fires all ten rules, so every doc a rule can cite is actually cited here", () => {
+    expect([...new Set(findings.map((f) => f.rule))].sort()).toEqual(Object.keys(RULE_WEIGHTS).sort());
+  });
+
+  it("resolves every cited id", () => {
+    const dangling = findings
+      .filter((f) => !f.doc || !findDoc(docs, f.doc))
+      .map((f) => `${f.rule} → ${f.doc}`);
+    expect(dangling).toEqual([]);
+  });
+
+  // Resolution alone is necessary and not sufficient, and this is the half
+  // that actually catches the defect that prompted these tests.
+  // `eyebrow-over-every-heading` cited `visual-craft-standards`, which is a
+  // real document that resolves perfectly well — and contains no mention of
+  // eyebrows, kickers, tracked uppercase or small section labels anywhere. A
+  // reader who followed the "Read:" line landed in a document that never
+  // discusses the thing they were just told about.
+  //
+  // So each rule declares the word its cited document has to actually use.
+  // These are not incidental terms: each is the subject of the rule's own
+  // message, and the phrase in the document that carries it is named beside
+  // it. Re-point a rule at a document that does not make its claim and this
+  // fails.
+  const CLAIM_VOCABULARY: Record<string, RegExp> = {
+    // "Measure a gradient before shipping it", and the recurring-pairs table.
+    "ai-default-gradient": /gradient/i,
+    // typography-craft's reflex-reject list, which names Inter outright.
+    "default-ui-font": /\bInter\b/i,
+    // iconography's rule against emoji standing in for an icon set.
+    "emoji-as-icon": /emoji/i,
+    // ux-writing's "Ban AI-slop … copy".
+    "hype-opener": /ai-slop/i,
+    // ai-default-aesthetic names the triad in its own utility strings.
+    "stock-card-chrome": /rounded-2xl/i,
+    // visual-craft-standards' gradient-text slop tell.
+    "gradient-text": /gradient/i,
+    // ai-default-aesthetic: "a tracked-uppercase eyebrow above every section
+    // without exception". The claim lives here and nowhere else.
+    "eyebrow-over-every-heading": /eyebrow/i,
+    // visual-craft-standards on glassmorphism as a stock surface.
+    "stock-glass-on-dark": /glass/i,
+    // ux-writing's "Extraneous … pure waste — eliminate ruthlessly".
+    "filler-adverb": /extraneous/i,
+    // ux-writing on naming the action rather than labelling it "Get started".
+    "generic-cta": /call to action|CTA|get started/i,
+  };
+
+  it("declares the vocabulary for every rule, so no rule slips the check", () => {
+    expect(Object.keys(CLAIM_VOCABULARY).sort()).toEqual(Object.keys(RULE_WEIGHTS).sort());
+  });
+
+  it.each(Object.entries(CLAIM_VOCABULARY))(
+    "%s cites a document that actually makes the claim", (rule, vocabulary) => {
+      const cited = findings.find((f) => f.rule === rule)?.doc;
+      expect(cited, `${rule} emitted no doc id`).toBeTruthy();
+      const doc = findDoc(docs, cited!);
+      expect(doc, `${rule} → ${cited} does not resolve`).toBeTruthy();
+      expect(vocabulary.test(doc!.body), `${cited} never mentions ${vocabulary}`).toBe(true);
+    });
+});
+
 describe("the score", () => {
   it("keys and rule ids agree in both directions", () => {
     // A weight for a cut rule reads as coverage; a rule with no weight reads as
@@ -536,20 +632,9 @@ describe("the score", () => {
     // has a weight (a stray rule wouldn't silently score nothing), and every
     // weighted id is actually reachable (a stale weight wouldn't silently read
     // as coverage).
-    const visualCode = `
-      <div class="from-indigo-500 to-purple-600 bg-clip-text text-transparent backdrop-blur bg-white/10 border-white/10 rounded-2xl shadow-lg border"><h3>🚀 Fast</h3></div>
-      <div class="rounded-2xl shadow-lg border">A</div>
-      <div class="rounded-2xl shadow-lg border">B</div>
-      <span class="text-xs uppercase tracking-wide">Eyebrow</span><h2>One</h2>
-      <span class="text-xs uppercase tracking-wide">Eyebrow</span><h2>Two</h2>
-      <span class="text-xs uppercase tracking-wide">Eyebrow</span><h2>Three</h2>
-      <h1>Ship faster</h1><a href="/signup">Get started</a><style>body{font-family:Inter,sans-serif}</style>
-    `;
-    const copyCode = `<h1>Unlock the power of seamlessly modern tooling</h1><a>Get Started</a><a>Learn More</a><p>Seamlessly integrate your effortlessly modern workflow.</p>`;
-
     const emitted = new Set([
-      ...genericVisualRules(visualCode),
-      ...genericCopyRules(copyCode),
+      ...genericVisualRules(ALL_TEN_VISUAL),
+      ...genericCopyRules(ALL_TEN_COPY),
     ].map((f) => f.rule));
 
     for (const id of emitted) expect(Object.keys(RULE_WEIGHTS)).toContain(id);

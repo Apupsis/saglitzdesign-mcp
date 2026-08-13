@@ -361,7 +361,13 @@ export function genericVisualRules(code: string, filename?: string): LintFinding
     push(0, "info", "eyebrow-over-every-heading",
       `${eyebrowRuns} headings are each introduced by a small uppercase label.`,
       `Keep the eyebrow where it earns its place; a label on every section is chrome, not structure.`,
-      "visual-craft-standards");
+      // ai-default-aesthetic, not visual-craft-standards. The latter was cited
+      // here and does not contain the claim — it has no mention of eyebrows,
+      // kickers, tracked uppercase or small section labels anywhere. "A
+      // tracked-uppercase eyebrow above every section without exception" is
+      // named in ai-default-aesthetic's list of structural companions to the
+      // stock phrases, which is where this rule's fact comes from.
+      "ai-default-aesthetic");
   }
 
   const seen = new Set<string>();
