@@ -1046,6 +1046,48 @@ describe("the distinctive-page matrix — pages with a point of view score zero"
     expect(pageScore(TRADING_DASHBOARD, "src/app/(desk)/positions/page.tsx")).toBe(0);
   });
 
+  // The other half of the dashboard's panel labels, and the reason the fixture
+  // above uses single-line headers rather than stacks.
+  //
+  // While building this matrix I first wrote these panels the stacked way — a
+  // small uppercase category label with a separate <h2> under it — and the
+  // dashboard scored 6. I judged that a warranted catch rather than a false
+  // positive and left the rule alone, but that judgement lived only in prose.
+  // It belongs here, as evidence: same panel markup, two constructions, two
+  // outcomes, both pinned.
+  //
+  // The rule is right about this one. A label reading "Ticket" over a heading
+  // reading "Order ticket — RXZ5" restates itself, and "Book" over "EU Rates —
+  // Book 3" does the same; the label is not carrying information the heading
+  // lacks. That is the rule's own description of the defect — a label on every
+  // section is chrome, not structure — and it holds on a dashboard exactly as
+  // it holds on a landing page. A dense desk labels a panel once, on one line,
+  // which is what TRADING_DASHBOARD does and why it stays silent.
+  //
+  // This is also the rule's only positive fixture outside the generic control,
+  // so it pins the firing direction against markup someone would really write
+  // rather than against a three-line synthetic block.
+  const DASHBOARD_PANELS_STACKED = `
+    <section>
+      <p className="text-xs uppercase tracking-wide text-[#6B7480]">Book</p>
+      <h2 className="mb-1 text-[12px] font-semibold text-[#E8ECF2]">EU Rates — Book 3</h2>
+      <table className="w-full border-collapse"><tbody><tr><td>RXZ5</td></tr></tbody></table>
+    </section>
+    <aside className="border-l border-[#191D24]">
+      <p className="text-xs uppercase tracking-wide text-[#6B7480]">Ticket</p>
+      <h2 className="mb-1 text-[12px] font-semibold text-[#E8ECF2]">Order ticket — RXZ5</h2>
+      <form className="px-2 py-2"><button type="submit">Buy</button></form>
+      <p className="text-xs uppercase tracking-wide text-[#6B7480]">Limits</p>
+      <h2 className="mb-1 text-[12px] font-semibold text-[#E8ECF2]">Desk utilisation</h2>
+      <dl className="text-[11px]"><dt>DV01 of limit</dt><dd>41,207 / 60,000</dd></dl>
+    </aside>
+  `;
+
+  it("does flag those same panels when each label is stacked over a heading", () => {
+    expect(pageFindings(DASHBOARD_PANELS_STACKED, "src/app/(desk)/positions/page.tsx"))
+      .toContain("eyebrow-over-every-heading");
+  });
+
   it("leaves a warm consumer app screen alone", () => {
     expect(pageFindings(WARM_CONSUMER_APP, "src/app/(app)/today/page.tsx")).toEqual([]);
     expect(pageScore(WARM_CONSUMER_APP, "src/app/(app)/today/page.tsx")).toBe(0);
