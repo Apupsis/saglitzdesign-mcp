@@ -20,7 +20,7 @@ The through-line: **the security control and the usability fix are usually the s
 
 **Myth check (verified 2026-08-12):** passkeys are not emerging, experimental, or Chromium-only — the belief that they are is the single most common reason teams postpone them. WebAuthn is **Baseline Widely available**, and MDN records it as available across browsers **since September 2021**. caniuse puts the API at roughly **96% global support**, and `isConditionalMediationAvailable()` — the specific thing autofill needs — at roughly **94%** (Chrome/Edge 108+, Firefox 119+, Safari and iOS Safari 16.0+). You are not early. You are late.
 
-The measured effect is not marginal. adidas, in a March 2026 web.dev case study: passkey sign-in success rate **above 99%** against a historical password success rate of **70%**, with a 47% overall passkey creation rate. FIDO Alliance's published deployment figures include 6× faster sign-in (Amazon), a 4× improvement in sign-in success rate vs passwords (Google), a 50% reduction in login abandonment (Air New Zealand), and an 81% reduction in login-related help-desk tickets. A password reset is an abandoned session; see [[conversion-ux]] for what that costs.
+The measured effect is not marginal. adidas, in a March 2026 web.dev case study: passkey sign-in success rate **above 99%** against a historical password success rate of **70%**, with a 47% overall passkey creation rate. FIDO Alliance's published deployment figures include 6× faster sign-in (Amazon), a 4× improvement in sign-in success rate vs passwords (Google), a 50% reduction in login abandonment (Air New Zealand), and an 81% reduction in login-related help-desk tickets. A password reset is an abandoned session.
 
 ### Conditional UI — the passkey goes *in* the autofill sheet
 
@@ -143,7 +143,7 @@ Two independent clocks. Ship both; teams routinely ship only the first.
 The design problem is that both are, from the user's side, being thrown out of your product mid-task. Mitigate with design, not by lengthening them:
 
 - **Warn before you expire, with a live countdown and an extend button.** Silent expiry that eats a half-written form is the reason teams get pressured into 30-day sessions.
-- **Preserve unsent input across re-authentication.** The form state is yours; do not make the session own it. See [[forms-inputs]].
+- **Preserve unsent input across re-authentication.** The form state is yours; do not make the session own it — keep it client-side and replay it after the credential check, rather than round-tripping it through the request that just failed.
 - **Re-authenticate in place** — a modal over the current screen — rather than redirecting to `/login` and losing where the user was.
 - **Never use a shorter timeout as a substitute for a missing control.** It is a blunt instrument, and every minute you shave off costs real usability.
 
@@ -222,7 +222,7 @@ Note what registration copy has to do: it must not confirm the address was free.
 - **Reset the counter on success**, and never lock the *only* recovery channel.
 - **Do not tell the attacker they triggered it.** "Account locked" is itself an enumeration signal — it confirms the account exists. Fold it into the same generic failure string.
 
-While on credentials, three OWASP positions worth writing down because product and compliance teams still argue about them: **no composition rules** ("There should be no password composition rules limiting the type of characters permitted"); **no mandatory periodic rotation**; and minimum length **8 characters with MFA, 15 without**, with a maximum of at least 64 so passphrases fit. And: "Allow users to paste into the username, password, and MFA fields." Blocking paste breaks password managers, which pushes users toward short memorable passwords — a security control that produces worse security, and a textbook case for [[ethical-design]] and [[accessibility]] alike. Use `autocomplete="current-password"` on sign-in and `autocomplete="new-password"` on registration and change forms; see [[forms-inputs]].
+While on credentials, three OWASP positions worth writing down because product and compliance teams still argue about them: **no composition rules** ("There should be no password composition rules limiting the type of characters permitted"); **no mandatory periodic rotation**; and minimum length **8 characters with MFA, 15 without**, with a maximum of at least 64 so passphrases fit. And: "Allow users to paste into the username, password, and MFA fields." Blocking paste breaks password managers, which pushes users toward short memorable passwords — a security control that produces worse security, and a textbook case for [[ethical-design]]. Use `autocomplete="current-password"` on sign-in and `autocomplete="new-password"` on registration and change forms; see [[forms-inputs]].
 
 ## The flows that get breached
 

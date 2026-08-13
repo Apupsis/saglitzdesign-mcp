@@ -96,7 +96,7 @@ window.open(url, '_blank', 'noopener,noreferrer');
 
 **Case two: `rel="noreferrer"` is a different control.** It suppresses the `Referer` header (and implies `noopener`). With `strict-origin-when-cross-origin` as the browser default (see [[web-security-headers]]), a cross-origin link already leaks only your origin, so add `noreferrer` when even the origin is sensitive — a password-reset page, an internal tool, a URL whose *hostname* discloses a customer.
 
-While you are in that markup: a link that opens a new tab should say so. See [[accessibility]].
+While you are in that markup: a link that opens a new tab should say so, in the link text or an adjacent icon with a text alternative.
 
 ### `href` from user input
 
@@ -127,7 +127,7 @@ Defences, in OWASP's order of strength:
 1. **Don't take the URL at all.** Hardcode the destination.
 2. **Map an opaque value server-side.** "Have the user provide short name, ID or token which is mapped server-side to a full target URL. This provides the highest degree of protection against the attack tampering with the URL."
 3. **Allowlist** — "based on an allow-list approach, rather than a denylist."
-4. **Interstitial** — "Force all redirects to first go through a page notifying users that they are going off of your site, with the destination clearly displayed." Design it so the destination host is legible, not truncated mid-domain; see [[ux-writing]].
+4. **Interstitial** — "Force all redirects to first go through a page notifying users that they are going off of your site, with the destination clearly displayed." Design it so the destination host is legible and never truncated mid-domain — truncate the path instead, and keep the registrable domain at the visible end.
 
 The check that fails: `if (next.startsWith('/'))`. `//evil.example` starts with `/` and resolves to a different host entirely. Parse with `new URL(next, origin)` and compare `url.origin` to yours exactly — substring and `endsWith` comparisons are how `example.org.attacker.com` gets through.
 

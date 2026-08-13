@@ -132,7 +132,7 @@ Made operational:
 
 - Replace free text with structured choices wherever the answer is enumerable. Better data, less risk, easier triage.
 - Where free text must exist, label the boundary in the field's help text — one line, plain, in the voice of [[ux-writing]] — and mean it.
-- Keep free-text fields out of session replay and analytics payload capture by default, along with everything in [[forms-inputs]] that you would not print on a receipt.
+- Keep free-text fields out of session replay and analytics payload capture by default, along with every other field you would not print on a receipt.
 - Give free text its own, shorter retention.
 
 **Do not put identifiers in URLs.** MDN documents link decorating — "Including parameters on the URLs of inbound links… that can reveal to the linked site where the link originated from, what marketing campaign it is part of, the email address or other identifier of the user that clicked on it" — and browsers now strip known tracking parameters. A URL is copied into a chat, a support ticket, an analytics log and a `Referer`; treat it as public.
@@ -166,7 +166,7 @@ The ladder, in increasing order of what you have to give up:
 
 1. **Server logs and edge metrics.** Requests, statuses, latency, and referrers you already receive. No device storage, no consent trigger.
 2. **Aggregate, cookieless analytics** — no persistent identifier written to or read from the device, no cross-site linkage, retained short, reported only to you.
-3. **Consented, full-fidelity analytics** for the subset who agree — with the honest caveat that a consented sample is a biased sample, so do not mix it with (2) in one chart. [[analytics-experimentation]] covers what that does to your inference.
+3. **Consented, full-fidelity analytics** for the subset who agree — with the honest caveat that a consented sample is a biased sample, so do not mix it with (2) in one chart — the consenting population differs systematically from the population as a whole, and the gap is not a constant you can scale away.
 
 Two claims to stop repeating:
 
