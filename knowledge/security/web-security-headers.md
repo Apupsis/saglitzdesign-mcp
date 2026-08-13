@@ -200,7 +200,7 @@ Permissions-Policy: camera=(), microphone=(), geolocation=()
 
 **`Referrer-Policy: strict-origin-when-cross-origin`** — same-origin requests send origin + path + query; cross-origin requests at the same security level send origin only; HTTPS→HTTP sends nothing.
 
-> **Myth check (verified 2026-08-12):** this is already the browser **default** when no policy is set or the value is invalid. Checklists that call a missing `Referrer-Policy` a vulnerability are describing 2019 (`no-referrer-when-downgrade` was the default until the Nov 2020 spec revision). Set it anyway — to be explicit, and to override a weaker value a framework or CDN may inject — but do not treat its absence as a finding, and do not "fix" it with `no-referrer`, which breaks your own analytics attribution for no security gain.
+> **Myth check — a missing `Referrer-Policy` is not a finding (verified 2026-08-12).** This is already the browser **default** when no policy is set or the value is invalid. Checklists that call a missing `Referrer-Policy` a vulnerability are describing 2019 (`no-referrer-when-downgrade` was the default until the Nov 2020 spec revision). Set it anyway — to be explicit, and to override a weaker value a framework or CDN may inject — but do not treat its absence as a finding, and do not "fix" it with `no-referrer`, which breaks your own analytics attribution for no security gain.
 
 **`Permissions-Policy`** — `()` is an empty allowlist, meaning the feature is disabled in the top-level document *and* in every nested `<iframe>` regardless of origin. Deny by default and add back only what a page uses. Values: `*` (everywhere), `()` (nowhere), `self` (this origin only), `"https://vendor.example"` (quoted origins, space-separated) in the header.
 
@@ -246,14 +246,16 @@ Readers arrive carrying these. Auditors still ask for them. Omitting them does n
 
 ### Next.js (App Router, nonce-based)
 
-> **Naming, verified 2026-08-12:** Next.js **16.0 deprecated `middleware.ts` and renamed the convention to `proxy.ts`**, with the exported function renamed `middleware` → `proxy`. Current docs show `proxy.ts` only. On Next 15 and earlier the identical code lives in `middleware.ts` and exports `middleware`. Migrate with `npx @next/codemod@canary middleware-to-proxy .`.
+> **Naming (verified 2026-08-12).** Next.js **16.0 deprecated `middleware.ts` and renamed the convention to `proxy.ts`**, with the exported function renamed `middleware` → `proxy`. Current docs show `proxy.ts` only. On Next 15 and earlier the identical code lives in `middleware.ts` and exports `middleware`. Migrate with `npx @next/codemod@canary middleware-to-proxy .`.
 
 ```ts
 // proxy.ts  (Next.js 16+; middleware.ts on 15 and earlier)
 import { NextRequest, NextResponse } from 'next/server'
 
 export function proxy(request: NextRequest) {
-  const nonce = Buffer.from(crypto.randomUUID()).toString('base64')
+  // 16 bytes = 128 bits. Next.js's own example uses crypto.randomUUID(), which
+  // carries only 122 bits of entropy and is version/variant-tagged — under the bar above.
+  const nonce = Buffer.from(crypto.getRandomValues(new Uint8Array(16))).toString('base64')
   const isDev = process.env.NODE_ENV === 'development'
   const cspHeader = `
     default-src 'self';
