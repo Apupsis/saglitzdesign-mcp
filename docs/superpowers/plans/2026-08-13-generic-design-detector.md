@@ -610,6 +610,17 @@ has nothing to add."
 import { genericScore, genericReport } from "../dist/generic.js";
 
 describe("the score", () => {
+  it("keys and rule ids agree in both directions", () => {
+    // A weight for a cut rule reads as coverage; a rule with no weight reads as
+    // clean. uniform-card-grid was cut in Task 2 — this is what catches the
+    // next one.
+    const emitted = new Set([
+      ...genericVisualRules(`<div class="from-indigo-500 to-purple-600 bg-clip-text text-transparent backdrop-blur bg-white/10 border-white/10 rounded-2xl shadow-lg border"><h3>🚀 Fast</h3></div>`),
+      ...genericCopyRules(`<h1>Unlock the power of seamlessly modern tooling</h1><a>Get Started</a><a>Learn More</a>`),
+    ].map((f) => f.rule));
+    for (const id of emitted) expect(Object.keys(RULE_WEIGHTS)).toContain(id);
+  });
+
   it("counts a rule once however many times it fires", () => {
     const card = `<div class="rounded-2xl shadow-lg border"><h3>🚀 Fast</h3></div>`;
     const one = genericScore(genericVisualRules(card));
@@ -666,12 +677,18 @@ npm run build && npx vitest run tests/generic.test.ts tests/server.test.ts tests
 Weights, as a single exported table so a change is visible in one place:
 
 ```ts
+// `uniform-card-grid` was cut in Task 2 and is deliberately absent. It fired on
+// any three elements sharing a class string — nav links, footer buttons,
+// dashboard KPI tiles, pricing tiers — and a grid/flex-parent gate would not
+// have saved it, because those tiles genuinely do sit in a grid. Separating
+// "cards that need hierarchy" from "components that should be consistent" is a
+// judgement about what the elements mean, not a fact about the source, so it
+// falls outside this module's governing rule. Ten rules, not eleven.
 export const RULE_WEIGHTS: Record<string, number> = {
   "ai-default-gradient": 20,
   "default-ui-font": 15,
   "emoji-as-icon": 12,
   "hype-opener": 10,
-  "uniform-card-grid": 8,
   "stock-card-chrome": 8,
   "gradient-text": 7,
   "eyebrow-over-every-heading": 6,
@@ -679,6 +696,11 @@ export const RULE_WEIGHTS: Record<string, number> = {
   "filler-adverb": 5,
   "generic-cta": 3,
 };
+
+// A test must assert that every key here is a rule id some rule function can
+// emit, and that every emitted rule id has a key. A weight for a rule that no
+// longer exists scores nothing and reads as coverage; a rule with no weight
+// scores zero and reads as clean.
 ```
 
 `genericScore` groups findings by rule, awards each rule's weight once, records the occurrence count for display, sums, and caps at 100.
