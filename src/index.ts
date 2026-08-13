@@ -113,11 +113,23 @@ const READONLY_ANNOTATIONS = {
   openWorldHint: false,
 } as const;
 
-function tool(name: string, description: string, schema: Record<string, unknown>, cb: (args: any) => unknown) {
+function tool(
+  name: string,
+  description: string,
+  schema: Record<string, unknown>,
+  cb: (args: any) => unknown,
+  outputSchema?: Record<string, unknown>,
+) {
   const title = name.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
   return (server.registerTool as (n: string, c: unknown, cb: unknown) => unknown)(
     name,
-    { title, description, inputSchema: schema, annotations: { title, ...READONLY_ANNOTATIONS } },
+    {
+      title,
+      description,
+      inputSchema: schema,
+      ...(outputSchema ? { outputSchema } : {}),
+      annotations: { title, ...READONLY_ANNOTATIONS },
+    },
     cb,
   );
 }

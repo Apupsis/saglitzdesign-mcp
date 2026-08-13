@@ -4,6 +4,9 @@ import { writeFileSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { z } from "zod";
 import { encodePng, canvasRows } from "./helpers/pngFixture.js";
 
 // End-to-end smoke test over the real stdio server. Everything else in the
@@ -104,6 +107,10 @@ describe("server handshake", () => {
       expect(t.annotations?.title, t.name).toBeTruthy();
       expect(t.annotations?.readOnlyHint, t.name).toBe(true);
       expect(t.annotations?.openWorldHint, t.name).toBe(false);
+      // None of the 31 tools declares an outputSchema yet. The wrapper's
+      // conditional spread must keep the key absent — not present-as-undefined —
+      // so this checks the real wire representation, not the wrapper's args.
+      expect("outputSchema" in t, t.name).toBe(false);
     }
   });
 
@@ -137,6 +144,79 @@ describe("every tool answers a representative call", () => {
       expect(body.toLowerCase(), name).not.toMatch(/^no (matches|guidance|document|recipe|visual examples)/);
     }, 20_000);
   }
+});
+
+describe("structured output (outputSchema)", () => {
+  // The production server is a singleton spawned once in beforeAll, and none
+  // of its 31 tools declares an outputSchema — that direction is covered
+  // above, against the real tools/list. To exercise the wrapper's other path
+  // (a tool that DOES pass one) without registering a 32nd tool on the real
+  // server, this stands up its own throwaway McpServer, wired to its own
+  // Client over an in-memory transport, and registers two tools the same way
+  // src/index.ts's `tool()` wrapper does: outputSchema spread in only when
+  // given. tools/list on this mini server is just as much the genuine wire
+  // representation as the real server's — it is what an MCP client actually
+  // sees, not the wrapper's JS arguments.
+  it("advertises an outputSchema only for the tool that declared one", async () => {
+    const testServer = new McpServer({ name: "outputschema-probe", version: "0.0.0" });
+
+    function registerLikeProduction(
+      name: string,
+      description: string,
+      schema: Record<string, unknown>,
+      cb: (args: any) => unknown,
+      outputSchema?: Record<string, unknown>,
+    ) {
+      const title = name.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+      return (testServer.registerTool as (n: string, c: unknown, cb: unknown) => unknown)(
+        name,
+        {
+          title,
+          description,
+          inputSchema: schema,
+          ...(outputSchema ? { outputSchema } : {}),
+          annotations: { title, readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        },
+        cb,
+      );
+    }
+
+    registerLikeProduction(
+      "probe_with_schema",
+      "Test-only tool that declares a structured outputSchema.",
+      {},
+      () => ({ content: [{ type: "text", text: "ok" }], structuredContent: { ok: true } }),
+      { ok: z.boolean() },
+    );
+    registerLikeProduction(
+      "probe_without_schema",
+      "Test-only tool that declares no outputSchema, like the other 31.",
+      {},
+      () => ({ content: [{ type: "text", text: "ok" }] }),
+    );
+
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const probeClient = new Client({ name: "outputschema-probe-client", version: "1.0.0" }, { capabilities: {} });
+    await Promise.all([testServer.connect(serverTransport), probeClient.connect(clientTransport)]);
+
+    try {
+      const { tools } = await probeClient.listTools();
+      const withSchema = tools.find((t) => t.name === "probe_with_schema");
+      const withoutSchema = tools.find((t) => t.name === "probe_without_schema");
+
+      expect(withSchema?.outputSchema).toBeTruthy();
+      expect(withSchema?.outputSchema).toMatchObject({
+        type: "object",
+        properties: { ok: { type: "boolean" } },
+      });
+
+      expect(withoutSchema).toBeTruthy();
+      expect("outputSchema" in (withoutSchema as object)).toBe(false);
+    } finally {
+      await probeClient.close();
+      await testServer.close();
+    }
+  });
 });
 
 describe("resources", () => {
