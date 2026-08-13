@@ -1058,6 +1058,35 @@ describe("rules that used to fire on correct code", () => {
       .find((x) => x.rule === "public-env-secret");
     expect(secret!.fix).toMatch(/rotate the value/);
   });
+
+  // Softening the *fix text* left the severity alone, so a project whose only
+  // finding was a Mapbox `pk.*` token — public by design, and URL-restricted —
+  // still opened its report with "1 error". The severity is the part a reader
+  // triages on.
+  it("does not headline an error over a token whose name does not say it is secret", () => {
+    const sev = (code: string) =>
+      securitySourceRules(code).find((x) => x.rule === "public-env-secret")?.severity;
+    expect(sev(`const t = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN`)).toBe("warning");
+    expect(sev(`const t = process.env.NEXT_PUBLIC_ALGOLIA_SEARCH_TOKEN`)).toBe("warning");
+    // A name that carries SECRET, PRIVATE, PASSWORD, or an API_KEY/ACCESS_KEY
+    // pair is a defect whatever the value turns out to be.
+    expect(sev(`const k = process.env.NEXT_PUBLIC_STRIPE_SECRET_KEY`)).toBe("error");
+    expect(sev(`const k = process.env.NEXT_PUBLIC_API_KEY`)).toBe("error");
+    expect(sev(`const k = process.env.VITE_AWS_ACCESS_KEY`)).toBe("error");
+    expect(sev(`const k = process.env.REACT_APP_PRIVATE_KEY`)).toBe("error");
+    expect(sev(`const k = process.env.NEXT_PUBLIC_DB_PASSWORD`)).toBe("error");
+  });
+
+  it("stays silent on a name that declares itself the published half of a key pair", () => {
+    // A Solana mint address, a VAPID web-push key: PUBLIC_KEY is the name of
+    // the half you are supposed to ship.
+    expect(ids(`const m = process.env.NEXT_PUBLIC_TOKEN_MINT_PUBLIC_KEY`)).not.toContain("public-env-secret");
+    expect(ids(`const k = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY`)).not.toContain("public-env-secret");
+    // The exemption is the adjacent pair, not the bare segment "PUBLIC" —
+    // SECRET_KEY and PRIVATE_KEY can never match it.
+    expect(ids(`const k = process.env.VITE_PUBLIC_STRIPE_SECRET_KEY`)).toContain("public-env-secret");
+    expect(ids(`const k = process.env.NEXT_PUBLIC_SIGNING_PRIVATE_KEY`)).toContain("public-env-secret");
+  });
 });
 
 describe("HSTS states the thresholds its cited document actually gives", () => {

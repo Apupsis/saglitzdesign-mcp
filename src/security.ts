@@ -150,12 +150,17 @@ const SECRET_PAIRS = ["API_KEY", "ACCESS_KEY"] as const;
  * and ANON_KEY is not one of SECRET_PAIRS); this makes the same intent
  * explicit for names that also carry a credential word.
  */
-// Deliberately not "PUBLIC": every name here already carries a public prefix,
-// so accepting that segment would exempt VITE_PUBLIC_STRIPE_SECRET_KEY too.
+// Deliberately not the bare segment "PUBLIC": every name here already carries a
+// public prefix, so accepting that segment alone would exempt
+// VITE_PUBLIC_STRIPE_SECRET_KEY too. The *pair* PUBLIC_KEY is safe where the
+// bare segment is not — it names the half of an asymmetric pair that is
+// published on purpose (a VAPID web-push key, a Solana mint address), and it
+// cannot match SECRET_KEY or PRIVATE_KEY, which is where the danger was.
 const PUBLIC_BY_DESIGN = ["PUBLISHABLE", "ANON"] as const;
+const PUBLIC_BY_DESIGN_PAIRS = ["PUBLIC_KEY"] as const;
 
 const isDeclaredPublicCredential = (id: string): boolean =>
-  hasKeywordSegment(id, PUBLIC_BY_DESIGN);
+  hasKeywordSegment(id, PUBLIC_BY_DESIGN, PUBLIC_BY_DESIGN_PAIRS);
 
 export function securitySourceRules(code: string, filename?: string): LintFinding[] {
   const out: LintFinding[] = [];
@@ -308,15 +313,22 @@ export function securitySourceRules(code: string, filename?: string): LintFindin
     if (env && hasKeywordSegment(env[1], SECRET_WORDS, SECRET_PAIRS) && !isDeclaredPublicCredential(env[1])) {
       // Some credentials are *designed* to ship in the bundle: a Mapbox
       // `pk.*` access token, a Supabase anon key, a Stripe publishable key.
-      // Their names say so, and the segment check honours that. What remains
-      // is a name that merely ends in TOKEN — plausibly a publishable one —
-      // so the "already compromised" clause, which asks the reader to rotate
-      // every secret in sight, is softened to a question for that case only.
+      // Their names say so, and `isDeclaredPublicCredential` honours that.
+      // What remains is a name that merely carries TOKEN and nothing else —
+      // VITE_MAPBOX_ACCESS_TOKEN is that shape, and a Mapbox `pk.*` token is
+      // public by design and URL-restricted. Headlining "1 error" on a
+      // correct project is the false positive this module refuses, so a
+      // TOKEN-only match is a `warning` that asks the reader to confirm the
+      // token is publishable. Only a name that also carries SECRET, PRIVATE,
+      // PASSWORD or an API_KEY/ACCESS_KEY pair — where being in the bundle is
+      // a defect whatever the value turns out to be — stays an `error`.
       const tokenOnly = !hasKeywordSegment(env[1], ["SECRET", "PRIVATE", "PASSWORD", "PASSWD"], SECRET_PAIRS);
-      push(at, "error", "public-env-secret",
-        `A build-time public variable named "${env[0]}" is inlined into the client bundle and is public the moment it ships.`,
+      push(at, tokenOnly ? "warning" : "error", "public-env-secret",
         tokenOnly
-          ? `If this is a publishable token (a Mapbox pk.*, a Stripe publishable key), rename it to say so — PUBLISHABLE or ANON — so the next reader does not have to guess. If it is not, move it to a server-only variable and rotate the value.`
+          ? `A build-time public variable named "${env[0]}" is inlined into the client bundle, so whatever it holds ships to every visitor. Some tokens are meant to — a Mapbox pk.*, a Stripe publishable key — and this name does not say which kind it is.`
+          : `A build-time public variable named "${env[0]}" is inlined into the client bundle and is public the moment it ships.`,
+        tokenOnly
+          ? `Confirm this token is publishable and restricted by URL or origin. If it is, rename it to say so — PUBLISHABLE, ANON or PUBLIC_KEY — so the next reader does not have to check. If it is not, move it to a server-only variable and rotate the value.`
           : `Move it to a server-only variable and rotate the value — anything already shipped is compromised.`,
         "frontend-attack-surface");
     }
