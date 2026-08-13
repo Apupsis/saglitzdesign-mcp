@@ -119,6 +119,17 @@ describe("visual rules — stay quiet when they should", () => {
     expect(ids(`<span class="bg-gradient-to-r from-teal-400 to-lime-400 bg-clip-text text-transparent">99%</span>`)).not.toContain("gradient-text");
   });
 
+  // teal/lime above never reaches the colour test — GRADIENT_STOP_RE does not
+  // match those ramps at all, so the rule short-circuits one step earlier.
+  // blue→sky is the case that actually exercises the CORE_RAMPS gate: both
+  // ramps are ones the regex collects, and neither is core. Without this,
+  // deleting that gate for gradient-text changes real behaviour and no test
+  // in this file notices — the fill-gradient rule has the equivalent negative
+  // and this one did not.
+  it("accepts gradient-filled text in blue and sky, which the stop regex collects but the core set excludes", () => {
+    expect(ids(`<span class="bg-gradient-to-r from-blue-400 to-sky-300 bg-clip-text text-transparent">99%</span>`)).not.toContain("gradient-text");
+  });
+
   it("does not fire on markup inside a comment", () => {
     expect(genericVisualRules(`<!-- <div class="from-indigo-500 to-purple-600"> -->`)).toEqual([]);
   });
@@ -424,9 +435,10 @@ describe("the score", () => {
     // synthetic weight table that sums past 100 is the only way to reach it,
     // which is what this test does, restoring RULE_WEIGHTS afterward.
     const original = { ...RULE_WEIGHTS };
-    for (const key of Object.keys(RULE_WEIGHTS)) delete RULE_WEIGHTS[key];
-    Object.assign(RULE_WEIGHTS, { "test-only-a": 70, "test-only-b": 60 });
     try {
+      // Inside the try, so a throw while swapping the table still restores it.
+      for (const key of Object.keys(RULE_WEIGHTS)) delete RULE_WEIGHTS[key];
+      Object.assign(RULE_WEIGHTS, { "test-only-a": 70, "test-only-b": 60 });
       const findings = [
         { line: 1, severity: "info", rule: "test-only-a", message: "m", fix: "f" },
         { line: 2, severity: "info", rule: "test-only-b", message: "m", fix: "f" },
@@ -468,9 +480,10 @@ describe("the report", () => {
   // report is driven end to end from source.
   it("states the pre-clamp sum in the report when the display is capped", () => {
     const original = { ...RULE_WEIGHTS };
-    for (const key of Object.keys(RULE_WEIGHTS)) delete RULE_WEIGHTS[key];
-    Object.assign(RULE_WEIGHTS, { "ai-default-gradient": 70, "emoji-as-icon": 60 });
     try {
+      // Inside the try, so a throw while swapping the table still restores it.
+      for (const key of Object.keys(RULE_WEIGHTS)) delete RULE_WEIGHTS[key];
+      Object.assign(RULE_WEIGHTS, { "ai-default-gradient": 70, "emoji-as-icon": 60 });
       const out = genericReport({ source: `<div class="from-indigo-500 to-purple-600"><h3>🚀 Fast</h3></div>` });
       expect(out).toMatch(/\*\*Score: 100 \/ 100\*\*/);
       // The note appears, and names the real uncapped sum rather than a
@@ -709,7 +722,7 @@ export default function PositionsDesk() {
 
   return (
     <main className="h-screen overflow-hidden bg-[#0B0D10] text-[#C9CFD8] font-sans text-[12px] leading-[16px] tabular-nums">
-      <header className="flex items-baseline justify-between border-b border-[#191D24] px-3 py-1.5">
+      <header className="sticky top-0 z-10 flex items-baseline justify-between border-b border-[#191D24] bg-white/10 px-3 py-1.5 backdrop-blur">
         <h1 className="text-[12px] font-semibold uppercase tracking-[.08em] text-[#E8ECF2]">
           Positions — EU Rates
         </h1>
@@ -723,6 +736,10 @@ export default function PositionsDesk() {
       </header>
 
       <div className="grid h-full grid-cols-[minmax(0,1fr)_320px]">
+        <section>
+          <p className="border-b border-[#191D24] px-2 py-1 text-xs uppercase tracking-wide text-[#6B7480]">
+            Book — EU Rates 3
+          </p>
         <table className="w-full border-collapse">
           <thead>
             <tr className="border-b border-[#191D24] text-left text-[11px] uppercase tracking-[.06em] text-[#6B7480]">
@@ -749,11 +766,12 @@ export default function PositionsDesk() {
             ))}
           </tbody>
         </table>
+        </section>
 
         <aside className="border-l border-[#191D24]">
-          <div className="border-b border-[#191D24] px-2 py-1 text-[11px] uppercase tracking-[.06em] text-[#6B7480]">
+          <p className="border-b border-[#191D24] px-2 py-1 text-xs uppercase tracking-wide text-[#6B7480]">
             Order ticket — RXZ5
-          </div>
+          </p>
           <form className="px-2 py-2">
             <label className="mb-1 block text-[11px] text-[#6B7480]" htmlFor="qty">Qty</label>
             <input id="qty" defaultValue={250} className="mb-2 w-full border border-[#232830] bg-[#0F1318] px-2 py-1 text-right text-[#E8ECF2] outline-none focus:border-[#3D6EF5]" />
@@ -767,6 +785,14 @@ export default function PositionsDesk() {
               Flatten book ({book.workingOrders} working)
             </button>
           </form>
+
+          <div className="border-t border-[#191D24]">
+            <p className="px-2 py-1 text-xs uppercase tracking-wide text-[#6B7480]">Desk utilisation</p>
+            <dl className="flex justify-between px-2 text-[11px] text-[#8A93A0]">
+              <dt>DV01 of limit</dt>
+              <dd className="text-[#E8ECF2]">41,207 / 60,000</dd>
+            </dl>
+          </div>
         </aside>
       </div>
 
@@ -780,12 +806,19 @@ export default function PositionsDesk() {
 `;
 
 // 4. Warm consumer screen. Peach and clay, a rounded humanist face, and a
-//    drawn watering can rather than an icon set. Written in Tailwind on
-//    purpose: it is the only clean fixture besides the dashboard that puts
-//    real utility strings in front of the class-based rules, and it sits
-//    deliberately near `stock-card-chrome` — the panels are round and raised
-//    because warmth needs softness, but the tint carries the separation, so
-//    no panel wears radius, shadow, and a border at once.
+//    drawn watering can rather than an icon set. Written in Tailwind so the
+//    class-based rules have something to read, and carrying the substrate
+//    for the three heaviest of them on purpose:
+//
+//    - Three panels at `rounded-2xl border border-[#F0E2D8]` — literally two
+//      of `stock-card-chrome`'s three predicates, with only the absence of
+//      `shadow-lg` keeping it quiet. Loosening that triad to any two is
+//      caught here.
+//    - A real `bg-gradient-to-b from-orange-100 to-rose-50` and a
+//      `bg-clip-text text-transparent` figure, so `ai-default-gradient` and
+//      `gradient-text` reach their colour test instead of short-circuiting
+//      on "no gradient present". Peach to rose is a decision; the rules must
+//      let it through while still catching indigo to violet.
 const WARM_CONSUMER_APP = `
 export default function TodayScreen({ thirsty, forecast }: TodayProps) {
   return (
@@ -795,7 +828,7 @@ export default function TodayScreen({ thirsty, forecast }: TodayProps) {
         Two of your plants are thirsty today
       </h1>
 
-      <section className="overflow-hidden rounded-[28px] bg-[#FBE3D2] px-6 pt-6">
+      <section className="overflow-hidden rounded-2xl border border-[#F0E2D8] bg-gradient-to-b from-orange-100 to-rose-50 px-6 pt-6">
         <p className="mb-4 max-w-[24ch] leading-relaxed">
           The fiddle leaf has gone eleven days. That is two longer than it likes in August.
         </p>
@@ -811,6 +844,13 @@ export default function TodayScreen({ thirsty, forecast }: TodayProps) {
         </svg>
       </section>
 
+      <section className="mt-6 rounded-2xl border border-[#F0E2D8] bg-[#FBE3D2] px-5 py-4">
+        <p className="text-[14px] text-[#8C7268]">You have kept everything alive since</p>
+        <p className="bg-gradient-to-r from-orange-300 to-rose-300 bg-clip-text font-display text-[34px] text-transparent">
+          March
+        </p>
+      </section>
+
       <ul className="mt-7 divide-y divide-[#F0E2D8]">
         {thirsty.map((plant) => (
           <li key={plant.id} className="flex items-center gap-3.5 py-3.5">
@@ -824,7 +864,7 @@ export default function TodayScreen({ thirsty, forecast }: TodayProps) {
         ))}
       </ul>
 
-      <section className="mt-6 rounded-3xl bg-[#F6F2E9] px-5 py-4.5 shadow-[0_2px_20px_rgba(194,105,74,0.09)]">
+      <section className="mt-6 rounded-2xl border border-[#F0E2D8] bg-[#F6F2E9] px-5 py-4.5">
         <h2 className="mb-1.5 font-display text-[19px] font-medium">Nothing else until Saturday</h2>
         <p className="text-[15px] leading-relaxed text-[#6E5A52]">
           The succulents on the balcony are fine through the weekend. We will nudge you Friday
@@ -923,6 +963,12 @@ const MONO_DEV_TOOL = `
   <p>Measured on a c7g.2xlarge running pgbench at scale 500. Numbers from your workload will
   differ; the analyze row is the only one worth being careful about.</p>
 
+  <h2>v0.4.0 🚀 Ring buffer</h2>
+  <p>Plans are now kept per fingerprint rather than globally, so a chatty query can no longer
+  evict the one you were watching. <code>--keep</code> sets the depth; the old
+  <code>--history</code> flag still works and warns.</p>
+  <p>Earlier notes are in <a href="/changelog">the changelog</a>.</p>
+
   <div class="install">
     <span>MIT licensed · 2,900 lines of Go · no daemon</span>
     <button type="button">Read the source</button>
@@ -1020,14 +1066,23 @@ describe("the distinctive-page matrix — pages with a point of view score zero"
   // condensed grotesque, a display serif, a rounded humanist face, and the
   // system mono stack are none of them a default UI sans.
   it("keeps four of them clean even when served from a marketing route", () => {
-    for (const [name, page] of [
-      ["brutalist", BRUTALIST_LANDING],
-      ["serif editorial", SERIF_EDITORIAL],
-      ["warm consumer", WARM_CONSUMER_APP],
-      ["mono developer tool", MONO_DEV_TOOL],
+    for (const [name, page, naturalPath, brandPath] of [
+      ["brutalist", BRUTALIST_LANDING, "app/page.html", "app/(marketing)/page.html"],
+      ["serif editorial", SERIF_EDITORIAL, "app/(reading)/estuario/page.html", "app/(marketing)/page.html"],
+      ["warm consumer", WARM_CONSUMER_APP, "src/app/(app)/today/page.tsx", "app/(marketing)/page.tsx"],
+      ["mono developer tool", MONO_DEV_TOOL, "app/page.html", "app/(marketing)/page.html"],
     ] as const) {
-      expect(isBrandSurface(page, "app/(marketing)/page.tsx")).toBe(true);
-      expect(pageFindings(page, "app/(marketing)/page.tsx"), name).toEqual([]);
+      // The load-bearing direction. Asserting `true` on a `(marketing)` path
+      // cannot fail — BRAND_PATH matches the segment whatever the page says —
+      // so it is the *natural* path that pins the premise these perturbations
+      // rest on: on its own route each page is genuinely off-surface, which is
+      // why the flip below means something. This is also the assertion that
+      // would fire first if `isBrandSurface` were ever widened.
+      expect(isBrandSurface(page, naturalPath), `${name} on its own route`).toBe(false);
+      expect(isBrandSurface(page, brandPath), `${name} on a marketing route`).toBe(true);
+      // Same extension either side, so the route is the only variable moving —
+      // an `.html` fixture re-masked as `.tsx` would change two things at once.
+      expect(pageFindings(page, brandPath), name).toEqual([]);
     }
   });
 
