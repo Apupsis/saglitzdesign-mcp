@@ -144,6 +144,38 @@ export const metadata: Metadata = {
     expect(f!.line).toBe(5);
   });
 
+  // technical-seo §4 lists the types whose rich results Google retired, and is
+  // equally clear the markup stays valid: "Keep FAQPage markup if cheap; don't
+  // build strategy on it." So this notes a retired expectation, not a defect,
+  // and must not ask for a deletion the cited document argues against.
+  it("notes a retired rich-result type without asking for the markup back", () => {
+    const code = GOOD_HTML.replace("</head>", `<script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"FAQPage","mainEntity":[]}
+  </script></head>`);
+    const f = seoRules(code, "index.html").find((x) => x.rule === "jsonld-deprecated-type");
+    expect(f).toBeDefined();
+    expect(f!.severity).toBe("info");
+    expect(f!.message).toContain("FAQPage");
+    // The cited document says to keep the markup, so the fix may not instruct
+    // its removal — "Nothing to remove" is the sentence, not a violation of it.
+    expect(f!.fix).toMatch(/nothing to remove|keep it/i);
+    expect(`${f!.message} ${f!.fix}`).not.toMatch(/\b(?:remove|delete|drop|strip)\s+(?:it|this|the (?:block|markup|type))\b/i);
+  });
+
+  it("says nothing about a type whose rich results are still supported", () => {
+    const code = GOOD_HTML.replace("</head>", `<script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"Organization","name":"Saglitz"}
+  </script></head>`);
+    expect(ids(code, "index.html")).not.toContain("jsonld-deprecated-type");
+  });
+
+  it("finds a retired type inside an @graph too", () => {
+    const code = GOOD_HTML.replace("</head>", `<script type="application/ld+json">
+  {"@context":"https://schema.org","@graph":[{"@type":"WebSite","url":"https://saglitz.com/"},{"@type":"HowTo","name":"x"}]}
+  </script></head>`);
+    expect(ids(code, "index.html")).toContain("jsonld-deprecated-type");
+  });
+
   it("gives every finding a message, a fix and a doc", () => {
     const findings = seoRules(GOOD_HTML.replace(/<title>[^<]*<\/title>/, ""), "index.html");
     expect(findings.length).toBeGreaterThan(0);
@@ -442,6 +474,100 @@ export default function About() {
     expect(ids(code, "index.html")).toEqual(["content-not-in-html"]);
   });
 
+  // The client-shell guard was one keystroke wide: it required the mount to be
+  // literally empty *and* its id to match, so five ordinary scaffolds missed by
+  // a character and were then read as finished documents — three fabricated
+  // warnings each about a head their own script writes. The absence guard is
+  // now decoupled from the mount match: the finding needs a precise root to
+  // point at, the guard only needs the fact that nothing here is authored.
+  describe("the shapes a client-rendered shell actually ships in", () => {
+    const shell = (body: string) => `<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8"><title>App</title></head>
+  <body>${body}<script src="/bundle.js"></script></body>
+</html>`;
+
+    it.each([
+      ["a spinner inside the root", shell(`<div id="root"><div class="spinner"></div></div>`)],
+      ["a Loading string inside the root", shell(`<div id="root">Loading…</div>`)],
+      ["a noscript notice inside the root", shell(`<div id="root"><noscript>You need JavaScript.</noscript></div>`)],
+      ["an ember-app mount", shell(`<div id="ember-app"></div>`)],
+    ])("reports %s as exactly one shell finding", (_name, code) => {
+      expect(ids(code, "index.html")).toEqual(["content-not-in-html"]);
+    });
+
+    // Angular's own src/index.html carries no script tag at all — the CLI
+    // injects the bundle — so requiring one went blind on the framework's
+    // default. The element exists only as a mount, which is evidence enough.
+    it("reports Angular's script-less index.html as exactly one shell finding", () => {
+      const code = `<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8"><title>App</title><base href="/"></head>
+  <body><app-root></app-root></body>
+</html>`;
+      expect(ids(code, "src/index.html")).toEqual(["content-not-in-html"]);
+    });
+  });
+
+  // `attrValue` suppressed `${…}` and `{…}` but not the server-template forms,
+  // so an ERB layout was told to "Write the full URL:
+  // https://example.com/<%= canonical_url %>".
+  describe("server templates, whose values are not in the file", () => {
+    const page = (title: string, description: string, canonical: string) => `<!doctype html>
+<html lang="en">
+<head>
+  <title>${title}</title>
+  <meta name="description" content="${description}">
+  <link rel="canonical" href="${canonical}">
+</head>
+<body><h1>Pricing</h1><p>Prose long enough that this page is never read as a shell of any kind, several sentences deep.</p></body>
+</html>`;
+
+    it("says nothing about an ERB layout", () => {
+      expect(seoRules(page("<%= yield :title %>", "<%= yield :description %>", "<%= canonical_url %>"),
+        "app/views/layouts/application.html.erb")).toEqual([]);
+    });
+
+    it("says nothing about a PHP layout", () => {
+      expect(seoRules(page("<?= $title ?>", "<?php echo $desc; ?>", "<?= $canonical ?>"), "layout.html")).toEqual([]);
+    });
+
+    it("says nothing about an HtmlWebpackPlugin index", () => {
+      const code = `<!doctype html><html><head><meta charset="utf-8"><title><%= htmlWebpackPlugin.options.title %></title></head><body><div id="app"></div></body></html>`;
+      expect(seoRules(code, "public/index.html")).toEqual([]);
+    });
+  });
+
+  it("says nothing about an HTML email, which correctly has no canonical", () => {
+    const code = `<!doctype html>
+<html>
+<head><meta charset="utf-8"><style>.wrap{max-width:600px}</style></head>
+<body>
+  <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
+    <tr><td><h1>Your order</h1><p>Thanks — it ships tomorrow morning.</p></td></tr>
+  </table>
+</body>
+</html>`;
+    expect(seoRules(code, "emails/order-confirmation.html")).toEqual([]);
+  });
+
+  it("does not count an h1 inside an inert <template>", () => {
+    const code = GOOD_HTML.replace("</main>", `<template id="row"><h1>Row title</h1></template></main>`);
+    expect(ids(code, "index.html")).not.toContain("multiple-h1");
+  });
+
+  it("does not read a nested array as a node missing everything", () => {
+    const code = GOOD_HTML.replace("</head>", `<script type="application/ld+json">[[{"@type":"Thing"}]]</script></head>`);
+    expect(ids(code, "index.html")).not.toContain("jsonld-missing-required");
+  });
+
+  it("says it in the singular when one key is missing", () => {
+    const code = GOOD_HTML.replace("</head>", `<script type="application/ld+json">{"@type":"Organization","name":"Saglitz"}</script></head>`);
+    const f = seoRules(code, "index.html").find((x) => x.rule === "jsonld-missing-required");
+    expect(f!.message).toContain("missing @context");
+    expect(f!.message).toContain("Without it");
+  });
+
   it("accepts a page with real content beside a small portal mount point", () => {
     const code = GOOD_HTML
       .replace("</body>", `<div id="portal"></div>\n<script src="/assets/index-4f2c.js"></script></body>`);
@@ -681,6 +807,97 @@ useHead({ title: "Website Redesign Pricing for UK Startups | Saglitz", meta: [{ 
     expect(seoRules(files[0].source, files[0].path).map((f) => f.rule)).not.toContain("meta-description-length");
   });
 
+  // The frameworks declare the *site's* metadata in a config file beside the
+  // pages. Not reading them called a correct Nuxt project descriptionless and
+  // canonical-less, and a correct Gatsby project canonical-less — with the
+  // declaration one file away and never opened.
+  it("reads a Nuxt project's app.head out of nuxt.config.ts", () => {
+    expect(configIds([
+      { path: "pages/index.vue", source: `<template><main><h1>Studio</h1></main></template>` },
+      {
+        path: "nuxt.config.ts",
+        source: `export default defineNuxtConfig({
+  app: {
+    head: {
+      title: "Saglitz Design",
+      meta: [{ name: "description", content: "UK web design studio." }],
+      link: [{ rel: "canonical", href: "https://saglitz.com/" }],
+    },
+  },
+});`,
+      },
+    ])).toEqual([]);
+  });
+
+  it("reads a Gatsby project's siteMetadata out of gatsby-config.js", () => {
+    expect(configIds([
+      { path: "src/pages/index.jsx", source: `export default function Home() { return <main><h1>Studio</h1></main>; }` },
+      {
+        path: "gatsby-config.js",
+        source: `module.exports = { siteMetadata: { title: "Saglitz Design", description: "UK web design studio.", siteUrl: "https://saglitz.com" } };`,
+      },
+    ])).toEqual([]);
+  });
+
+  it("reads Astro's site and Docusaurus's url as the canonical they generate", () => {
+    expect(configIds([
+      {
+        path: "src/pages/index.astro",
+        source: `---\nconst title = "Saglitz Design studio homepage";\n---\n<html><head><title>{title}</title><meta name="description" content="UK studio building conversion-focused sites." /></head><body><h1>Hi</h1></body></html>`,
+      },
+      { path: "astro.config.mjs", source: `export default defineConfig({ site: "https://saglitz.com" });` },
+    ])).toEqual([]);
+
+    expect(configIds([
+      { path: "src/pages/index.jsx", source: `export default function Home() { return <main><h1>Docs</h1></main>; }` },
+      {
+        path: "docusaurus.config.js",
+        source: `module.exports = { title: "Saglitz Docs", tagline: "How the design system works", url: "https://docs.saglitz.com" };`,
+      },
+    ])).toEqual([]);
+  });
+
+  // One file's readable surface used to license claims about all three keys
+  // across every file — including a file whose shape this module admits it
+  // cannot read. The surface doctrine was right and was being applied per
+  // project instead of per key.
+  it("does not let one page's title license claims about a page it cannot read", () => {
+    expect(configIds([
+      {
+        path: "src/pages/index.astro",
+        source: `---\nconst title = "Saglitz Design studio homepage";\n---\n<html><head><title>{title}</title></head><body><h1>Hi</h1></body></html>`,
+      },
+      {
+        path: "app/page.tsx",
+        source: `import { constructMetadata } from "@/lib/seo";
+
+export const metadata = constructMetadata({ title: "Home" });
+
+export default function Page() { return <main><h1>Home</h1></main>; }`,
+      },
+    ])).toEqual([]);
+  });
+
+  it("treats a spread inside a metadata export as the merge it is", () => {
+    expect(configIds([{
+      path: "app/page.tsx",
+      source: `import { base } from "@/lib/seo";
+
+export const metadata = { ...base, title: "Home page for the studio" };
+
+export default function Page() { return <main><h1>Home</h1></main>; }`,
+    }])).toEqual([]);
+  });
+
+  it("still claims absence when nothing hides the key", () => {
+    expect(configIds([{
+      path: "app/page.tsx",
+      source: `export const metadata = { title: "Home page for the studio and its work" };
+
+export default function Page() { return <main><h1>Home</h1></main>; }`,
+    }])).toEqual(["canonical-missing", "meta-description-missing"]);
+  });
+
   it("claims nothing about a project whose metadata shape it does not recognise", () => {
     const files = [{
       path: "src/App.vue",
@@ -742,7 +959,7 @@ describe("every doc a rule cites resolves and makes the rule's claim", () => {
   <title>${"t".repeat(90)}</title>
   <meta name="description" content="${"d".repeat(220)}">
   <link rel="canonical" href="/pricing/">
-  <script type="application/ld+json">{"name":"Saglitz"}</script>
+  <script type="application/ld+json">{"@type":"HowTo","name":"Redesign a site"}</script>
 </head>
 <body><h1>Pricing</h1></body>
 </html>`;
@@ -777,25 +994,31 @@ describe("every doc a rule cites resolves and makes the rule's claim", () => {
 
   // Each rule names the word its cited document must actually use. Re-point a
   // rule at a document that does not make its claim and this fails.
+  // Each phrase is the sentence in the cited document that carries the rule's
+  // claim, not a word that document merely happens to contain. A loose pattern
+  // here defeats the whole check: `/h1/i` matches most of this knowledge base,
+  // so `multiple-h1` could have been re-pointed at any document at all and
+  // this test would still have passed.
   const CLAIM_VOCABULARY: Record<string, RegExp> = {
-    "title-missing": /<title>|title tag|Title Tags/i,
-    "title-length": /characters/i,
-    "meta-description-missing": /meta description|Meta Descriptions/i,
-    "meta-description-length": /characters/i,
-    "multiple-h1": /`<h1>`|h1/i,
-    "heading-order-skipped": /heading levels never skip|never skip/i,
-    "canonical-missing": /canonical/i,
+    "title-missing": /One unique `<title>` per page/i,
+    "title-length": /\*\*50–60 characters\*\*/i,
+    "meta-description-missing": /Every indexable page gets a unique one/i,
+    "meta-description-length": /\*\*150–160 characters\.\*\*/i,
+    "multiple-h1": /Multiple H1s won't tank you/i,
+    "heading-order-skipped": /heading levels never skip/i,
+    "canonical-missing": /a \*\*self-referencing\*\* canonical/i,
     "canonical-not-absolute": /Absolute URLs only/i,
     "canonical-points-elsewhere": /matching final protocol\/host/i,
-    "hreflang-not-reciprocal": /reciprocity|return tags/i,
-    "jsonld-unparseable": /JSON-LD/i,
-    "jsonld-missing-required": /schema\.org/i,
-    "alt-missing": /alt=""/i,
-    "robots-blocks-everything": /robots\.txt/i,
-    "robots-blocks-ai-crawlers": /AI crawlers|GPTBot/i,
-    "llms-txt-absent": /llms\.txt/i,
-    "sitemap-not-referenced": /Sitemap: https/i,
-    "content-not-in-html": /AI crawlers \*\*read initial HTML only\*\*|read initial HTML only/i,
+    "hreflang-not-reciprocal": /Reciprocity \(return tags\)/i,
+    "jsonld-unparseable": /Validate with Google's Rich Results Test/i,
+    "jsonld-missing-required": /"@context": "https:\/\/schema\.org"/i,
+    "jsonld-deprecated-type": /do NOT promise clients rich results from these/i,
+    "alt-missing": /decorative → `alt=""`/i,
+    "robots-blocks-everything": /blocks only genuinely private paths/i,
+    "robots-blocks-ai-crawlers": /AI bots allowed in robots\.txt/i,
+    "llms-txt-absent": /Serve `\/llms\.txt` at the site root/i,
+    "sitemap-not-referenced": /Reference it in robots\.txt/i,
+    "content-not-in-html": /AI crawlers \*\*read initial HTML only\*\*/i,
   };
 
   it("fires every rule in the table, so no rule escapes the citation check", () => {

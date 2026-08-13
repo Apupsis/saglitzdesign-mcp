@@ -84,13 +84,27 @@ const hasSpread = (tag: Tag): boolean => /\{\s*\.\.\./.test(tag.attrs);
  */
 interface AttrValue { present: boolean; value?: string }
 
+/**
+ * Every form a value can take that means "this text is not the value — it is
+ * the instruction that produces it": a JS template literal or JSX expression,
+ * and the server-template forms `<%= … %>` (ERB, EJS, JSP),
+ * `<?= … ?>` / `<?php … ?>` (PHP) and their close tags.
+ *
+ * The server-template half was missing while `TEMPLATE_PLACEHOLDER` in this
+ * same file already matched it, so an ERB layout's
+ * `<link rel="canonical" href="<%= canonical_url %>">` was read as a literal
+ * relative URL and answered with "Write the full URL:
+ * https://example.com/<%= canonical_url %>" — advice that is wrong twice over.
+ */
+const UNREADABLE_VALUE = /\$\{|\{[^}]*\}|<%|%>|<\?/;
+
 const attrValue = (tag: Tag, name: string): AttrValue => {
   const re = new RegExp(`${ATTR_START}${name}\\s*=\\s*("([^"]*)"|'([^']*)'|\\{[^}]*\\})`, "i");
   const m = re.exec(tag.attrs);
   if (!m) return { present: hasAttr(tag, name) };
   const raw = m[2] ?? m[3];
-  if (raw === undefined) return { present: true };            // a JSX expression
-  if (/\$\{|\{[^}]*\}/.test(raw)) return { present: true };   // interpolated literal
+  if (raw === undefined) return { present: true };             // a JSX expression
+  if (UNREADABLE_VALUE.test(raw)) return { present: true };    // produced, not written
   return { present: true, value: raw };
 };
 
@@ -122,7 +136,22 @@ export const SEO_FILENAMES = [
   "robots.ts", "robots.js", "sitemap.ts", "sitemap.js",
   "next-sitemap.config.js", "next-sitemap.config.mjs",
   "next-seo.config.js", "next-seo.config.ts",
+  // Where a framework declares the *site's* metadata rather than a page's:
+  // Nuxt's `app.head`, Gatsby's `siteMetadata`, Astro's `site`, Docusaurus's
+  // `title`/`tagline`/`url`. Not reading them reported a correct Nuxt project
+  // as having no description and no canonical, and a correct Gatsby project as
+  // having no canonical — the declaration was one file away and never opened.
+  // `next-seo.config.js` above was already this precedent.
+  "nuxt.config.ts", "nuxt.config.js", "nuxt.config.mjs",
+  "gatsby-config.js", "gatsby-config.ts", "gatsby-config.mjs",
+  "astro.config.mjs", "astro.config.js", "astro.config.ts",
+  "docusaurus.config.js", "docusaurus.config.ts", "docusaurus.config.mjs",
+  "svelte.config.js", "svelte.config.ts",
 ];
+
+/** The subset of those whose whole body is a site-metadata declaration. */
+const SITE_CONFIG_FILE =
+  /(?:^|\/)(?:nuxt|astro|docusaurus|svelte|next-seo)\.config\.[cm]?[jt]s$|(?:^|\/)gatsby-config\.[cm]?[jt]s$/i;
 
 const basename = (path: string): string => path.split("/").pop() ?? path;
 
@@ -152,6 +181,22 @@ function metadataRegions(masked: string, path: string): Array<[number, number]> 
   while ((m = metaRe.exec(masked)) !== null) {
     const open = masked.indexOf("{", m.index + m[0].length - 1);
     regions.push([m.index, balanced(open)]);
+  }
+
+  // `export const metadata = constructMetadata({ … })` — a helper that merges
+  // defaults this file does not contain. What is in the call's own arguments
+  // is still readable, so the arguments are a region; that the rest is not
+  // readable is recorded separately as opacity.
+  const callRe = /\b(?:export\s+)?(?:const|let|var)\s+metadata\b[^=;{]*=\s*[A-Za-z_$][\w$.]*\s*\(/g;
+  while ((m = callRe.exec(masked)) !== null) {
+    const open = m.index + m[0].length - 1;
+    let depth = 0;
+    let end = masked.length;
+    for (let i = open; i < masked.length; i++) {
+      if (masked[i] === "(") depth++;
+      else if (masked[i] === ")" && --depth === 0) { end = i + 1; break; }
+    }
+    regions.push([m.index, end]);
   }
 
   // `generateMetadata(…): Promise<Metadata> { … }` — the argument list closes
@@ -199,8 +244,8 @@ function metadataRegions(masked: string, path: string): Array<[number, number]> 
     regions.push([sh, end === -1 ? masked.length : end]);
   }
 
-  // A `next-seo` config module is metadata from its first line to its last.
-  if (/next-seo\.config\.[cm]?[jt]s$/i.test(path)) regions.push([0, masked.length]);
+  // A framework's site config is metadata from its first line to its last.
+  if (SITE_CONFIG_FILE.test(path)) regions.push([0, masked.length]);
 
   return regions;
 }
@@ -215,9 +260,24 @@ function metadataRegions(masked: string, path: string): Array<[number, number]> 
  * description would be inventing a finding out of a match.
  */
 const NAMED_TAG_SHAPE: Partial<Record<string, RegExp>> = {
-  description: /(?:name|property)\s*[:=]\s*["'`]description["'`]/i,
-  canonical: /rel\s*[:=]\s*["'`]canonical["'`]/i,
+  // `meta: [{ name: "description", … }]`, and the site-config keys a framework
+  // feeds into that same tag: Docusaurus emits its `tagline` as the default
+  // meta description, Gatsby's `siteMetadata.description` is what its SEO
+  // component reads.
+  description: /(?:name|property)\s*[:=]\s*["'`]description["'`]|\b(?:tagline|siteDescription|defaultDescription)\s*[:=]/i,
+  // `link: [{ rel: "canonical", … }]`, and the site-URL keys canonicals are
+  // generated from — Astro's `site`, Gatsby's `siteUrl`, Docusaurus's `url`.
+  // A literal http(s) value is required so a bare `url:` key on an unrelated
+  // object cannot pass for one.
+  canonical: /rel\s*[:=]\s*["'`]canonical["'`]|\b(?:site|siteUrl|url)\s*[:=]\s*["'`]https?:\/\//i,
 };
+
+/** `export const metadata = constructMetadata({ … })` — defaults live in the helper. */
+const METADATA_FROM_CALL = /\b(?:export\s+)?(?:const|let|var)\s+metadata\b[^=;{]*=\s*[A-Za-z_$][\w$.]*\s*\(/;
+
+/** Any recognised way of saying "this file declares page metadata". */
+const METADATA_MENTION =
+  /\bexport\s+(?:const|let|var|(?:async\s+)?function)\s+(?:metadata|generateMetadata|meta|links)\b|\buse(?:Head|SeoMeta)\s*\(|\bsiteMetadata\s*[:=]|<(?:Head|Helmet|NextSeo|Seo|SEO)[\s/>]/;
 
 /**
  * A metadata key inside one of those regions, or an attribute of a
@@ -239,7 +299,7 @@ function keyInRegions(
       // reader has to edit rather than at the top of the first region.
       const index = start + m.index;
       const raw = m[2];
-      if (raw === undefined || /\$\{/.test(raw)) return { present: true, index };
+      if (raw === undefined || UNREADABLE_VALUE.test(raw)) return { present: true, index };
       return { present: true, value: raw, index };
     }
     const nm = named?.exec(region);
@@ -266,6 +326,15 @@ interface PageDeclarations {
    * No surface, no absence claim.
    */
   surface: boolean;
+  /**
+   * This file declares metadata that visibly comes from somewhere else: a
+   * helper call (`metadata = constructMetadata({…})`), a spread inside the
+   * declaration (`{ ...base, title }`), or a recognised declaration keyword
+   * with nothing readable behind it. Whatever it does not show, it may still
+   * be setting — so it blocks a *project-level* absence claim for the keys it
+   * does not show, and only those.
+   */
+  opaque: boolean;
   title?: Declaration;
   description?: Declaration;
   canonical?: Declaration;
@@ -284,7 +353,7 @@ interface PageDeclarations {
 const HEAD_COMPONENTS = new Set(["Head", "Helmet", "NextSeo", "HeadContent", "Seo", "SEO", "MetaTags"]);
 
 function declarationsOf(masked: string, tags: Tag[], path: string): PageDeclarations {
-  const out: PageDeclarations = { surface: false, hreflang: [], jsonld: [] };
+  const out: PageDeclarations = { surface: false, opaque: false, hreflang: [], jsonld: [] };
   const regions = metadataRegions(masked, path);
 
   for (const tag of tags) {
@@ -298,7 +367,9 @@ function declarationsOf(masked: string, tags: Tag[], path: string): PageDeclarat
     if (name === "title" && !out.title && !insideSvg(masked, tag.index)) {
       const span = elementSpan(masked, tag);
       const text = span ? masked.slice(span[0], span[1]) : "";
-      const readable = !/[{}]|\$\{/.test(text);
+      // `<title><%= @page_title %></title>` and `<title>{title}</title>` are
+      // both titles whose text this file does not contain.
+      const readable = !UNREADABLE_VALUE.test(text) && !/[{}]/.test(text);
       out.title = { present: true, value: readable ? text.trim() : undefined, index: tag.index, fromTag: true };
     }
 
@@ -346,7 +417,43 @@ function declarationsOf(masked: string, tags: Tag[], path: string): PageDeclarat
 
   if (out.title || out.description || out.canonical) out.surface = true;
 
+  // Opacity, in the three shapes it comes in. Note the last one: a file that
+  // clearly declares metadata and yields nothing readable is the *most*
+  // opaque case there is, and before this it counted as "no surface" — which
+  // let another file's title license absence claims about it.
+  const declaredByCall = METADATA_FROM_CALL.test(masked);
+  const spreadInRegion = regions.some(([s, e]) => /\.\.\.[A-Za-z_$]/.test(masked.slice(s, e)));
+  const mentionsWithoutReading = METADATA_MENTION.test(masked) && !out.title && !out.description && !out.canonical;
+  out.opaque = declaredByCall || spreadInRegion || mentionsWithoutReading;
+
   return out;
+}
+
+/**
+ * The spans of `<template>` elements whose content is inert — it is parsed but
+ * never rendered until a script clones it, so a heading inside one is not a
+ * heading on the page.
+ *
+ * The exception is a Vue SFC's outermost `<template>`, which is the
+ * component's markup and is emphatically not inert; in a `.vue` file the first
+ * span is therefore dropped. Nested ones (`<template #header>`,
+ * `<template v-if>`) keep the guard, which errs toward not firing.
+ */
+function inertTemplateSpans(masked: string, path: string): Array<[number, number]> {
+  const spans: Array<[number, number]> = [];
+  const lower = masked.toLowerCase();
+  let from = 0;
+  for (;;) {
+    const open = lower.indexOf("<template", from);
+    if (open === -1) break;
+    const gt = masked.indexOf(">", open);
+    const close = lower.indexOf("</template", open);
+    if (gt === -1) break;
+    spans.push([gt + 1, close === -1 ? masked.length : close]);
+    from = gt + 1;
+  }
+  if (/\.vue$/i.test(path)) spans.shift();
+  return spans;
 }
 
 /** True when `index` sits between an `<svg>` and its closing tag. */
@@ -384,7 +491,10 @@ const normalizeUrl = (url: string): string =>
 // ── page text ────────────────────────────────────────────────────────────────
 
 /** Element ids a single-page-app framework mounts itself into. */
-const ROOT_ID = /^(?:root|app|__next|___gatsby|__nuxt|main-app|q-app)$/i;
+const ROOT_ID = /^(?:root|app|__next|___gatsby|__nuxt|main-app|q-app|ember-app|app-root)$/i;
+
+/** …and the ones that mount by element name instead — Angular, Ember. */
+const ROOT_TAG = /^(?:app-root|ember-app)$/i;
 
 /**
  * A build-time or server-side placeholder — `%sveltekit.head%`, `{{ … }}`,
@@ -414,25 +524,88 @@ function visibleText(masked: string): string {
 function isSelfContainedDocument(masked: string, path: string): boolean {
   if (FRAMEWORK_FILE.test(path)) return false;
   if (!/<head[\s>]/i.test(masked)) return false;
-  return !TEMPLATE_PLACEHOLDER.test(masked);
+  if (TEMPLATE_PLACEHOLDER.test(masked)) return false;
+  return !isEmailTemplate(masked);
 }
 
 /**
- * The empty mount point of a client-rendered application: a root element with
- * nothing in it, a script bundle to fill it, and no other substantive text on
- * the page. All three are required — a page with real prose beside a small
- * `<div id="portal">` is a portal, not an empty page.
+ * An HTML email. This server ships `knowledge/marketing/email-html-development.md`,
+ * so email templates are in scope for the product and turn up in the same
+ * repositories — and an email correctly has no meta description and no
+ * canonical, because there is no URL and no crawler. Three warnings against
+ * one is three false positives.
+ *
+ * The signature is a layout table that exists for email clients — `role
+ * ="presentation"`, or the `cellpadding`/`cellspacing` attributes no web page
+ * has used this decade — with no external stylesheet (email clients drop them)
+ * and no `<nav>`. A web page would have to hit all three to be mistaken for
+ * one.
+ */
+function isEmailTemplate(masked: string): boolean {
+  const layoutTable = /<table[^>]*(?:role\s*=\s*["']presentation["']|cellpadding|cellspacing)/i.test(masked);
+  if (!layoutTable) return false;
+  return !/<link[^>]+rel\s*=\s*["']?stylesheet/i.test(masked) && !/<nav[\s>]/i.test(masked);
+}
+
+/**
+ * The mount point of a client-rendered application: a root element with no
+ * visible text in it, a script bundle to fill it, and no other substantive
+ * text on the page. All three are required — a page with real prose beside a
+ * small `<div id="portal">` is a portal, not an empty page.
+ *
+ * "No visible text" rather than "empty": a spinner div, a `Loading…` string
+ * and a `<noscript>` notice are all still a shell, and requiring literal
+ * emptiness meant three of the five commonest scaffolds missed this and were
+ * then treated as finished documents.
  */
 function spaShellRoot(masked: string, tags: Tag[]): Tag | null {
   if (!/<body[\s>]|<html[\s>]/i.test(masked)) return null;
-  const bundle = tags.some((t) => t.name.toLowerCase() === "script" && (attrValue(t, "src").value ?? "").length > 0);
-  if (!bundle || visibleText(masked).length >= 200) return null;
+  if (visibleText(masked).length >= 200) return null;
+  const bundle = hasBundleScript(tags);
   for (const tag of tags) {
-    if (!ROOT_ID.test(attrValue(tag, "id").value ?? "")) continue;
+    const mountsByName = ROOT_TAG.test(tag.name);
+    if (!mountsByName && !ROOT_ID.test(attrValue(tag, "id").value ?? "")) continue;
+    // Angular's own `src/index.html` carries `<app-root></app-root>` and no
+    // script tag — the CLI injects the bundle — so an element that exists
+    // *only* as a framework mount stands on its own. A `<div id="app">` does
+    // not: without a bundle beside it, it could be anything.
+    if (!bundle && !mountsByName) continue;
     const span = elementSpan(masked, tag);
-    if (span && !masked.slice(span[0], span[1]).trim()) return tag;
+    if (!span) continue;
+    const inner = masked.slice(span[0], span[1]);
+    // A spinner, a `Loading…` string or a `<noscript>` notice is still a
+    // shell; a mount holding a heading or a paragraph is not.
+    if (/<h[1-6][\s>]/i.test(inner) || visibleText(inner).length > 40) continue;
+    return tag;
   }
   return null;
+}
+
+const hasBundleScript = (tags: Tag[]): boolean =>
+  tags.some((t) => t.name.toLowerCase() === "script" && (attrValue(t, "src").value ?? "").length > 0);
+
+/**
+ * Does this document leave its content to a script, whether or not the mount
+ * point is one we recognise?
+ *
+ * Deliberately independent of `spaShellRoot`. Tying the absence guard to a
+ * precise mount match made it one keystroke wide: `<div id="root">Loading…
+ * </div>`, `<app-root></app-root>` and `<div id="ember-app"></div>` each
+ * missed by an id or by a character, and the file then claimed a title, a
+ * description and a canonical were absent from a head its own script writes.
+ * The *finding* needs a precise root to point at; the *guard* only needs the
+ * fact that nothing here is authored — no headings, almost no text, and
+ * either a bundle or a recognised empty mount to explain why.
+ */
+function looksClientRendered(masked: string, tags: Tag[]): boolean {
+  if (!/<body[\s>]|<html[\s>]/i.test(masked)) return false;
+  if (tags.some((t) => /^h[1-6]$/i.test(t.name))) return false;
+  if (visibleText(masked).length >= 200) return false;
+  if (hasBundleScript(tags)) return true;
+  // Angular's own `src/index.html` ships `<app-root></app-root>` and no script
+  // tag at all — the CLI injects the bundle at build time — so a bundle cannot
+  // be required here without going blind on the framework's default.
+  return tags.some((t) => ROOT_TAG.test(t.name) || ROOT_ID.test(attrValue(t, "id").value ?? ""));
 }
 
 /**
@@ -463,6 +636,18 @@ function conditionallyRendered(masked: string, tag: Tag): boolean {
 // everything outside *those* would flag a great deal of correct work. What is
 // flagged here is only what is outside a range wide enough that no reasonable
 // reading of the document defends it.
+/**
+ * The types technical-seo §4 lists under "Deprecated — do NOT promise clients
+ * rich results from these": HowTo (removed 2023–2024), FAQPage (restricted in
+ * 2023, retired for visual snippets by 2026), and the June 2025 removals it
+ * names. Only the ones whose schema.org type name the document states
+ * unambiguously are here — a guess at which type "Estimated Salary" maps to
+ * would be a claim the document does not make.
+ */
+const DEPRECATED_RICH_RESULT = new Set([
+  "HowTo", "FAQPage", "ClaimReview", "SpecialAnnouncement", "VehicleListing", "Course",
+]);
+
 const TITLE_MIN = 30;
 const TITLE_MAX = 60;
 const DESCRIPTION_MIN = 70;
@@ -498,7 +683,10 @@ export function seoRules(code: string, filename?: string): LintFinding[] {
    * at run time.
    */
   const headMatch = /<head[\s>]/i.exec(masked);
-  const selfContained = isSelfContainedDocument(masked, path) && headMatch !== null && !shellRoot;
+  const selfContained = isSelfContainedDocument(masked, path)
+    && headMatch !== null
+    && !shellRoot
+    && !looksClientRendered(masked, tags);
   const headIndex = headMatch?.index ?? 0;
 
   // ── title ──────────────────────────────────────────────────────────────────
@@ -612,28 +800,55 @@ export function seoRules(code: string, filename?: string): LintFinding[] {
     // said so, the exact defect the generic-design package shipped once. What
     // every example in the cited document does carry, and what makes a block
     // interpretable at all, is `@context` and a `@type` on each node.
-    const nodes = (Array.isArray(data) ? data : [data]).filter(
-      (n): n is Record<string, unknown> => typeof n === "object" && n !== null);
-    const missing: string[] = [];
+    // `typeof [] === "object"`, so a nested array passed this filter and was
+    // then read as a node with neither `@context` nor `@type` — a block
+    // reported as missing both when it declares one perfectly well.
+    const isNode = (n: unknown): n is Record<string, unknown> =>
+      typeof n === "object" && n !== null && !Array.isArray(n);
+
+    const nodes = (Array.isArray(data) ? data : [data]).filter(isNode);
+    const missing = new Set<string>();
+    const types: string[] = [];
     for (const node of nodes) {
-      if (!("@context" in node)) missing.push("@context");
+      if (!("@context" in node)) missing.add("@context");
       const graph = node["@graph"];
-      const typed = Array.isArray(graph)
-        ? graph.filter((g): g is Record<string, unknown> => typeof g === "object" && g !== null)
-        : [node];
-      if (typed.some((t) => !("@type" in t))) missing.push("@type");
+      const typed = Array.isArray(graph) ? graph.filter(isNode) : [node];
+      if (typed.some((t) => !("@type" in t))) missing.add("@type");
+      for (const t of typed) {
+        const value = t["@type"];
+        for (const one of Array.isArray(value) ? value : [value]) {
+          if (typeof one === "string") types.push(one);
+        }
+      }
     }
-    if (missing.length) {
+    if (missing.size) {
+      const names = [...missing];
       push(tag.index, "warning", "jsonld-missing-required",
-        `This JSON-LD block is missing ${[...new Set(missing)].join(" and ")}. Without them it is an anonymous object rather than a schema.org node.`,
+        `This JSON-LD block is missing ${names.join(" and ")}. Without ${names.length > 1 ? "them" : "it"} it is an anonymous object rather than a schema.org node.`,
         `Add "@context": "https://schema.org" and a "@type" on every node, then validate with the Rich Results Test.`,
+        "technical-seo");
+    }
+
+    // technical-seo §4 keeps a list of types whose *rich results* Google has
+    // retired, and is equally clear that the markup itself stays valid and
+    // still aids entity understanding — "Keep FAQPage markup if cheap; don't
+    // build strategy on it". So this is `info`, it names the expectation
+    // rather than the markup as the problem, and it does not ask for a
+    // deletion the cited document argues against.
+    const retired = [...new Set(types.filter((t) => DEPRECATED_RICH_RESULT.has(t)))];
+    if (retired.length) {
+      push(tag.index, "info", "jsonld-deprecated-type",
+        `This block declares ${retired.join(" and ")}, ${retired.length > 1 ? "types" : "a type"} whose rich results Google has retired (technical-seo §4). The markup is still valid schema.org and still helps entity understanding — it just earns no result in the SERP.`,
+        `Nothing to remove: keep it if it was cheap to add, and don't plan a template or a client deliverable around a rich result for it.`,
         "technical-seo");
     }
   }
 
   // ── headings ───────────────────────────────────────────────────────────────
+  const inert = inertTemplateSpans(masked, path);
   const headings = tags
     .filter((t) => /^h[1-6]$/i.test(t.name))
+    .filter((t) => !inert.some(([s, e]) => t.index >= s && t.index < e))
     .map((t) => ({ level: Number(t.name[1]), index: t.index, tag: t }));
 
   const h1s = headings.filter((h) => h.level === 1);
@@ -679,7 +894,7 @@ export function seoRules(code: string, filename?: string): LintFinding[] {
   // reporting even though the app works.
   if (shellRoot) {
     push(shellRoot.index, "warning", "content-not-in-html",
-      `<${shellRoot.name} id="${attrValue(shellRoot, "id").value}"> is empty and the page carries no other substantive text, so this document's content arrives only after its script runs. AI crawlers read the initial HTML only.`,
+      `<${shellRoot.name}${attrValue(shellRoot, "id").value ? ` id="${attrValue(shellRoot, "id").value}"` : ""}> holds no content and the page carries no other substantive text, so nothing in this document's HTML is the content — it arrives when the application script runs. AI crawlers read the initial HTML only.`,
       `Server-render or pre-render the content for this route (SSG, SSR or ISR) and hydrate for interactivity.`,
       "technical-seo");
   }
@@ -856,27 +1071,47 @@ export function seoConfigRules(
   const selfContained = pages.some((f) => isSelfContainedDocument(maskComments(f.source, f.path), f.path));
 
   if (!selfContained && pages.length) {
-    const declared = pages.map((f) => {
+    // Site configs are read here too — `nuxt.config.ts`, `gatsby-config.js`,
+    // `astro.config.mjs` and `docusaurus.config.js` are where those frameworks
+    // declare the site's title, description and URL, and a project claim made
+    // without opening them is a claim about files that were right there.
+    const declared = [...pages, ...files.filter((f) => SITE_CONFIG_FILE.test(f.path))].map((f) => {
       const masked = maskComments(f.source, f.path);
       return declarationsOf(masked, scanTags(masked), f.path);
     });
 
     if (declared.some((d) => d.surface)) {
+      /**
+       * A key is claimable only when nothing in the project *hides* it.
+       *
+       * One file's readable surface used to license claims about all three
+       * keys across every file, including files whose shape this module
+       * admits it cannot read: an Astro page declaring a `title` unlocked
+       * `meta-description-missing` and `canonical-missing` against a Next.js
+       * page whose `metadata = constructMetadata({…})` sets both inside a
+       * helper. The surface doctrine was right and was being applied per
+       * project instead of per key. A file that declares the key is fine, and
+       * so is one with nothing to declare — an opaque file is not, and it
+       * blocks only the keys it does not show.
+       */
       const anywhere = (key: "title" | "description" | "canonical") => declared.some((d) => d[key]?.present);
+      const hidden = (key: "title" | "description" | "canonical") =>
+        declared.some((d) => d.opaque && !d[key]?.present);
+      const claimable = (key: "title" | "description" | "canonical") => !anywhere(key) && !hidden(key);
 
-      if (!anywhere("title")) {
+      if (claimable("title")) {
         absent("title-missing", "warning",
           `No file read here declares a page title — no <title>, no metadata export, no head component.`,
           `Give every route a unique title: the topic first, the brand last.`,
           "on-page-seo");
       }
-      if (!anywhere("description")) {
+      if (claimable("description")) {
         absent("meta-description-missing", "warning",
           `No file read here declares a meta description, so every snippet is written by the engine from whatever text it finds.`,
           `Give every route a unique description: what the page delivers, the differentiator, a soft call to action.`,
           "on-page-seo");
       }
-      if (!anywhere("canonical")) {
+      if (claimable("canonical")) {
         absent("canonical-missing", "warning",
           `No file read here declares a canonical URL, so every URL variant of a route — parameters, trailing slash, protocol — is a separate document to a crawler.`,
           `Set a self-referencing canonical per route (in Next.js, metadata.alternates.canonical with metadataBase).`,
