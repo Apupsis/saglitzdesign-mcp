@@ -1,4 +1,7 @@
 import { describe, it, expect } from "vitest";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, dirname } from "node:path";
 import { securitySourceRules, securityConfigRules, extractHeaders, securityReport } from "../dist/security.js";
 
 const ids = (code: string, filename?: string) =>
@@ -577,5 +580,506 @@ describe("the report", () => {
     const dirty = securityReport({ source: `<script src="https://cdn.example.com/a.js"></script>` });
     expect(dirty).toMatch(/not visible to this audit/i);
     expect(dirty).toContain("external-script-no-sri");
+  });
+
+  it("names the files it read the header configuration from", () => {
+    const report = runProject({ "_headers": `/*\n  Content-Security-Policy: ${HARD_CSP}\n` });
+    expect(report).toContain("Read header configuration from: `_headers`");
+  });
+
+  it("says so plainly when nothing it recognises declared a header", () => {
+    const report = runProject({ "app/page.tsx": `export default () => <main><h1>Hi</h1></main>;\n` });
+    expect(report).toMatch(/No configuration file in a recognised header format was found/);
+    // The reader who concludes "my config is right there, so it must be
+    // covered" is the one this line exists for; the shapes are named too.
+    expect(report).toMatch(/Header shapes it does not recognise/);
+    expect(report).toMatch(/helmet/);
+  });
+});
+
+// ── the fixture matrix ───────────────────────────────────────────────────────
+//
+// One correctly-hardened project per framework, each asserted to produce zero
+// findings. Every other test in this file asserts a shape someone already had
+// in mind — which is exactly how the "clean case must be provably clean"
+// fixture came to assert cleanliness on a policy the documentation does not
+// recommend, and how csp-wildcard came to fire on the policy it does. These
+// fixtures assert the tool is right about the shapes it will actually meet:
+// each was written from the framework's own documented way of setting
+// headers, and each sets the policy knowledge/security/web-security-headers.md
+// would call correct.
+
+const HARD_CSP =
+  "script-src 'nonce-r4nd0m' 'strict-dynamic' https: 'unsafe-inline'; "
+  + "object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; "
+  + "require-trusted-types-for 'script'";
+const HARD_HSTS = "max-age=63072000; includeSubDomains; preload";
+const HARD_PP = "camera=(), microphone=(), geolocation=()";
+
+/** Write a fixture project to a temp directory and audit it as the tool would. */
+function runProject(files: Record<string, string>): string {
+  const root = mkdtempSync(join(tmpdir(), "saglitz-sec-"));
+  try {
+    for (const [rel, source] of Object.entries(files)) {
+      const full = join(root, rel);
+      mkdirSync(dirname(full), { recursive: true });
+      writeFileSync(full, source, "utf8");
+    }
+    return securityReport({ root });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+const HARDENED: Array<[string, Record<string, string>]> = [
+  ["Next.js — next.config.js async headers()", {
+    "next.config.js": `/** @type {import('next').NextConfig} */
+module.exports = {
+  async headers() {
+    return [
+      {
+        source: '/(.*)',
+        headers: [
+          { key: 'Content-Security-Policy', value: "${HARD_CSP}" },
+          { key: 'Strict-Transport-Security', value: '${HARD_HSTS}' },
+          { key: 'X-Content-Type-Options', value: 'nosniff' },
+          { key: 'Permissions-Policy', value: '${HARD_PP}' },
+        ],
+      },
+    ]
+  },
+}
+`,
+  }],
+
+  ["Nuxt — routeRules.headers", {
+    "nuxt.config.ts": `export default defineNuxtConfig({
+  routeRules: {
+    '/**': {
+      headers: {
+        'Content-Security-Policy': "${HARD_CSP}",
+        'Strict-Transport-Security': '${HARD_HSTS}',
+        'X-Content-Type-Options': 'nosniff',
+        'Permissions-Policy': '${HARD_PP}',
+      },
+    },
+  },
+})
+`,
+  }],
+
+  ["SvelteKit — hooks.server.ts", {
+    "src/hooks.server.ts": `export async function handle({ event, resolve }) {
+  const response = await resolve(event);
+  response.headers.set('Content-Security-Policy', "${HARD_CSP}");
+  response.headers.set('Strict-Transport-Security', '${HARD_HSTS}');
+  response.headers.set('X-Content-Type-Options', 'nosniff');
+  response.headers.set('Permissions-Policy', '${HARD_PP}');
+  return response;
+}
+`,
+  }],
+
+  // SvelteKit's own CSP config never spells the header name at all: it is an
+  // object of directive → unquoted source tokens under kit.csp.directives.
+  ["SvelteKit — kit.csp in svelte.config.js", {
+    "svelte.config.js": `import adapter from '@sveltejs/adapter-static';
+
+export default {
+  kit: {
+    adapter: adapter(),
+    csp: {
+      mode: 'auto',
+      directives: {
+        'script-src': ['self', 'nonce', 'strict-dynamic'],
+        'object-src': ['none'],
+        'base-uri': ['none'],
+        'frame-ancestors': ['none'],
+        'form-action': ['self'],
+        'require-trusted-types-for': ['script'],
+      },
+    },
+  },
+};
+`,
+    "static/_headers": `/*
+  Strict-Transport-Security: ${HARD_HSTS}
+  X-Content-Type-Options: nosniff
+  Permissions-Policy: ${HARD_PP}
+`,
+  }],
+
+  ["Astro — middleware", {
+    "src/middleware.ts": `import { defineMiddleware } from 'astro:middleware';
+
+export const onRequest = defineMiddleware(async (context, next) => {
+  const response = await next();
+  response.headers.set('Content-Security-Policy', "${HARD_CSP}");
+  response.headers.set('Strict-Transport-Security', '${HARD_HSTS}');
+  response.headers.set('X-Content-Type-Options', 'nosniff');
+  response.headers.set('Permissions-Policy', '${HARD_PP}');
+  return response;
+});
+`,
+  }],
+
+  ["Remix / React Router — export const headers", {
+    "app/root.tsx": `export const headers = () => ({
+  "Content-Security-Policy": "${HARD_CSP}",
+  "Strict-Transport-Security": "${HARD_HSTS}",
+  "X-Content-Type-Options": "nosniff",
+  "Permissions-Policy": "${HARD_PP}",
+});
+
+export default function App() {
+  return <main><h1>Hello</h1></main>;
+}
+`,
+  }],
+
+  ["Cloudflare Worker — new Response(body, { headers })", {
+    "src/worker.ts": `export default {
+  async fetch(request: Request): Promise<Response> {
+    const body = await render(request);
+    return new Response(body, {
+      headers: {
+        "content-type": "text/html; charset=utf-8",
+        "Content-Security-Policy": "${HARD_CSP}",
+        "Strict-Transport-Security": "${HARD_HSTS}",
+        "X-Content-Type-Options": "nosniff",
+        "Permissions-Policy": "${HARD_PP}",
+      },
+    });
+  },
+};
+`,
+  }],
+
+  ["Express — res.set({ … })", {
+    "server/app.js": `const express = require('express');
+const app = express();
+
+app.use((req, res, next) => {
+  res.set({
+    'Content-Security-Policy': "${HARD_CSP}",
+    'Strict-Transport-Security': '${HARD_HSTS}',
+    'X-Content-Type-Options': 'nosniff',
+    'Permissions-Policy': '${HARD_PP}',
+  });
+  next();
+});
+`,
+  }],
+
+  ["Express — res.setHeader(…)", {
+    "server/headers.js": `module.exports = function headers(req, res, next) {
+  res.setHeader('Content-Security-Policy', "${HARD_CSP}");
+  res.setHeader('Strict-Transport-Security', '${HARD_HSTS}');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Permissions-Policy', '${HARD_PP}');
+  next();
+};
+`,
+  }],
+
+  ["static _headers", {
+    "_headers": `/*
+  Content-Security-Policy: ${HARD_CSP}
+  Strict-Transport-Security: ${HARD_HSTS}
+  X-Content-Type-Options: nosniff
+  Permissions-Policy: ${HARD_PP}
+`,
+  }],
+
+  ["netlify.toml", {
+    "netlify.toml": `[[headers]]
+  for = "/*"
+  [headers.values]
+  Content-Security-Policy = "${HARD_CSP}"
+  Strict-Transport-Security = "${HARD_HSTS}"
+  X-Content-Type-Options = "nosniff"
+  Permissions-Policy = "${HARD_PP}"
+`,
+  }],
+
+  ["vercel.json", {
+    "vercel.json": JSON.stringify({
+      headers: [{
+        source: "/(.*)",
+        headers: [
+          { key: "Content-Security-Policy", value: HARD_CSP },
+          { key: "Strict-Transport-Security", value: HARD_HSTS },
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "Permissions-Policy", value: HARD_PP },
+        ],
+      }],
+    }, null, 2),
+  }],
+
+  ["Azure — staticwebapp.config.json globalHeaders", {
+    "staticwebapp.config.json": JSON.stringify({
+      globalHeaders: {
+        "Content-Security-Policy": HARD_CSP,
+        "Strict-Transport-Security": HARD_HSTS,
+        "X-Content-Type-Options": "nosniff",
+        "Permissions-Policy": HARD_PP,
+      },
+    }, null, 2),
+  }],
+];
+
+describe("one correctly-hardened project per framework produces no findings", () => {
+  it.each(HARDENED)("%s", (_name, files) => {
+    const report = runProject(files);
+    expect(report).toContain("**0 error · 0 warning · 0 info**");
+    expect(report).toContain("No findings in what was read.");
+  });
+
+  it.each(HARDENED)("%s — names the file it read the headers from", (_name, files) => {
+    expect(runProject(files)).toMatch(/Read header configuration from: `/);
+  });
+
+  // The one shape that cannot be finding-free, and should not be: a
+  // meta-delivered policy genuinely is weaker than a header — frame-ancestors,
+  // report-uri and sandbox are ignored in it (CSP Level 3). What it must not
+  // do is report the policy absent, or demand a frame-ancestors directive
+  // that could not work there.
+  it("<meta http-equiv> page — recognised, with the meta weakness as the only finding", () => {
+    const report = runProject({
+      "index.html": `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Security-Policy" content="${HARD_CSP}">
+    <title>Hardened</title>
+  </head>
+  <body><main><h1>Hello</h1></main></body>
+</html>
+`,
+      "_headers": `/*
+  Strict-Transport-Security: ${HARD_HSTS}
+  X-Content-Type-Options: nosniff
+  Permissions-Policy: ${HARD_PP}
+`,
+    });
+    expect(report).toContain("**0 error · 0 warning · 1 info**");
+    expect(report).toContain("csp-meta-delivery");
+    expect(report).not.toContain("csp-missing");
+  });
+});
+
+describe("the fixture matrix's guard — widening what counts as a declaration must not widen it to references", () => {
+  // isHeaderDeclarationContext was widened (C1) to accept the quoted
+  // object-literal property that most of the ecosystem uses. That is the same
+  // function Task 9b hardened against reading a header-name *array* as
+  // configuration, so every shape that guard covers is re-asserted here
+  // against the widened version. The new test keys on what follows the name —
+  // its own closing quote, then `:` or `=` — and every shape below closes
+  // with `,`, `]`, `)` or a space instead.
+  const missing = (source: string, path = "headers.ts") =>
+    cfgIds([{ path, source }]).filter((r) => r === "csp-missing" || r === "hsts-missing");
+
+  it("still reports both for the multi-line ALLOWED_RESPONSE_HEADERS array", () => {
+    const source = `
+export const ALLOWED_RESPONSE_HEADERS = [
+  "Content-Security-Policy",
+  "Strict-Transport-Security",
+  "X-Content-Type-Options",
+  "Referrer-Policy",
+];
+`;
+    expect(missing(source)).toEqual(["csp-missing", "hsts-missing"]);
+  });
+
+  it("still reports both for the same array on one line", () => {
+    const source = `export const ALLOWED_RESPONSE_HEADERS = ["Content-Security-Policy", "Strict-Transport-Security", "X-Content-Type-Options", "Referrer-Policy"];`;
+    expect(missing(source)).toEqual(["csp-missing", "hsts-missing"]);
+  });
+
+  it("still reports both for new Set([...])", () => {
+    const source = `const ALLOWED = new Set(["Content-Security-Policy", "Strict-Transport-Security"]);`;
+    expect(missing(source)).toEqual(["csp-missing", "hsts-missing"]);
+  });
+
+  it("still reports both for an array whose elements are separated by a comment containing ;", () => {
+    const source = `const a = [
+  "Content-Security-Policy", // e.g. default-src 'self'; script-src *
+  "Strict-Transport-Security",
+];`;
+    expect(missing(source)).toEqual(["csp-missing", "hsts-missing"]);
+  });
+
+  it("does not read a feature flag's value side as a declaration", () => {
+    expect(missing(`const flag = { allow: "Content-Security-Policy" };`)).toContain("csp-missing");
+  });
+
+  it("does not read a bare mention inside an error string as a declaration", () => {
+    expect(missing(`throw new Error("Content-Security-Policy missing from the response");`)).toContain("csp-missing");
+  });
+});
+
+describe("a capped scan cannot prove absence", () => {
+  // SECURITY_EXTENSIONS is far wider than the design auditor's list, and
+  // scanProject walks sorted entries: app/, components/ and lib/ all sort
+  // before next.config.js. Reading as it walked, the audit hit the 400-file
+  // cap before opening the one file that declares the headers — and then
+  // reported the headers absent.
+  const manyComponents = (): Record<string, string> => {
+    const files: Record<string, string> = {};
+    for (const dir of ["app", "components", "lib"]) {
+      for (let i = 0; i < 140; i++) {
+        files[`${dir}/C${String(i).padStart(3, "0")}.tsx`] = `export const C = () => <main><h1>hi</h1></main>;\n`;
+      }
+    }
+    return files;
+  };
+
+  it("reads the configuration file even when 420 components would fill the cap", () => {
+    const report = runProject({
+      ...manyComponents(),
+      "next.config.js": `module.exports = { async headers() { return [{ source: '/(.*)', headers: [
+  { key: 'Content-Security-Policy', value: "${HARD_CSP}" },
+  { key: 'Strict-Transport-Security', value: '${HARD_HSTS}' },
+  { key: 'X-Content-Type-Options', value: 'nosniff' },
+  { key: 'Permissions-Policy', value: '${HARD_PP}' },
+] }] } }\n`,
+    });
+    expect(report).toContain("Read header configuration from: `next.config.js`");
+    expect(report).toContain("**0 error · 0 warning · 0 info**");
+  });
+
+  it("demotes every *-missing finding to an unconfirmed note when the scan was truncated", () => {
+    const report = runProject(manyComponents());
+    expect(report).toMatch(/results are partial/);
+    // The absence may well be real — but it was not proved, so it is a note,
+    // not an error, and it says which.
+    expect(report).toContain("**0 error · 0 warning · 4 info**");
+    expect(report).toMatch(/csp-missing[\s\S]*this absence is unconfirmed/);
+  });
+});
+
+describe("rules that used to fire on correct code", () => {
+  it("does not call a navigation a blocked subresource", () => {
+    expect(ids(`<a href="http://example.org/rfc">rfc</a>`, "p.html")).not.toContain("http-subresource");
+    expect(ids(`<a href="http://www.w3.org/1999/xhtml">ns</a>`, "p.html")).not.toContain("http-subresource");
+  });
+
+  it("still flags a real http subresource", () => {
+    expect(ids(`<img src="http://x.example/a.png" alt="a">`, "p.html")).toContain("http-subresource");
+    expect(ids(`<link rel="stylesheet" href="http://x.example/a.css">`, "p.html")).toContain("http-subresource");
+  });
+
+  it("does not match an attribute name inside a data- attribute", () => {
+    // `-` is a non-word character, so `\bsrc` matched `data-src` — and
+    // `\bnonce` matched `data-nonce`, which *suppressed* a real finding.
+    expect(ids(`<img data-src="http://x.example/a.png" alt="a">`, "p.html")).not.toContain("http-subresource");
+    expect(ids(`<script data-nonce="x">var a = 1</script>`, "p.html")).toContain("inline-script-no-nonce");
+    expect(ids(`<script nonce="abc">var a = 1</script>`, "p.html")).not.toContain("inline-script-no-nonce");
+  });
+
+  it("does not ask a JSON-LD data block for a nonce", () => {
+    // The spec returns before the CSP inline check for a data block, so it is
+    // not script-src-gated. This server's own SEO documents tell readers to
+    // add exactly this — and then it flagged them for complying.
+    expect(ids(`<script type="application/ld+json">{"@type":"Organization"}</script>`, "p.html"))
+      .not.toContain("inline-script-no-nonce");
+  });
+
+  it("still asks the script types CSP does gate", () => {
+    expect(ids(`<script type="importmap">{"imports":{}}</script>`, "p.html")).toContain("inline-script-no-nonce");
+    expect(ids(`<script type="module">import "./a.js"</script>`, "p.html")).toContain("inline-script-no-nonce");
+    expect(ids(`<script>var a = 1</script>`, "p.html")).toContain("inline-script-no-nonce");
+  });
+
+  it("tells a speculationrules block the fix that actually applies to it", () => {
+    const f = securitySourceRules(`<script type="speculationrules">{"prerender":[]}</script>`, "p.html")
+      .find((x) => x.rule === "inline-script-no-nonce");
+    expect(f).toBeDefined();
+    expect(f!.fix).toMatch(/Speculation-Rules|inline-speculation-rules/);
+  });
+
+  it("does not fire on an unclosed <script> with no body", () => {
+    // indexOf returns -1 when the tag is never closed, and slice(end, -1) then
+    // read to the end of the file, so this always fired.
+    expect(ids(`<script>`, "p.html")).not.toContain("inline-script-no-nonce");
+  });
+
+  it("does not read a commented-out sourcemap setting, and reports the real one's own line", () => {
+    const commented = cfgIds([{ path: "vite.config.ts", source: `export default {\n  build: {\n    // sourcemap: true,\n    sourcemap: false,\n  },\n};\n` }]);
+    expect(commented).not.toContain("sourcemaps-in-production");
+
+    const real = securityConfigRules([{ path: "vite.config.ts", source: `// we discussed sourcemap here\n// and sourcemap again\nexport default { build: { sourcemap: true } };\n` }])
+      .find((f) => f.rule === "sourcemaps-in-production");
+    expect(real).toBeDefined();
+    expect(real!.line).toBe(3); // not line 1, where `search()` found the first mention
+  });
+
+  it("masks JS comments inside .astro frontmatter but not in the template", () => {
+    expect(ids(`---\n// const w = window.open(url);\nconst title = "Hi";\n---\n<main><h1>{title}</h1></main>\n`, "Page.astro"))
+      .not.toContain("window-open-without-noopener");
+    expect(ids(`---\nconst w = window.open(url);\n---\n<main></main>\n`, "Page.astro"))
+      .toContain("window-open-without-noopener");
+    // Blanket `//` masking over markup would swallow the anchor below.
+    expect(ids(`---\nconst x = 1;\n---\n<p>see //cdn.example.com</p>\n<a href="https://x.com" target="_blank">go</a>\n`, "Page.astro"))
+      .toContain("blank-without-noopener");
+  });
+
+  it("accepts a monorepo .env covered by its own package's .gitignore", () => {
+    expect(cfgIds([
+      { path: ".gitignore", source: "node_modules\ndist\n" },
+      { path: "packages/web/.gitignore", source: ".env\n" },
+      { path: "packages/web/.env", source: "API_KEY=abc" },
+    ])).not.toContain("env-committed");
+  });
+
+  it("still flags a nested .env no .gitignore covers, and does not let a lower one cover a higher file", () => {
+    expect(cfgIds([
+      { path: ".gitignore", source: "node_modules\n" },
+      { path: "packages/web/.gitignore", source: "build\n" },
+      { path: "packages/web/.env", source: "API_KEY=abc" },
+    ])).toContain("env-committed");
+    expect(cfgIds([
+      { path: "packages/web/.gitignore", source: ".env\n" },
+      { path: ".env", source: "API_KEY=abc" },
+    ])).toContain("env-committed");
+  });
+
+  it("does not tell a Mapbox token holder to rotate a key that is public by design", () => {
+    const f = securitySourceRules(`const t = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN`)
+      .find((x) => x.rule === "public-env-secret");
+    expect(f).toBeDefined();
+    expect(f!.fix).not.toMatch(/already shipped is compromised/);
+    expect(f!.fix).toMatch(/publishable/i);
+    // A name that says it is publishable is not a finding at all.
+    expect(ids(`const k = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_TOKEN`)).not.toContain("public-env-secret");
+    expect(ids(`const k = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY`)).not.toContain("public-env-secret");
+    // …but a real secret still is, with the original wording.
+    const secret = securitySourceRules(`const k = process.env.NEXT_PUBLIC_STRIPE_SECRET_KEY`)
+      .find((x) => x.rule === "public-env-secret");
+    expect(secret!.fix).toMatch(/rotate the value/);
+  });
+});
+
+describe("HSTS states the thresholds its cited document actually gives", () => {
+  const hstsIds = (v: string) =>
+    cfgIds([{ path: "_headers", source: `/*\n  Strict-Transport-Security: ${v}\n` }]).filter((r) => r.startsWith("hsts"));
+
+  it("flags an inert preload token — the list requires a year and includeSubDomains", () => {
+    // This header produced zero findings: 200 days clears the 180-day bar, and
+    // nothing checked the preload claim it makes.
+    expect(hstsIds("max-age=17280000; includeSubDomains; preload")).toContain("hsts-preload-ineffective");
+    expect(hstsIds("max-age=31536000; preload")).toContain("hsts-preload-ineffective");
+  });
+
+  it("stays silent on a header that meets the preload requirements", () => {
+    expect(hstsIds("max-age=63072000; includeSubDomains; preload")).toEqual([]);
+  });
+
+  it("no longer ties the 180-day low-protection line to preload eligibility", () => {
+    const f = securityConfigRules([{ path: "_headers", source: `/*\n  Strict-Transport-Security: max-age=600\n` }])
+      .find((x) => x.rule === "hsts-short-max-age");
+    expect(f).toBeDefined();
+    expect(f!.message).not.toMatch(/preload/i);
+    expect(f!.fix).toContain("63072000"); // the value the document recommends
   });
 });
