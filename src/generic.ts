@@ -251,7 +251,10 @@ export function genericVisualRules(code: string, filename?: string): LintFinding
   // ── tags ───────────────────────────────────────────────────────────────────
   let chromeCount = 0;
   let eyebrowRuns = 0;
-  let lastWasEyebrow = false;
+  // Index just past the closing tag of the most recent tracked-uppercase
+  // element, or null. Not a boolean — see the adjacency test at the heading
+  // branch below for why the offset is the whole point.
+  let lastEyebrowEnd: number | null = null;
 
   for (const tag of tags) {
     const cls = classesOf(tag);
@@ -265,12 +268,36 @@ export function genericVisualRules(code: string, filename?: string): LintFinding
           `Use a real icon from one icon family at one weight — see iconography.`,
           "iconography");
       }
-      if (lastWasEyebrow) eyebrowRuns += 1;
-      lastWasEyebrow = false;
+      // The same proof the hero/subhead pass uses further down this file: an
+      // eyebrow *introduces* a heading only when nothing at all sits between
+      // the two in the raw source. Anything that could — a closing wrapper, a
+      // sibling section's opening tag, an `<img>`, the `<input>` a form label
+      // actually belongs to — starts with `<`, so "the gap contains no `<`"
+      // rules the alternatives out rather than merely making them unlikely.
+      //
+      // `lastWasEyebrow` was a sticky boolean cleared only by the next
+      // heading, which asserted the relationship without ever checking it:
+      // any tracked-uppercase element anywhere before a heading counted as
+      // introducing it. A settings form using the standard Tailwind
+      // field-label recipe — where the labels *follow* their headings — fired
+      // the finding, and so did a data table using the standard `<th>` recipe.
+      //
+      // Read from `code`, not `masked`, for the reason given at the
+      // hero/subhead pass: `maskComments` blanks a section-boundary comment's
+      // delimiters along with its contents, erasing the very `<` this test
+      // exists to find.
+      if (lastEyebrowEnd !== null && !code.slice(lastEyebrowEnd, tag.index).includes("<")) {
+        eyebrowRuns += 1;
+      }
+      lastEyebrowEnd = null;
     }
 
     if (/\btext-xs\b/.test(cls) && /\buppercase\b/.test(cls) && /\btracking-(wide|wider|widest)\b/.test(cls)) {
-      lastWasEyebrow = true;
+      const span = elementSpan(masked, tag);
+      // `elementSpan` reports `masked.length` when it never found a closing
+      // tag; an element that does not close cannot be proven adjacent to
+      // anything, so it is not an eyebrow for this rule's purposes.
+      lastEyebrowEnd = span && span[1] < masked.length ? closingTagEnd(masked, span[1]) : null;
     }
 
     if (cls) {

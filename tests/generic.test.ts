@@ -172,6 +172,51 @@ describe("visual rules — stay quiet when they should", () => {
     expect(ids(`<span class="bg-gradient-to-r from-blue-400 to-sky-300 bg-clip-text text-transparent">99%</span>`)).not.toContain("gradient-text");
   });
 
+  // `eyebrow-over-every-heading` counted any tracked-uppercase element that
+  // appeared anywhere before a heading as introducing it, because the flag it
+  // kept was cleared only by the next heading. These are the two standard
+  // recipes that put `text-xs uppercase tracking-*` on an element which is not
+  // an eyebrow, and in both the label sits *after* the heading it belongs to.
+  it("accepts a settings form whose field labels use the standard label recipe", () => {
+    const section = (heading: string, a: string, b: string) => `
+      <h2 class="text-lg font-semibold">${heading}</h2>
+      <form>
+        <label class="text-xs uppercase tracking-wide text-gray-500" for="${a}">${a}</label>
+        <input id="${a}">
+        <label class="text-xs uppercase tracking-wide text-gray-500" for="${b}">${b}</label>
+        <input id="${b}">
+      </form>`;
+    const code = section("Notifications", "email", "name")
+      + section("Billing", "card", "vat")
+      + section("Security", "password", "mfa")
+      + `<h2 class="text-lg font-semibold">Danger zone</h2>`;
+    expect(ids(code)).not.toContain("eyebrow-over-every-heading");
+  });
+
+  it("accepts a data table using the standard <th> recipe under each heading", () => {
+    const block = (heading: string) => `
+      <h2>${heading}</h2>
+      <table><thead><tr>
+        <th class="text-xs uppercase tracking-wider">Region</th>
+        <th class="text-xs uppercase tracking-wider">Bookings</th>
+      </tr></thead><tbody><tr><td>EMEA</td><td>4</td></tr></tbody></table>`;
+    const code = block("Q3 revenue") + block("Q4 revenue") + block("Q1 forecast") + `<h2>Notes</h2>`;
+    expect(ids(code)).not.toContain("eyebrow-over-every-heading");
+  });
+
+  // The gap must be read from the original source, not the masked copy —
+  // `maskComments` blanks a boundary comment's delimiters along with its text,
+  // so the `<` that proves the two are in different sections would vanish.
+  it("does not pair a label with a heading across a section-boundary comment", () => {
+    const block = `<p class="text-xs uppercase tracking-widest">Section</p><!-- new section --><h2>Fast</h2>`;
+    expect(ids(block + block + block)).not.toContain("eyebrow-over-every-heading");
+  });
+
+  it("does not pair a label with a heading in a different container", () => {
+    const block = `<section><p class="text-xs uppercase tracking-widest">Section</p></section><section><h2>Fast</h2></section>`;
+    expect(ids(block + block + block)).not.toContain("eyebrow-over-every-heading");
+  });
+
   it("does not fire on markup inside a comment", () => {
     expect(genericVisualRules(`<!-- <div class="from-indigo-500 to-purple-600"> -->`)).toEqual([]);
   });
