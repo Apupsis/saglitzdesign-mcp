@@ -21,6 +21,14 @@ describe("visual rules — fire when they should", () => {
     expect(ids(`<div class="bg-linear-to-r from-indigo-500 to-violet-600">`)).toContain("ai-default-gradient");
   });
 
+  it("flags blue reaching into the core region", () => {
+    expect(ids(`<div class="bg-gradient-to-r from-blue-500 to-purple-600">`)).toContain("ai-default-gradient");
+  });
+
+  it("flags blue-600 to violet-500 the same way", () => {
+    expect(ids(`<div class="bg-gradient-to-r from-blue-600 to-violet-500">`)).toContain("ai-default-gradient");
+  });
+
   it("flags Inter as the sole family on a brand surface", () => {
     const code = `<h1>Ship faster</h1><a href="/signup">Get started</a><style>body{font-family:Inter,sans-serif}</style>`;
     expect(ids(code, "app/(marketing)/page.tsx")).toContain("default-ui-font");
@@ -61,6 +69,14 @@ describe("visual rules — stay quiet when they should", () => {
 
   it("accepts a single stop from the region — one colour is a choice, not the stock pair", () => {
     expect(ids(`<div class="bg-indigo-600 text-white">`)).not.toContain("ai-default-gradient");
+  });
+
+  it("accepts blue reaching only to cyan — two steps out, never the measured pair", () => {
+    expect(ids(`<div class="bg-gradient-to-r from-blue-500 to-cyan-500">`)).not.toContain("ai-default-gradient");
+  });
+
+  it("accepts a blue-on-blue gradient — a colour choice, not the stock pair", () => {
+    expect(ids(`<div class="bg-gradient-to-r from-sky-400 to-blue-600">`)).not.toContain("ai-default-gradient");
   });
 
   it("accepts an OKLCH gradient outside the blue-violet band", () => {

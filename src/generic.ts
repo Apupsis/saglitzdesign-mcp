@@ -99,14 +99,38 @@ export function genericVisualRules(code: string, filename?: string): LintFinding
   // ── gradient ───────────────────────────────────────────────────────────────
   // Two different stops from the default region, not one — a single
   // `bg-indigo-500` is a colour choice, not the stock gradient.
-  const gradientStops = [...masked.matchAll(/\b(?:from|via|to)-((?:indigo|violet|purple|fuchsia)-\d{3})/g)];
-  const distinctStops = new Set(gradientStops.map((m) => m[1]));
-  if (distinctStops.size >= 2) {
+  //
+  // `blue` and `sky` are not in the core region — they sit one step cooler on
+  // Tailwind's own ramp order (…cyan, sky, blue, indigo, violet, purple,
+  // fuchsia…) — but ai-default-aesthetic.md measures `blue-500 → purple-600`
+  // as one of its three named recurring pairs (42.5° hue, 6.5pt lightness),
+  // so a rule that cites that document and cannot see that pair is wrong in a
+  // way a plain miss is not. The fix stays narrow: `blue`/`sky` only count
+  // when paired with a *core* stop. Two blues alone, or blue reaching to
+  // `cyan` (two steps out, never measured in the doc), stay silent — this
+  // is not "add blue to the region", it's "an edge of the core region can
+  // reach one step into its cooler neighbour".
+  const CORE_RAMPS = new Set(["indigo", "violet", "purple", "fuchsia"]);
+  const gradientStops = [...masked.matchAll(/\b(?:from|via|to)-((indigo|violet|purple|fuchsia|blue|sky)-\d{3})/g)];
+  const distinctStops = new Map<string, string>(gradientStops.map((m) => [m[1], m[2]]));
+  const hasCoreStop = [...distinctStops.values()].some((ramp) => CORE_RAMPS.has(ramp));
+  if (distinctStops.size >= 2 && hasCoreStop) {
     push(gradientStops[0].index!, "warning", "ai-default-gradient",
-      `Gradient built from Tailwind's stock indigo/violet/purple region (${[...distinctStops].join(" → ")}).`,
+      `Gradient built from Tailwind's stock indigo/violet/purple region (${[...distinctStops.keys()].join(" → ")}).`,
       `Pick stops from your own palette, or drop the gradient — see ai-default-aesthetic for why this pair recurs.`,
       "ai-default-aesthetic");
   } else {
+    // No blue/sky counterpart here, deliberately. This branch already matches
+    // loosely — any two default-region colours found anywhere in the masked
+    // source, not two stops of the same gradient() call — because hex/OKLCH
+    // carry no from-/via-/to- structure to anchor to. Widening it with a
+    // second hue band would mean "a core colour anywhere in the file, plus a
+    // blue anywhere in the file, plus a gradient somewhere" fires — e.g. an
+    // unrelated blue link colour and an unrelated purple badge, nowhere near
+    // each other or the gradient. The class-name branch above can require the
+    // adjacency to be a real pairing (both are `from-`/`via-`/`to-` stops);
+    // this one cannot without becoming a real parser. Left unmatched rather
+    // than approximated.
     const inGradient = /linear-gradient|radial-gradient|conic-gradient/i.test(masked);
     const hexes = [...masked.matchAll(new RegExp(DEFAULT_HEXES.source, "gi"))];
     const oklch = [...masked.matchAll(new RegExp(DEFAULT_OKLCH.source, "gi"))];
