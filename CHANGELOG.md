@@ -4,6 +4,63 @@ All notable changes to SaglitzDesign MCP are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.21.0] — 2026-08-13
+
+The knowledge base already said what gives a generated page away.
+`typography-craft` carries a reflex-reject font list with Inter on it;
+`design-critique-scoring` states the slop test outright. None of it was
+enforced. An agent that never opened either document could ship indigo-to-violet
+on Inter with a rocket emoji in the hero, and the server would raise no
+objection — the knowledge existed to prevent exactly that page and nothing
+read it back against what got built.
+
+### Added
+
+- **`audit_generic_design` — the 94th document and the 31st tool.**
+  `knowledge/craft/ai-default-aesthetic.md` catalogues the defaults, cited to
+  each system's own docs: the stock Tailwind indigo/violet/purple gradient (as
+  classes, hex, or OKLCH), Inter/Roboto/Open Sans/DM Sans/Plus Jakarta Sans as
+  the only declared typeface, emoji standing in for icons, the `rounded-2xl` +
+  `shadow-lg` + border card recipe, gradient-filled heading text, an eyebrow
+  over every heading, the `backdrop-blur` + `white/10` glass recipe, stock
+  hype-opener copy, stacked filler adverbs, and a page whose every CTA is
+  drawn from the stock set. Ten rules run those checks against real source and
+  copy, never against taste — a class name, a phrase, a repeated structure,
+  each a fact about the file rather than a verdict on the design. The score
+  counts distinct signals, not occurrences, so forty cards sharing the stock
+  chrome recipe are not more generic than three, and every point is itemised
+  to its rule and file:line so a reader can disagree with a line instead of
+  the whole verdict. Judgement stays where it already lived — pair this with
+  `design_review_checklist` or `get_design_doc("design-critique-scoring")` for
+  the half a fact-checker cannot do.
+- **Five fixtures score 0.** A brutalist page, a serif editorial layout, a
+  dense dashboard set in Inter, a warm consumer screen, and a monochrome
+  developer tool each assert a generic score of zero — proof the tool
+  penalises the defaults and not the categories of product that happen to
+  share a typeface or a grid with them.
+
+### Notes
+
+- **One planned rule was cut before it shipped.** It fired on any three
+  elements sharing a class string — nav links, footer buttons, dashboard KPI
+  tiles, pricing tiers — and told every one of them their consistent
+  components lacked hierarchy. A grid-parent gate would not have saved it,
+  because dashboard tiles and pricing tiers genuinely do sit in a grid;
+  separating "cards that need hierarchy" from "components that should be
+  consistent" is a judgement about what the elements mean, not a fact about
+  the source, so it falls outside what this tool can check. Ten rules ship,
+  not eleven.
+- **Writing the document first corrected the spec's own premises.**
+  shadcn/ui's theming docs name no typeface at all — font selection routes to
+  the scaffold, not the library — so `default-ui-font` only fires against a
+  face actually declared in the source, never against an assumption about
+  what shadcn ships. Its stock theme carries zero chroma on every token but
+  `--destructive`; any hue in a shadcn project was added by hand. And Tailwind
+  v4 authors its palette in OKLCH, publishing hex as "the nearest hex value"
+  — the derived form, not the source of truth — which is why the gradient
+  rule matches on OKLCH and class names, not on a hardcoded hex table that
+  would have gone stale at the next palette revision.
+
 ## [0.20.0] — 2026-08-12
 
 88 documents, and not one of them contained the string `Content-Security-Policy`

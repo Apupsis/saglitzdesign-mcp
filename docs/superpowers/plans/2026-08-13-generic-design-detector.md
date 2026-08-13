@@ -129,7 +129,7 @@ already support is left to them."
 - Consumes: `LintFinding`, `scanTags`, `Tag` from `./lint.js`; `maskComments` from `./security.js`.
 - Produces:
   - `export function genericVisualRules(code: string, filename?: string): LintFinding[]`
-  - Rule ids: `ai-default-gradient`, `default-ui-font`, `emoji-as-icon`, `uniform-card-grid`, `stock-card-chrome`, `eyebrow-over-every-heading`, `gradient-text`, `stock-glass-on-dark`.
+  - Rule ids: `ai-default-gradient`, `default-ui-font`, `emoji-as-icon`, `stock-card-chrome`, `eyebrow-over-every-heading`, `gradient-text`, `stock-glass-on-dark`.
   - `export function isBrandSurface(code: string, filename?: string): boolean`
 
 - [ ] **Step 1: Write the failing tests**
@@ -152,6 +152,14 @@ describe("visual rules — fire when they should", () => {
     expect(ids(`.hero { background: linear-gradient(135deg, #6366f1, #a855f7); }`)).toContain("ai-default-gradient");
   });
 
+  it("flags it written in OKLCH, which is how Tailwind v4 actually ships the palette", () => {
+    expect(ids(`.hero { background: linear-gradient(135deg, oklch(0.585 0.233 277.117), oklch(0.627 0.265 303.9)); }`)).toContain("ai-default-gradient");
+  });
+
+  it("flags the v4 direction utility as readily as the v3 one", () => {
+    expect(ids(`<div class="bg-linear-to-r from-indigo-500 to-violet-600">`)).toContain("ai-default-gradient");
+  });
+
   it("flags Inter as the sole family on a brand surface", () => {
     const code = `<h1>Ship faster</h1><a href="/signup">Get started</a><style>body{font-family:Inter,sans-serif}</style>`;
     expect(ids(code, "app/(marketing)/page.tsx")).toContain("default-ui-font");
@@ -161,10 +169,6 @@ describe("visual rules — fire when they should", () => {
     expect(ids(`<h3>🚀 Lightning fast</h3>`)).toContain("emoji-as-icon");
   });
 
-  it("flags three siblings with byte-identical class strings", () => {
-    const card = `<div class="rounded-2xl border p-6 shadow-lg"><h3>A</h3></div>`;
-    expect(ids(`<div class="grid grid-cols-3">${card}${card}${card}</div>`)).toContain("uniform-card-grid");
-  });
 
   it("flags the stock card chrome triad", () => {
     const card = (n: string) => `<div class="rounded-2xl shadow-lg border p-${n}"><h3>${n}</h3></div>`;
@@ -190,6 +194,14 @@ describe("visual rules — stay quiet when they should", () => {
     expect(ids(`<div class="bg-gradient-to-r from-amber-500 to-rose-700">`)).not.toContain("ai-default-gradient");
   });
 
+  it("accepts a single stop from the region — one colour is a choice, not the stock pair", () => {
+    expect(ids(`<div class="bg-indigo-600 text-white">`)).not.toContain("ai-default-gradient");
+  });
+
+  it("accepts an OKLCH gradient outside the blue-violet band", () => {
+    expect(ids(`.hero { background: linear-gradient(135deg, oklch(0.72 0.19 45), oklch(0.55 0.21 25)); }`)).not.toContain("ai-default-gradient");
+  });
+
   it("accepts Inter in application UI", () => {
     const code = `<table><tr><td>row</td></tr></table><style>body{font-family:Inter,sans-serif}</style>`;
     expect(ids(code, "app/dashboard/analytics/page.tsx")).not.toContain("default-ui-font");
@@ -204,17 +216,7 @@ describe("visual rules — stay quiet when they should", () => {
     expect(ids(`<p>We shipped it 🚀 last Tuesday after a long month.</p>`)).not.toContain("emoji-as-icon");
   });
 
-  it("accepts sibling cards that differ", () => {
-    const a = `<div class="rounded-2xl border p-6 col-span-2"><h3>A</h3></div>`;
-    const b = `<div class="rounded-lg border p-4"><h3>B</h3></div>`;
-    const c = `<div class="rounded-xl border p-8"><h3>C</h3></div>`;
-    expect(ids(`<div class="grid">${a}${b}${c}</div>`)).not.toContain("uniform-card-grid");
-  });
 
-  it("accepts two identical siblings — a pair is not a grid of equals", () => {
-    const card = `<div class="rounded-2xl border p-6 shadow-lg"><h3>A</h3></div>`;
-    expect(ids(`<div class="grid grid-cols-2">${card}${card}</div>`)).not.toContain("uniform-card-grid");
-  });
 
   it("does not fire on markup inside a comment", () => {
     expect(genericVisualRules(`<!-- <div class="from-indigo-500 to-purple-600"> -->`)).toEqual([]);
@@ -285,11 +287,31 @@ const classesOf = (tag: Tag): string => {
 };
 
 // Tailwind's indigo / violet / purple ramps sit adjacent on its scale, so the
-// stock gradient is two neighbours from the same region. Hexes are the v4
-// palette values; verify against tailwindcss.com if they are ever updated.
-const DEFAULT_RAMPS = /(indigo|violet|purple|fuchsia)-(300|400|500|600|700)/;
-const DEFAULT_HEXES = /#(6366f1|818cf8|a5b4fc|8b5cf6|7c3aed|a78bfa|a855f7|c084fc|9333ea|d946ef)/i;
+// stock gradient is two neighbours from the same region.
+//
+// Task 1 established two things that shape this. First, v4 authors the palette
+// in **OKLCH**, and its docs give hex only as "the nearest hex value" — so a
+// hex list can never be more than a convenience match for hand-written CSS,
+// and the class-name match is the reliable one. Second, v4 renamed the
+// direction utility from `bg-gradient-to-*` to `bg-linear-to-*`; keying on the
+// `from-`/`via-`/`to-` stops rather than the direction class means both
+// versions are covered without caring which is in use.
+//
+// Verify these values against tailwindcss.com before changing them; the palette
+// moved once already.
+const DEFAULT_HEXES = /#(6366f1|818cf8|a5b4fc|8b5cf6|7c3aed|a78bfa|a855f7|c084fc|9333ea|d946ef|615fff|4f39f6)/i;
 
+// The same region expressed in OKLCH, which is how v4 actually ships it: high
+// chroma at a hue angle in the blue-violet band. Matched loosely on the hue
+// angle, because the exact triples differ per shade and a project writing its
+// own OKLCH is not necessarily copying Tailwind's.
+const DEFAULT_OKLCH = /oklch\(\s*0?\.\d+\s+0?\.[12]\d*\s+(2[6-9]\d|3[0-1]\d)(?:\.\d+)?\s*\)/i;
+
+// Inter is on typography-craft's reflex-reject list, which is why this rule
+// exists — NOT because a component system ships it as a default. Task 1
+// verified that shadcn/ui's documentation names no typeface at all, and that
+// its stock theme carries no accent hue (`--primary: oklch(0.205 0 0)`). Do not
+// write a message that attributes these faces to any system.
 const DEFAULT_FAMILIES = /\b(Inter|Roboto|Open Sans|DM Sans|Plus Jakarta Sans)\b/i;
 
 /** Emoji that stand in for an icon. Not an exhaustive emoji set — these six. */
@@ -335,11 +357,14 @@ export function genericVisualRules(code: string, filename?: string): LintFinding
       `Pick stops from your own palette, or drop the gradient — see ai-default-aesthetic for why this pair recurs.`,
       "ai-default-aesthetic");
   } else {
-    const hexes = [...masked.matchAll(new RegExp(DEFAULT_HEXES.source, "gi"))];
     const inGradient = /linear-gradient|radial-gradient|conic-gradient/i.test(masked);
-    if (inGradient && new Set(hexes.map((h) => h[0].toLowerCase())).size >= 2) {
-      push(hexes[0].index!, "warning", "ai-default-gradient",
-        `Gradient built from the stock indigo/violet/purple hexes.`,
+    const hexes = [...masked.matchAll(new RegExp(DEFAULT_HEXES.source, "gi"))];
+    const oklch = [...masked.matchAll(new RegExp(DEFAULT_OKLCH.source, "gi"))];
+    const distinct = new Set([...hexes, ...oklch].map((m) => m[0].toLowerCase()));
+    if (inGradient && distinct.size >= 2) {
+      const at = (hexes[0] ?? oklch[0]).index!;
+      push(at, "warning", "ai-default-gradient",
+        `Gradient built from two stops in the stock indigo/violet/purple region.`,
         `Pick stops from your own palette, or drop the gradient.`,
         "ai-default-aesthetic");
     }
@@ -405,13 +430,6 @@ export function genericVisualRules(code: string, filename?: string): LintFinding
     }
   }
 
-  const repeated = [...siblings.entries()].find(([, n]) => n >= 3);
-  if (repeated) {
-    push(masked.indexOf(repeated[0]), "info", "uniform-card-grid",
-      `${repeated[1]} siblings carry byte-identical class strings, so none of them is the primary one.`,
-      `Vary size or emphasis to encode importance — a bento grid without hierarchy is a broken grid.`,
-      "visual-craft-standards");
-  }
   if (chromeCount >= 3) {
     push(0, "info", "stock-card-chrome",
       `The rounded-2xl + shadow-lg + border triad repeats on ${chromeCount} elements.`,
@@ -453,7 +471,7 @@ Expected: PASS, all of `tests/generic.test.ts` plus the existing 563.
 git add src/generic.ts src/security.ts tests/generic.test.ts
 git commit -m "feat: detect the visual defaults generated interfaces reach for
 
-Eight rules over markup and styles: the stock indigo/violet gradient, a
+Seven rules over markup and styles: the stock indigo/violet gradient, a
 default UI font left as the only family on a brand surface, emoji
 standing in for icons, sibling cards with byte-identical class strings,
 the rounded-2xl/shadow-lg/border triad, an eyebrow over every heading,
@@ -571,6 +589,17 @@ has nothing to add."
 import { genericScore, genericReport } from "../dist/generic.js";
 
 describe("the score", () => {
+  it("keys and rule ids agree in both directions", () => {
+    // A weight for a cut rule reads as coverage; a rule with no weight reads as
+    // clean. uniform-card-grid was cut in Task 2 — this is what catches the
+    // next one.
+    const emitted = new Set([
+      ...genericVisualRules(`<div class="from-indigo-500 to-purple-600 bg-clip-text text-transparent backdrop-blur bg-white/10 border-white/10 rounded-2xl shadow-lg border"><h3>🚀 Fast</h3></div>`),
+      ...genericCopyRules(`<h1>Unlock the power of seamlessly modern tooling</h1><a>Get Started</a><a>Learn More</a>`),
+    ].map((f) => f.rule));
+    for (const id of emitted) expect(Object.keys(RULE_WEIGHTS)).toContain(id);
+  });
+
   it("counts a rule once however many times it fires", () => {
     const card = `<div class="rounded-2xl shadow-lg border"><h3>🚀 Fast</h3></div>`;
     const one = genericScore(genericVisualRules(card));
@@ -627,12 +656,18 @@ npm run build && npx vitest run tests/generic.test.ts tests/server.test.ts tests
 Weights, as a single exported table so a change is visible in one place:
 
 ```ts
+// `uniform-card-grid` was cut in Task 2 and is deliberately absent. It fired on
+// any three elements sharing a class string — nav links, footer buttons,
+// dashboard KPI tiles, pricing tiers — and a grid/flex-parent gate would not
+// have saved it, because those tiles genuinely do sit in a grid. Separating
+// "cards that need hierarchy" from "components that should be consistent" is a
+// judgement about what the elements mean, not a fact about the source, so it
+// falls outside this module's governing rule. Ten rules, not eleven.
 export const RULE_WEIGHTS: Record<string, number> = {
   "ai-default-gradient": 20,
   "default-ui-font": 15,
   "emoji-as-icon": 12,
   "hype-opener": 10,
-  "uniform-card-grid": 8,
   "stock-card-chrome": 8,
   "gradient-text": 7,
   "eyebrow-over-every-heading": 6,
@@ -640,6 +675,11 @@ export const RULE_WEIGHTS: Record<string, number> = {
   "filler-adverb": 5,
   "generic-cta": 3,
 };
+
+// A test must assert that every key here is a rule id some rule function can
+// emit, and that every emitted rule id has a key. A weight for a rule that no
+// longer exists scores nothing and reads as coverage; a rule with no weight
+// scores zero and reads as clean.
 ```
 
 `genericScore` groups findings by rule, awards each rule's weight once, records the occurrence count for display, sums, and caps at 100.
@@ -769,6 +809,6 @@ git commit -m "docs: v0.21.0 — the generic-design detector"
 
 **Spec coverage.** Every section of the spec maps to a task: the knowledge document to Task 1; the eight visual rules and the brand-surface test to Task 2; the three copy rules to Task 3; the itemised score, the report and registration to Task 4; the distinctive-page matrix to Task 5; the counts and changelog to Task 6.
 
-**Known soft spots, both stated rather than hidden.** `isBrandSurface` is an inference and will be wrong sometimes; it resolves ambiguity toward silence and Task 5's dashboard fixture pins the direction that matters. `uniform-card-grid` compares class strings byte-for-byte, so a formatter that reorders classes defeats it — that is a miss, not a false positive, which is the right side of this module's asymmetry.
+**Known soft spots, both stated rather than hidden.** `isBrandSurface` is an inference and will be wrong sometimes; it resolves ambiguity toward silence and Task 5's dashboard fixture pins the direction that matters. `stock-card-chrome` still fires on a design-system documentation page that shows the card recipe at three sizes — accepted, with the rule's fix text acknowledging a documented variant matrix.
 
 **Type consistency.** `LintFinding` is used unchanged. `genericVisualRules(code, filename?)` and `genericCopyRules(code)` keep their signatures from Task 2 onward. `RULE_WEIGHTS` keys must exactly match the rule ids emitted by both rule functions — Task 4 should assert that in a test rather than trusting it.

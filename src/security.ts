@@ -523,8 +523,13 @@ export interface HeaderHit {
  * commented-out-header case, which just stays a live finding) and
  * over-masking real code (fabricates `csp-missing` on a correct policy),
  * this errs toward the former wherever the two heuristics would disagree.
+ *
+ * Exported because `generic.ts` needs the same "don't flag commented-out
+ * markup" guarantee for its visual rules — the same judgement Task 6 of the
+ * security plan made for `scanTags`. Two consumers is a coincidence; three
+ * would make this a shared module instead of a security.ts export.
  */
-function maskComments(source: string, path: string): string {
+export function maskComments(source: string, path: string): string {
   // `.astro` is two languages in one file with a hard, unambiguous boundary:
   // the frontmatter fence. Inside it the content is TypeScript, where `//`
   // opens a comment; outside it the content is markup, where it does not.
