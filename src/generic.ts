@@ -785,6 +785,12 @@ repeated structure. It cannot see, and does not attempt to judge:
   values, a custom scale, or another framework's class names is audited less
   thoroughly than the score implies. A low score on such a project reflects
   coverage, not necessarily restraint.
+- **Story, test and fixture files, in directory mode.** Paths matching
+  \`*.stories.*\`, \`*.story.*\`, \`*.spec.*\`, \`*.test.*\`, \`__fixtures__/\` and
+  \`__mocks__/\` are not read. A story file's job is to show every variant with
+  placeholder labels, so scoring it reports the demonstration rather than the
+  product — but it does mean a default that exists *only* in a story is not
+  reported either. The scanned line above says how many were skipped.
 - **The typeface rule off a recognised brand surface.** It evaluates only where
   the surface reads as a brand page — a marketing route, or a heading beside a
   conventional call to action — so a landing page at an unconventional path
@@ -792,6 +798,28 @@ repeated structure. It cannot see, and does not attempt to judge:
 
 A clean result here means the source carries none of these specific,
 recurring defaults — not that the design is good.`;
+
+/**
+ * Paths whose whole job is demonstrating or exercising a component rather than
+ * shipping a surface. Directory mode only — a caller who pastes a story file
+ * in as a snippet asked about that file.
+ *
+ * A `.stories.tsx` exists to show every variant at once, which means
+ * placeholder labels ("Get Started", "Learn More"), the recipe under audit
+ * rendered deliberately, and no page around any of it. A review found a
+ * bespoke project scored 31/100 with every one of those points coming from a
+ * single `Button.stories.tsx`, and `generic-cta` announcing that "every call
+ * to action on the page is drawn from the stock set" where there was no page.
+ * `__fixtures__/` and `__mocks__/` are the same thing with a different name:
+ * the bad input a test asserts against.
+ *
+ * This is a fact about the path, not a judgement about the file, which is why
+ * it sits inside the module's governing rule rather than being special-cased
+ * inside any one of the ten. It is disclosed in `GENERIC_NOT_VISIBLE` and
+ * counted in the report's scanned line, so a skip is never silent.
+ */
+const NOT_A_SHIPPED_SURFACE =
+  /(?:^|[\\/])(?:__fixtures__|__mocks__)[\\/]|\.(?:stories|story|spec|test)\.[jt]sx?$/i;
 
 /**
  * Reports the generic-default findings for one snippet or a whole project,
@@ -820,9 +848,11 @@ export function genericReport(input: { source?: string; filename?: string; root?
 
   if (input.root) {
     const scan = scanProject(input.root);
+    const audited = scan.files.filter((f) => !NOT_A_SHIPPED_SURFACE.test(f.path));
+    const demoSkipped = scan.files.length - audited.length;
     filesByRule = new Map();
-    filesScanned = scan.files.length;
-    for (const f of scan.files) {
+    filesScanned = audited.length;
+    for (const f of audited) {
       const fileFindings = [...genericVisualRules(f.source, f.path), ...genericCopyRules(f.source, f.path)];
       for (const finding of fileFindings) {
         if (!filesByRule.has(finding.rule)) filesByRule.set(finding.rule, new Set());
@@ -830,7 +860,10 @@ export function genericReport(input: { source?: string; filename?: string; root?
       }
       findings.push(...fileFindings.map((x) => ({ ...x, message: `${f.path}: ${x.message}` })));
     }
-    scanned = `Scanned ${scan.files.length} files under \`${input.root}\`.`;
+    scanned = `Scanned ${audited.length} files under \`${input.root}\`.`;
+    if (demoSkipped) {
+      scanned += ` Skipped ${demoSkipped} story, test or fixture file(s), which demonstrate components rather than ship a surface.`;
+    }
     if (scan.hitFileCap) scanned += ` Stopped at the ${MAX_FILES}-file cap — results are partial.`;
     if (scan.hitByteCap) scanned += ` Stopped at the total-bytes cap — results are partial.`;
     if (scan.skippedLarge.length) scanned += ` Skipped ${scan.skippedLarge.length} oversized file(s).`;

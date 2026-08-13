@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdtempSync, writeFileSync, rmSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { genericVisualRules, genericCopyRules, genericScore, genericReport, isBrandSurface, RULE_WEIGHTS } from "../dist/generic.js";
@@ -687,6 +687,76 @@ describe("the report — directory-mode breadth", () => {
       rmSync(twoFiles, { recursive: true, force: true });
       rmSync(oneFile, { recursive: true, force: true });
     }
+  });
+
+  // A story file demonstrates variants with placeholder labels and renders the
+  // recipe under audit on purpose. Scoring it reported the demonstration
+  // rather than the product: a review found a bespoke project scored 31/100
+  // entirely on one `Button.stories.tsx`, with `generic-cta` announcing that
+  // "every call to action on the page is drawn from the stock set" where there
+  // was no page.
+  describe("story, test and fixture files are not a shipped surface", () => {
+    const storyFile = `
+      <div class="rounded-2xl border p-6 shadow-lg"><a href="#">Get Started</a></div>
+      <div class="rounded-2xl border p-6 shadow-lg"><a href="#">Learn More</a></div>
+      <div class="rounded-2xl border p-6 shadow-lg"><a href="#">Read More</a></div>
+      <div class="bg-gradient-to-r from-indigo-500 to-purple-600 bg-clip-text text-transparent"><h3>🚀 Fast</h3></div>`;
+    const realPage = `<h1 style="font-family:'Redaction 35'">Six hundred bells, catalogued</h1>
+      <p>A field recording archive of church bells in the Cévennes, 1971 to today.</p>`;
+
+    const withStory = (name: string) => {
+      const dir = mkdtempSync(join(tmpdir(), "sd-generic-story-"));
+      writeFileSync(join(dir, "page.html"), realPage);
+      writeFileSync(join(dir, name), storyFile);
+      return dir;
+    };
+
+    it.each([
+      ["Button.stories.tsx"], ["Button.story.jsx"], ["Button.spec.tsx"], ["Card.test.jsx"],
+    ])("scores a bespoke project zero despite %s", (name) => {
+      const dir = withStory(name);
+      try {
+        const out = genericReport({ root: dir });
+        expect(out).toMatch(/\*\*Score: 0 \/ 100\*\*/);
+        expect(out).toMatch(/Skipped 1 story, test or fixture file/);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("skips a __fixtures__ directory the same way", () => {
+      const dir = mkdtempSync(join(tmpdir(), "sd-generic-fixtures-"));
+      try {
+        writeFileSync(join(dir, "page.html"), realPage);
+        mkdirSync(join(dir, "__fixtures__"));
+        writeFileSync(join(dir, "__fixtures__", "generic.html"), storyFile);
+        expect(genericReport({ root: dir })).toMatch(/\*\*Score: 0 \/ 100\*\*/);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    // Without this the skip could be doing anything — including hiding the
+    // real page — and every assertion above would still pass.
+    it("still scores that same story file when it is the page", () => {
+      const dir = mkdtempSync(join(tmpdir(), "sd-generic-story-"));
+      try {
+        writeFileSync(join(dir, "page.html"), realPage);
+        writeFileSync(join(dir, "hero.tsx"), storyFile);
+        expect(genericReport({ root: dir })).not.toMatch(/\*\*Score: 0 \/ 100\*\*/);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("says in the report what it did not read", () => {
+      const dir = withStory("Button.stories.tsx");
+      try {
+        expect(genericReport({ root: dir })).toMatch(/\*\*Story, test and fixture files, in directory mode\.\*\*/);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
   });
 
   it("says nothing about file breadth in snippet mode", () => {
