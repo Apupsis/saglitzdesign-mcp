@@ -152,6 +152,14 @@ describe("visual rules — fire when they should", () => {
     expect(ids(`.hero { background: linear-gradient(135deg, #6366f1, #a855f7); }`)).toContain("ai-default-gradient");
   });
 
+  it("flags it written in OKLCH, which is how Tailwind v4 actually ships the palette", () => {
+    expect(ids(`.hero { background: linear-gradient(135deg, oklch(0.585 0.233 277.117), oklch(0.627 0.265 303.9)); }`)).toContain("ai-default-gradient");
+  });
+
+  it("flags the v4 direction utility as readily as the v3 one", () => {
+    expect(ids(`<div class="bg-linear-to-r from-indigo-500 to-violet-600">`)).toContain("ai-default-gradient");
+  });
+
   it("flags Inter as the sole family on a brand surface", () => {
     const code = `<h1>Ship faster</h1><a href="/signup">Get started</a><style>body{font-family:Inter,sans-serif}</style>`;
     expect(ids(code, "app/(marketing)/page.tsx")).toContain("default-ui-font");
@@ -188,6 +196,14 @@ describe("visual rules — fire when they should", () => {
 describe("visual rules — stay quiet when they should", () => {
   it("accepts a deliberate non-default gradient", () => {
     expect(ids(`<div class="bg-gradient-to-r from-amber-500 to-rose-700">`)).not.toContain("ai-default-gradient");
+  });
+
+  it("accepts a single stop from the region — one colour is a choice, not the stock pair", () => {
+    expect(ids(`<div class="bg-indigo-600 text-white">`)).not.toContain("ai-default-gradient");
+  });
+
+  it("accepts an OKLCH gradient outside the blue-violet band", () => {
+    expect(ids(`.hero { background: linear-gradient(135deg, oklch(0.72 0.19 45), oklch(0.55 0.21 25)); }`)).not.toContain("ai-default-gradient");
   });
 
   it("accepts Inter in application UI", () => {
@@ -285,11 +301,31 @@ const classesOf = (tag: Tag): string => {
 };
 
 // Tailwind's indigo / violet / purple ramps sit adjacent on its scale, so the
-// stock gradient is two neighbours from the same region. Hexes are the v4
-// palette values; verify against tailwindcss.com if they are ever updated.
-const DEFAULT_RAMPS = /(indigo|violet|purple|fuchsia)-(300|400|500|600|700)/;
-const DEFAULT_HEXES = /#(6366f1|818cf8|a5b4fc|8b5cf6|7c3aed|a78bfa|a855f7|c084fc|9333ea|d946ef)/i;
+// stock gradient is two neighbours from the same region.
+//
+// Task 1 established two things that shape this. First, v4 authors the palette
+// in **OKLCH**, and its docs give hex only as "the nearest hex value" — so a
+// hex list can never be more than a convenience match for hand-written CSS,
+// and the class-name match is the reliable one. Second, v4 renamed the
+// direction utility from `bg-gradient-to-*` to `bg-linear-to-*`; keying on the
+// `from-`/`via-`/`to-` stops rather than the direction class means both
+// versions are covered without caring which is in use.
+//
+// Verify these values against tailwindcss.com before changing them; the palette
+// moved once already.
+const DEFAULT_HEXES = /#(6366f1|818cf8|a5b4fc|8b5cf6|7c3aed|a78bfa|a855f7|c084fc|9333ea|d946ef|615fff|4f39f6)/i;
 
+// The same region expressed in OKLCH, which is how v4 actually ships it: high
+// chroma at a hue angle in the blue-violet band. Matched loosely on the hue
+// angle, because the exact triples differ per shade and a project writing its
+// own OKLCH is not necessarily copying Tailwind's.
+const DEFAULT_OKLCH = /oklch\(\s*0?\.\d+\s+0?\.[12]\d*\s+(2[6-9]\d|3[0-1]\d)(?:\.\d+)?\s*\)/i;
+
+// Inter is on typography-craft's reflex-reject list, which is why this rule
+// exists — NOT because a component system ships it as a default. Task 1
+// verified that shadcn/ui's documentation names no typeface at all, and that
+// its stock theme carries no accent hue (`--primary: oklch(0.205 0 0)`). Do not
+// write a message that attributes these faces to any system.
 const DEFAULT_FAMILIES = /\b(Inter|Roboto|Open Sans|DM Sans|Plus Jakarta Sans)\b/i;
 
 /** Emoji that stand in for an icon. Not an exhaustive emoji set — these six. */
@@ -335,11 +371,14 @@ export function genericVisualRules(code: string, filename?: string): LintFinding
       `Pick stops from your own palette, or drop the gradient — see ai-default-aesthetic for why this pair recurs.`,
       "ai-default-aesthetic");
   } else {
-    const hexes = [...masked.matchAll(new RegExp(DEFAULT_HEXES.source, "gi"))];
     const inGradient = /linear-gradient|radial-gradient|conic-gradient/i.test(masked);
-    if (inGradient && new Set(hexes.map((h) => h[0].toLowerCase())).size >= 2) {
-      push(hexes[0].index!, "warning", "ai-default-gradient",
-        `Gradient built from the stock indigo/violet/purple hexes.`,
+    const hexes = [...masked.matchAll(new RegExp(DEFAULT_HEXES.source, "gi"))];
+    const oklch = [...masked.matchAll(new RegExp(DEFAULT_OKLCH.source, "gi"))];
+    const distinct = new Set([...hexes, ...oklch].map((m) => m[0].toLowerCase()));
+    if (inGradient && distinct.size >= 2) {
+      const at = (hexes[0] ?? oklch[0]).index!;
+      push(at, "warning", "ai-default-gradient",
+        `Gradient built from two stops in the stock indigo/violet/purple region.`,
         `Pick stops from your own palette, or drop the gradient.`,
         "ai-default-aesthetic");
     }

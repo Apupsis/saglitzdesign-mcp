@@ -58,9 +58,19 @@ The way through is to document **what the systems actually ship** rather than
 what commentators say about them:
 
 - *"Indigo gives away AI"* is an opinion.
-- *"Tailwind's default palette ships `indigo-500` as its stock accent"* is a
-  fact, verifiable at `tailwindcss.com`.
-- *"shadcn/ui's default font is Inter"* is a fact, verifiable at `ui.shadcn.com`.
+- *"Tailwind's indigo, violet and purple ramps sit adjacent, so the stock
+  gradient pair is two neighbours from one region"* is a fact, verifiable at
+  `tailwindcss.com`.
+
+**Corrected during implementation.** Two examples this spec originally used were
+themselves wrong, and Task 1 caught them against the live sources: shadcn/ui's
+documentation names **no typeface at all**, and its stock theme carries **no
+accent hue** (`--primary: oklch(0.205 0 0)`; every base colour on offer is
+neutral). Tailwind v4 also authors its palette in **OKLCH**, giving hex only as
+"the nearest hex value". So no default may be attributed to shadcn, and the
+font rule's justification is `typography-craft`'s reflex-reject list rather than
+any system's default. Left recorded here because a spec that quietly drops its
+own wrong premises teaches nothing.
 
 The document records the defaults, with their sources, and lets the reader draw
 the conclusion their own eyes already support. This is more useful than citing
