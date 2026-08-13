@@ -76,6 +76,26 @@ describe("visual rules — fire when they should", () => {
     expect(ids(code, "app/(marketing)/page.tsx")).toContain("default-ui-font");
   });
 
+  // Widening the capture to the whole declaration meant the last entry stopped
+  // being a clean font name whenever anything rode along with it, and
+  // FALLBACK_FAMILY_RE is whole-entry equality — so `sans-serif !important` was
+  // not `sans-serif`, read as a face someone chose, and silenced the rule. One
+  // root cause, four shapes, all of which the rule flagged correctly before the
+  // capture was widened and none of which any fixture covered.
+  //
+  // The first two also pin what the `<`/`>` guard does not do: it bounds an
+  // over-read to one tag, but inside that tag `"[^"<>]*"` still pairs the
+  // `style` attribute's closing quote with the next attribute's opening quote.
+  it.each([
+    ["an inline style followed by a class attribute", `<h1 style="font-family:Inter, sans-serif" class="text-5xl">Ship faster</h1>`],
+    ["an inline style followed by two more attributes", `<h1 style="font-family:Inter,sans-serif" id="a" class="b">Ship faster</h1>`],
+    ["a declaration marked !important", `<h1>Ship faster</h1><style>h1{font-family:Inter, sans-serif !important;}</style>`],
+    ["a declaration with a trailing CSS comment", `<h1>Ship faster</h1><style>h1{font-family:Inter, sans-serif /* fallback */;}</style>`],
+  ])("flags Inter as the sole family despite %s", (_name, markup) => {
+    const code = `${markup}<a href="/signup">Get started</a>`;
+    expect(ids(code, "app/(marketing)/page.html")).toContain("default-ui-font");
+  });
+
   it("flags an emoji standing in for an icon in a heading", () => {
     expect(ids(`<h3>🚀 Lightning fast</h3>`)).toContain("emoji-as-icon");
   });

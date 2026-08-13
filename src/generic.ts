@@ -122,12 +122,40 @@ const DEFAULT_FAMILIES_G = /\b(Inter|Roboto|Open Sans|DM Sans|Plus Jakarta Sans)
 // Inter was "the only declared family". Reading a quoted segment as one unit
 // rather than as a stopping point is what keeps the rest of the list.
 //
-// `<` and `>` are excluded from every branch. No font stack contains either,
-// and excluding them is what stops an inline `style="font-family:'Foo'"` from
-// running past its own attribute and swallowing the next tag's attributes as
-// if they were families — the over-read the old regex's quote-stopping was
-// there to prevent.
+// `<` and `>` are excluded from every branch, which bounds an over-read to
+// within a single tag: a capture can never cross a tag boundary and start
+// reading the next element's markup as families. It does **not** stop the
+// capture at the end of the attribute it started in, and an earlier version of
+// this comment wrongly claimed it did. Inside one
+// `<h1 style="font-family:Inter, sans-serif" class="text-5xl">`, the
+// `"[^"<>]*"` branch happily pairs the `style` attribute's closing quote with
+// `class`'s opening quote and captures `Inter, sans-serif" class="text-5xl`.
+// Recognising that residue is `NOT_A_FONT_NAME`'s job, below, not this
+// pattern's.
 const FONT_FAMILY_RE = /font-family\s*:\s*((?:[^;}"'<>]|"[^"<>]*"|'[^'<>]*')+)/gi;
+
+// Characters no font family name can contain, in any script. An entry carrying
+// one is not a face — it is something else that rode along inside the captured
+// declaration, and it must be dropped rather than counted as a family someone
+// chose.
+//
+// Three shapes reach here, and all three made the rule go silent on inputs it
+// had correctly flagged before the capture was widened:
+//
+//   `=` `<` `>`   attribute residue from the over-read described above:
+//                 `sans-serif" class="text-5xl`
+//   `!`           `font-family: Inter, sans-serif !important`
+//   `/*` `{` `}`  a trailing CSS comment the masker leaves alone in an `.html`
+//                 file: `sans-serif /* fallback */`
+//
+// Each of them attaches to the *last* entry, which is normally the generic
+// keyword `FALLBACK_FAMILY_RE` recognises — and that test is whole-entry
+// equality, so `sans-serif !important` is not `sans-serif`, reads as a chosen
+// face, and suppresses the finding. Dropping is safe in the direction that
+// matters: a name a designer actually picked never contains any of these, so
+// nothing real is discarded, and an entry that survives still has to clear
+// `FALLBACK_FAMILY_RE` on its own merits.
+const NOT_A_FONT_NAME = /[=<>{}!]|\/\*/;
 
 // An entry that is not a face anyone chose: the CSS generic families, the
 // CSS-wide keywords, and the system fallbacks every stack ends with. Anchored
@@ -243,7 +271,7 @@ export function genericVisualRules(code: string, filename?: string): LintFinding
   const entries = [...masked.matchAll(FONT_FAMILY_RE)]
     .flatMap((m) => m[1]!.split(","))
     .map((e) => e.trim().replace(/^["']|["']$/g, "").trim())
-    .filter((e) => e !== "");
+    .filter((e) => e !== "" && !NOT_A_FONT_NAME.test(e));
   // "This entry *is* a default family", not "contains one of their names":
   // `Inter Tight` is a different face from `Inter`, so it counts as a choice.
   const isDefaultFamily = (e: string) =>
