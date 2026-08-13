@@ -944,6 +944,118 @@ describe("a decoy shaped like a policy must not shadow a real absence", () => {
   });
 });
 
+// Guarding only CSP would have been worse than guarding nothing: a guard that
+// covers one header reads as a guard that covers headers. Each header the
+// extractor reads has its own checkable grammar, and a value that satisfies
+// none of it is prose.
+describe("the decoy guard covers every header the extractor reads", () => {
+  interface HeaderCase {
+    header: string;
+    /** A docs-map / i18n-bundle string sitting exactly where a value would. */
+    prose: string;
+    real: string;
+    /** Legal values a stricter check might wrongly reject. */
+    unusual: string[];
+    /** The absence finding a decoy must not be able to suppress. */
+    missing: string | null;
+  }
+
+  const HEADER_CASES: HeaderCase[] = [
+    {
+      header: "Content-Security-Policy",
+      prose: "controls which resources the page may load",
+      real: HARD_CSP,
+      unusual: ["sandbox allow-forms", "upgrade-insecure-requests"],
+      missing: "csp-missing",
+    },
+    {
+      header: "Strict-Transport-Security",
+      prose: "tells the browser to use HTTPS only",
+      real: HARD_HSTS,
+      // max-age=0 is legal and meaningful — it clears a previously-sent
+      // policy — so it is a declaration, not a decoy.
+      unusual: ["max-age=0", "max-age=31536000", "max-age=63072000; preload"],
+      missing: "hsts-missing",
+    },
+    {
+      header: "X-Content-Type-Options",
+      prose: "stops the browser MIME-sniffing a response into a script",
+      real: "nosniff",
+      unusual: ["NOSNIFF", "nosniff;"],
+      missing: "x-content-type-options-missing",
+    },
+    {
+      // There is deliberately no referrer-policy-missing rule, so the damage a
+      // decoy does here is quieter: it occupies the slot, and gets graded.
+      header: "Referrer-Policy",
+      prose: "controls how much referrer information is sent with requests",
+      real: "strict-origin-when-cross-origin",
+      unusual: ["no-referrer, strict-origin-when-cross-origin", "same-origin", "unsafe-url"],
+      missing: null,
+    },
+    {
+      header: "Permissions-Policy",
+      prose: "controls which browser features the page may use",
+      real: HARD_PP,
+      unusual: [`geolocation=(self "https://maps.example.com"), fullscreen=*`, "camera=self", "interest-cohort=()"],
+      missing: "permissions-policy-missing",
+    },
+  ];
+
+  const decoyOf = (c: HeaderCase) =>
+    ({ path: "aaa.json", source: JSON.stringify({ [c.header]: c.prose }, null, 2) });
+  const headersFileOf = (path: string, header: string, value: string) =>
+    ({ path, source: `/*\n  ${header}: ${value}\n` });
+
+  it.each(HEADER_CASES.map((c) => [c.header, c] as const))(
+    "%s — a prose decoy is not read as a declaration", (_h, c) => {
+      expect(extractHeaders([decoyOf(c)]).has(c.header.toLowerCase())).toBe(false);
+      if (c.missing) expect(cfgIds([decoyOf(c)])).toContain(c.missing);
+    });
+
+  it.each(HEADER_CASES.map((c) => [c.header, c] as const))(
+    "%s — a real declaration is graded even when a decoy walks first", (_h, c) => {
+      const real = headersFileOf("zz/_headers", c.header, c.real);
+      const hit = extractHeaders([decoyOf(c), real]).get(c.header.toLowerCase());
+      expect(hit).toBeDefined();
+      expect(hit!.value.trim()).toBe(c.real);
+      expect(hit!.file).toBe("zz/_headers");
+      if (c.missing) expect(cfgIds([decoyOf(c), real])).not.toContain(c.missing);
+    });
+
+  it.each(HEADER_CASES.map((c) => [c.header, c] as const))(
+    "%s — a legal but unusual value is still a declaration", (_h, c) => {
+      for (const value of c.unusual) {
+        const hit = extractHeaders([headersFileOf("_headers", c.header, value)]).get(c.header.toLowerCase());
+        expect(hit, `${c.header}: ${value}`).toBeDefined();
+        expect(hit!.value.trim()).toBe(value);
+      }
+    });
+
+  // The same asymmetry the CSP guard uses: a value assembled at runtime is
+  // exempt, because that path already reports honestly instead of claiming
+  // absence.
+  it("never rejects a value it could not read in the first place", () => {
+    const found = cfgIds([{ path: "middleware.ts", source:
+      `res.headers.set('Strict-Transport-Security', hstsValue)\n`
+      + `res.headers.set('X-Content-Type-Options', xctoValue)\n`
+      + `res.headers.set('Referrer-Policy', refValue)\n`
+      + `res.headers.set('Permissions-Policy', ppValue)\n` }]);
+    expect(found).not.toContain("hsts-missing");
+    expect(found).not.toContain("x-content-type-options-missing");
+    expect(found).not.toContain("permissions-policy-missing");
+  });
+
+  // The precise regression the coordinator named: before this, a decoy
+  // replaced the hsts-missing *warning* with an hsts-no-subdomains *note*.
+  it("does not let an HSTS decoy demote a missing header to a note", () => {
+    const found = cfgIds([decoyOf(HEADER_CASES[1])]);
+    expect(found).toContain("hsts-missing");
+    expect(found).not.toContain("hsts-no-subdomains");
+    expect(found).not.toContain("hsts-short-max-age");
+  });
+});
+
 describe("the fixture matrix's guard — widening what counts as a declaration must not widen it to references", () => {
   // isHeaderDeclarationContext was widened (C1) to accept the quoted
   // object-literal property that most of the ecosystem uses. That is the same

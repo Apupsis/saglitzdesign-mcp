@@ -930,10 +930,10 @@ export function extractHeadersFrom(files: MaskedFile[]): Map<string, HeaderHit> 
 
         // A third guard, against a shape the first two cannot catch: a value
         // that is a perfectly well-formed declaration of something that is
-        // not a policy. See `declaresCspDirective` — a decoy shadows a real
+        // not a header value. See `HEADER_GRAMMAR` — a decoy shadows a real
         // absence, which is worse than inventing a finding. An unreadable
         // value is exempt, because there is nothing to parse.
-        if (/^content-security-policy/i.test(header) && !undeterminable && !declaresCspDirective(value)) continue;
+        if (!undeterminable && !declaresHeaderValue(header, value)) continue;
 
         record(header.toLowerCase(), { value, file: file.path, line, undeterminable });
       }
@@ -1003,22 +1003,103 @@ const CSP_DIRECTIVES = new Set([
  * True when a candidate value names at least one CSP directive — i.e. when it
  * is a policy rather than a string that merely sits where one would.
  *
- * Recognising the object-literal shape `"Content-Security-Policy": "…"` as a
- * declaration means recognising anything shaped like it, and a docs map, an
- * i18n bundle or a test fixture can carry exactly that shape. The damage is
- * not the invented finding: with no real policy in the project, the
- * `csp-missing` **error** is replaced by four directive warnings pointing at
- * the decoy, so a real absence is hidden rather than merely embellished —
- * the worse of the two directions.
- *
  * A real policy always names a directive; `"controls which resources the page
  * may load"` parses to a directive called `controls`. A policy whose only
  * directive is newer than this list is rejected too, and surfaces as a
  * visible, quickly-disproved `csp-missing` rather than a silent one — the
- * same trade every other guard in this module makes.
+ * same trade every guard in this family makes.
  */
 const declaresCspDirective = (value: string): boolean =>
   [...parseCsp(value).keys()].some((d) => CSP_DIRECTIVES.has(d));
+
+/**
+ * `max-age=<digits>` is mandatory (RFC 6797); `includeSubDomains` and
+ * `preload` are the only other tokens defined for the header. `max-age=0` is
+ * both legal and meaningful — it clears a previously-sent policy — so it is a
+ * declaration, not a decoy.
+ */
+const HSTS_MAX_AGE = /^max-age\s*=\s*"?\d+"?$/i;
+const HSTS_TOKEN = /^(?:max-age\s*=\s*"?\d+"?|includesubdomains|preload)$/i;
+
+const declaresHsts = (value: string): boolean => {
+  const tokens = value.split(";").map((t) => t.trim()).filter(Boolean);
+  return tokens.length > 0
+    && tokens.every((t) => HSTS_TOKEN.test(t))
+    && tokens.some((t) => HSTS_MAX_AGE.test(t));
+};
+
+/** The eight policy tokens the spec defines; a comma-separated list is legal
+ * (it is how a fallback for older agents is expressed) and stays accepted. */
+const REFERRER_POLICY_TOKENS = new Set([
+  "no-referrer", "no-referrer-when-downgrade", "origin", "origin-when-cross-origin",
+  "same-origin", "strict-origin", "strict-origin-when-cross-origin", "unsafe-url",
+]);
+
+const declaresReferrerPolicy = (value: string): boolean => {
+  const tokens = value.split(",").map((t) => t.trim().toLowerCase()).filter(Boolean);
+  return tokens.length > 0 && tokens.every((t) => REFERRER_POLICY_TOKENS.has(t));
+};
+
+/**
+ * `feature=(allowlist)` pairs, comma-separated. The allowlist is
+ * space-separated inside its parentheses, so splitting the value on commas
+ * never cuts one in half. `*`, `self` and a bare quoted origin are the other
+ * legal right-hand sides.
+ */
+const PERMISSIONS_POLICY_ITEM = /^[A-Za-z0-9-]+\s*=\s*(?:\([^()]*\)|\*|self|"[^"]*")$/;
+
+const declaresPermissionsPolicy = (value: string): boolean => {
+  const items = value.split(",").map((t) => t.trim()).filter(Boolean);
+  return items.length > 0 && items.every((t) => PERMISSIONS_POLICY_ITEM.test(t));
+};
+
+/**
+ * One grammar check per header the extractor reads: "is this string a value
+ * for this header at all", never "is it a good one" — grading is what the
+ * rules below do, and a check that grades here would suppress the very
+ * findings it exists to protect.
+ *
+ * Why every header and not just CSP. Recognising the object-literal shape
+ * `"Strict-Transport-Security": "…"` as a declaration means recognising
+ * anything shaped like it, and a docs map, an i18n bundle or a test fixture
+ * carries exactly that shape. The damage is not the invented finding: with no
+ * real header in the project, `hsts-missing` (warning) is replaced by
+ * `hsts-no-subdomains` (info) pointing at the decoy, so a real absence is
+ * hidden rather than embellished — the worse direction, and the same failure
+ * `csp-missing` had. Fixing it for one header would have been worse than
+ * fixing it for none: a guard that covers one header reads as a guard that
+ * covers headers.
+ *
+ * Each check is deliberately strict about tokens it does not know, because
+ * the two failure directions are not symmetric. Rejecting a legal value that
+ * post-dates this list produces a `*-missing` finding, which is visible and
+ * disproved in seconds. Accepting prose swallows a real absence silently.
+ *
+ * A value assembled at runtime is exempt at the call site: there is nothing
+ * to parse, and that path already reports `undeterminable` rather than
+ * claiming absence.
+ */
+// Keyed on `HEADER_NAMES` itself, and typed to require every one of them. A
+// free-form `Record<string, …>` would let a key drift out of step with the
+// name the extractor searches for — a typo, or a rename that touched one list
+// and not the other — and the failure would be silent in the worst direction:
+// the grammar check for that header simply stops running, and decoys are
+// accepted again. Here that is a compile error.
+const HEADER_GRAMMAR: Record<Lowercase<(typeof HEADER_NAMES)[number]>, (value: string) => boolean> = {
+  "content-security-policy": declaresCspDirective,
+  "content-security-policy-report-only": declaresCspDirective,
+  "strict-transport-security": declaresHsts,
+  // The only value the standard defines.
+  "x-content-type-options": (v) => /^nosniff;?$/i.test(v.trim()),
+  "referrer-policy": declaresReferrerPolicy,
+  "permissions-policy": declaresPermissionsPolicy,
+};
+
+/** True when `value` is readable as a value for `header`. */
+const declaresHeaderValue = (header: string, value: string): boolean => {
+  const grammar = (HEADER_GRAMMAR as Record<string, ((value: string) => boolean) | undefined>)[header.toLowerCase()];
+  return grammar ? grammar(value) : true;
+};
 
 /** Split a policy into directive → source list. */
 export function parseCsp(value: string): Map<string, string[]> {
