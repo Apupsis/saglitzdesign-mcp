@@ -1,4 +1,7 @@
 import { describe, it, expect } from "vitest";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { genericVisualRules, genericCopyRules, genericScore, genericReport, RULE_WEIGHTS } from "../dist/generic.js";
 
 const ids = (code: string, filename?: string) =>
@@ -413,6 +416,37 @@ describe("the score", () => {
     const everything = `<div class="from-indigo-500 to-purple-600 bg-clip-text text-transparent backdrop-blur bg-white/10 border-white/10 rounded-2xl shadow-lg border"><h3>🚀 Fast</h3></div>`;
     expect(genericScore(genericVisualRules(everything.repeat(4))).total).toBeLessThanOrEqual(100);
   });
+
+  it("clamps total at 100 and still reconciles the itemised sum via rawTotal", () => {
+    // The ten real weights sum to 92 (see the comment on RULE_WEIGHTS), so
+    // no findings genericVisualRules/genericCopyRules can actually produce
+    // ever trips the clamp — the test above never exercises that branch. A
+    // synthetic weight table that sums past 100 is the only way to reach it,
+    // which is what this test does, restoring RULE_WEIGHTS afterward.
+    const original = { ...RULE_WEIGHTS };
+    for (const key of Object.keys(RULE_WEIGHTS)) delete RULE_WEIGHTS[key];
+    Object.assign(RULE_WEIGHTS, { "test-only-a": 70, "test-only-b": 60 });
+    try {
+      const findings = [
+        { line: 1, severity: "info", rule: "test-only-a", message: "m", fix: "f" },
+        { line: 2, severity: "info", rule: "test-only-b", message: "m", fix: "f" },
+      ];
+      const { total, rawTotal, items } = genericScore(findings as Parameters<typeof genericScore>[0]);
+      // The clamp actually engaged...
+      expect(total).toBe(100);
+      // ...and the parts still add up to something stated, not silently
+      // capped and dropped: rawTotal carries the true, uncapped sum, and
+      // every item keeps its real, citable weight rather than a rescaled
+      // fraction that no longer matches RULE_WEIGHTS.
+      expect(rawTotal).toBe(130);
+      expect(items.reduce((n, i) => n + i.weight, 0)).toBe(rawTotal);
+      expect(items.find((i) => i.rule === "test-only-a")?.weight).toBe(70);
+      expect(items.find((i) => i.rule === "test-only-b")?.weight).toBe(60);
+    } finally {
+      for (const key of Object.keys(RULE_WEIGHTS)) delete RULE_WEIGHTS[key];
+      Object.assign(RULE_WEIGHTS, original);
+    }
+  });
 });
 
 describe("the report", () => {
@@ -424,5 +458,42 @@ describe("the report", () => {
     const out = genericReport({ source: `<div class="from-indigo-500 to-purple-600">` });
     expect(out).toMatch(/ai-default-gradient/);
     expect(out).toMatch(/\d+\s*\/\s*100/);
+  });
+});
+
+describe("the report — directory-mode breadth", () => {
+  // Reproduces the exact gap a project-wide score can't carry on its own:
+  // two files each carrying one instance of the same signals score
+  // identically to one file carrying both signals twice. The score is right
+  // not to tell those apart (see the comment on `filesByRule` in
+  // genericReport) — but the reader should still be able to.
+  const gradientCard = `<div class="from-indigo-500 to-purple-600"><h3>🚀 Fast</h3></div>`;
+
+  it("shows how many scanned files a rule was found in, alongside an identical score", () => {
+    const twoFiles = mkdtempSync(join(tmpdir(), "sd-generic-breadth-"));
+    const oneFile = mkdtempSync(join(tmpdir(), "sd-generic-breadth-"));
+    try {
+      writeFileSync(join(twoFiles, "a.html"), gradientCard);
+      writeFileSync(join(twoFiles, "b.html"), gradientCard);
+      writeFileSync(join(oneFile, "a.html"), gradientCard.repeat(2));
+
+      const twoFilesReport = genericReport({ root: twoFiles });
+      const oneFileReport = genericReport({ root: oneFile });
+
+      // Same signals, so the same score either way...
+      const scoreOf = (report: string) => report.match(/\*\*Score: (\d+) \/ 100\*\*/)?.[1];
+      expect(scoreOf(twoFilesReport)).toBe(scoreOf(oneFileReport));
+
+      // ...but the breadth the score can't carry is now visible, and differs.
+      expect(twoFilesReport).toMatch(/ai-default-gradient.*found in 2 of 2 files/);
+      expect(oneFileReport).toMatch(/ai-default-gradient.*found in 1 of 1 files/);
+    } finally {
+      rmSync(twoFiles, { recursive: true, force: true });
+      rmSync(oneFile, { recursive: true, force: true });
+    }
+  });
+
+  it("says nothing about file breadth in snippet mode", () => {
+    expect(genericReport({ source: gradientCard })).not.toMatch(/found in \d+ of \d+ files/);
   });
 });

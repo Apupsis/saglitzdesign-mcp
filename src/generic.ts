@@ -627,6 +627,12 @@ export const RULE_WEIGHTS: Record<string, number> = {
 // in generic.test.ts. A weight for a rule that no longer exists scores
 // nothing and reads as coverage; a rule with no weight scores zero and reads
 // as clean. Both pass a naive suite that only checks one direction.
+//
+// These ten weights currently sum to 92 — headroom the 100-cap in
+// `genericScore` exists for. Adding an eleventh rule can push the sum past
+// 100; when it does, `total` clamps but `rawTotal` (see below) still carries
+// the true, uncapped sum, so the itemised list and the headline number never
+// silently disagree.
 
 /**
  * Scores a page's findings by *distinct signal*, not by occurrence: a page
@@ -637,15 +643,24 @@ export const RULE_WEIGHTS: Record<string, number> = {
  * records how many times it actually fired, for display, but never multiplies
  * the score.
  *
- * `total` is the sum of every awarded weight. It is capped at 100 as a
- * safety bound for future rules — today's ten weights sum to 92, so the cap
- * never actually engages, and `total` always equals the sum of `items`'
- * weights (see the "itemises every point it awards" test, which depends on
- * that equality holding).
+ * `total` is `rawTotal` clamped to 100 — a safety bound for future rules.
+ * Today's ten weights sum to 92, so the clamp never actually engages and
+ * `total === rawTotal === items.reduce((n, i) => n + i.weight, 0)`.
+ *
+ * If a future rule ever pushes the unclamped sum past 100, `total` stops
+ * equalling the itemised sum — clamping is exactly what breaks that equality.
+ * Scaling each item's weight down to fit would restore the equality, but at
+ * the cost of every item's own point: `item.weight` is the reason a reader
+ * can accept or dismiss one specific finding on its stated, documented
+ * weight, and a rescaled fraction stops being that. `rawTotal` is the other
+ * way to reconcile the two — items keep their real, citable weights, and
+ * `rawTotal` states outright what they add up to before the display clamp,
+ * so nothing is silently lost the way it would be if `total` just disagreed
+ * with the parts and left the reader to wonder why.
  */
 export function genericScore(
   findings: LintFinding[],
-): { total: number; items: Array<{ rule: string; weight: number; count: number }> } {
+): { total: number; rawTotal: number; items: Array<{ rule: string; weight: number; count: number }> } {
   const counts = new Map<string, number>();
   for (const f of findings) {
     // A rule id with no entry in RULE_WEIGHTS scores nothing rather than
@@ -659,8 +674,9 @@ export function genericScore(
     .map(([rule, count]) => ({ rule, weight: RULE_WEIGHTS[rule]!, count }))
     .sort((a, b) => b.weight - a.weight || a.rule.localeCompare(b.rule));
 
-  const total = Math.min(100, items.reduce((n, i) => n + i.weight, 0));
-  return { total, items };
+  const rawTotal = items.reduce((n, i) => n + i.weight, 0);
+  const total = Math.min(100, rawTotal);
+  return { total, rawTotal, items };
 }
 
 // ── report ───────────────────────────────────────────────────────────────────
@@ -697,13 +713,31 @@ export function genericReport(input: { source?: string; filename?: string; root?
   let findings: LintFinding[] = [];
   let scanned: string;
 
+  // Directory mode only: how many of the scanned files each rule was found
+  // in at least once. `genericScore` folds every file's findings into one
+  // flat list before it ever sees them, on purpose — a project-wide score
+  // treats "distinct signal" the same way a single-page score does, one
+  // point per rule regardless of how many files or lines carry it. That is
+  // right for the *number*, but it means two files each carrying the same
+  // gradient score identically to one file carrying it twice, and the
+  // headline total cannot tell those apart. `filesByRule` is not part of the
+  // score or the total — neither changes here — it is displayed alongside
+  // each itemised line so the reader gets the breadth the number itself
+  // cannot carry.
+  let filesByRule: Map<string, Set<string>> | null = null;
+  let filesScanned = 0;
+
   if (input.root) {
     const scan = scanProject(input.root);
+    filesByRule = new Map();
+    filesScanned = scan.files.length;
     for (const f of scan.files) {
-      findings.push(
-        ...[...genericVisualRules(f.source, f.path), ...genericCopyRules(f.source, f.path)]
-          .map((x) => ({ ...x, message: `${f.path}: ${x.message}` })),
-      );
+      const fileFindings = [...genericVisualRules(f.source, f.path), ...genericCopyRules(f.source, f.path)];
+      for (const finding of fileFindings) {
+        if (!filesByRule.has(finding.rule)) filesByRule.set(finding.rule, new Set());
+        filesByRule.get(finding.rule)!.add(f.path);
+      }
+      findings.push(...fileFindings.map((x) => ({ ...x, message: `${f.path}: ${x.message}` })));
     }
     scanned = `Scanned ${scan.files.length} files under \`${input.root}\`.`;
     if (scan.hitFileCap) scanned += ` Stopped at the ${MAX_FILES}-file cap — results are partial.`;
@@ -715,13 +749,18 @@ export function genericReport(input: { source?: string; filename?: string; root?
     scanned = "Scanned one snippet.";
   }
 
-  const { total, items } = genericScore(findings);
+  const { total, rawTotal, items } = genericScore(findings);
 
   lines.push(scanned, "");
   lines.push(`**Score: ${total} / 100** — the count of distinct AI-default signals found; each rule counts once no matter how many times it repeats.`, "");
   if (items.length) {
     for (const item of items) {
-      lines.push(`- **${item.rule}** +${item.weight}${item.count > 1 ? ` (seen ${item.count}×, scored once)` : ""}`);
+      const seen = item.count > 1 ? ` (seen ${item.count}×, scored once)` : "";
+      const breadth = filesByRule ? ` — found in ${filesByRule.get(item.rule)?.size ?? 0} of ${filesScanned} files` : "";
+      lines.push(`- **${item.rule}** +${item.weight}${seen}${breadth}`);
+    }
+    if (rawTotal > total) {
+      lines.push(`- _The itemised points above sum to ${rawTotal}; the score display is capped at 100._`);
     }
   } else {
     lines.push("No AI-default signals found in what was read.");
