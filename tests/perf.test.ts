@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { join } from "node:path";
-import { perfRules, PERF_EXTENSIONS } from "../dist/perf.js";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { perfRules, perfReport, PERF_NOT_VISIBLE, PERF_EXTENSIONS } from "../dist/perf.js";
 import { loadKnowledge, findDoc } from "../dist/knowledge.js";
 
 const ids = (code: string, filename?: string) =>
@@ -773,5 +775,136 @@ describe("every doc a rule cites resolves and makes the rule's claim", () => {
     for (const f of findings) {
       expect(forbidden.test(`${f.message} ${f.fix}`), `${f.rule}: ${f.message} ${f.fix}`).toBe(false);
     }
+  });
+});
+
+// ── the report and its structured half ───────────────────────────────────────
+//
+// `perfReport` is the surface `audit_performance` returns. The rules above are
+// tested for what they claim; these test what the *report* claims. The report
+// is where a silent rule becomes a misleading clean bill, so the limitations
+// `lazy-hero` and `image-without-dimensions` disclose in their own comments
+// have to survive the trip out to the caller.
+
+describe("perfReport — the prose and the structure agree", () => {
+  const BAD_PAGE = `<!doctype html>
+<html lang="en">
+<head>
+  <script src="/js/analytics-tag.js"></script>
+</head>
+<body>
+  <main>
+    <img src="/hero.jpg" alt="Hero" loading="lazy" fetchpriority="high">
+  </main>
+</body>
+</html>`;
+
+  it("returns markdown and a structured payload from one call", () => {
+    const { text, structured } = perfReport({ source: BAD_PAGE, filename: "index.html" });
+    expect(text).toContain("# Performance audit");
+    expect(text.length).toBeGreaterThan(40);
+    expect(structured.findings.length).toBeGreaterThan(0);
+  });
+
+  it("counts a summary that agrees with its own findings", () => {
+    const { structured } = perfReport({ source: BAD_PAGE, filename: "index.html" });
+    const count = (s: string) => structured.findings.filter((f) => f.severity === s).length;
+    expect(structured.summary).toEqual({
+      error: count("error"), warning: count("warning"), info: count("info"),
+    });
+    expect(structured.summary.error + structured.summary.warning + structured.summary.info)
+      .toBe(structured.findings.length);
+  });
+
+  it("prints the same counts in the prose as it returns in the summary", () => {
+    const { text, structured } = perfReport({ source: BAD_PAGE, filename: "index.html" });
+    const { error, warning, info } = structured.summary;
+    expect(text).toContain(`**${error} error · ${warning} warning · ${info} info**`);
+  });
+
+  it("gives every structured finding the fields an agent needs to act", () => {
+    const { structured } = perfReport({ source: BAD_PAGE, filename: "index.html" });
+    for (const f of structured.findings) {
+      expect(f.rule, JSON.stringify(f)).toBeTruthy();
+      expect(["error", "warning", "info"]).toContain(f.severity);
+      expect(f.message.length, f.rule).toBeGreaterThan(10);
+      expect(f.fix.length, f.rule).toBeGreaterThan(10);
+      expect(f.doc, f.rule).toBeTruthy();
+      expect(typeof f.line, f.rule).toBe("number");
+    }
+  });
+
+  it("names the file on every finding in directory mode, not only in the prose", () => {
+    const dir = mkdtempSync(join(tmpdir(), "saglitz-perf-report-"));
+    writeFileSync(join(dir, "index.html"), BAD_PAGE);
+    const { text, structured } = perfReport({ root: dir });
+    expect(text).toContain("index.html");
+    const withFile = structured.findings.filter((f) => f.file === "index.html");
+    expect(withFile.length).toBeGreaterThan(0);
+    for (const f of withFile) expect(f.message.startsWith("index.html:")).toBe(false);
+  });
+
+  it("reports a capped scan as partial rather than complete", () => {
+    const dir = mkdtempSync(join(tmpdir(), "saglitz-perf-capped-"));
+    const padding = `<p>${"lorem ipsum dolor sit amet ".repeat(15_000)}</p>`;
+    for (let i = 0; i < 9; i++) writeFileSync(join(dir, `page-${i}.html`), padding);
+    expect(perfReport({ root: dir }).text).toMatch(/results are partial/i);
+  }, 30_000);
+
+  it("returns the notVisible list it printed, entry for entry", () => {
+    const { text, structured } = perfReport({ source: BAD_PAGE, filename: "index.html" });
+    expect(structured.notVisible).toEqual(PERF_NOT_VISIBLE);
+    expect(structured.notVisible.length).toBeGreaterThan(4);
+    for (const entry of structured.notVisible) expect(text).toContain(entry);
+  });
+});
+
+describe("perfReport — what it discloses it cannot see", () => {
+  const notVisible = PERF_NOT_VISIBLE.join("\n");
+
+  it("says plainly that nothing here is measured", () => {
+    expect(notVisible).toMatch(/Nothing here is measured/i);
+    expect(notVisible).toMatch(/75th-percentile field data/i);
+  });
+
+  it("discloses metadata and headers injected at build or request time", () => {
+    expect(notVisible).toMatch(/build or request time/i);
+  });
+
+  it("discloses everything that needs the whole site graph", () => {
+    expect(notVisible).toMatch(/broken links/i);
+    expect(notVisible).toMatch(/orphan/i);
+    expect(notVisible).toMatch(/redirect chains/i);
+  });
+
+  it("names all three conditions that silence lazy-hero and hero-no-fetchpriority", () => {
+    expect(notVisible).toContain("lazy-hero");
+    expect(notVisible).toContain("hero-no-fetchpriority");
+    expect(notVisible).toMatch(/no `?<main>`?/i);
+    expect(notVisible).toMatch(/unresolved component/i);
+    expect(notVisible).toMatch(/200 characters/);
+  });
+
+  it("discloses that image-without-dimensions cannot read sizing from elsewhere", () => {
+    expect(notVisible).toContain("image-without-dimensions");
+    expect(notVisible).toMatch(/external stylesheet/i);
+    expect(notVisible).toMatch(/CSS module/i);
+  });
+
+  it("leaves the above-the-fold judgement with the reader", () => {
+    expect(notVisible).toMatch(/above the fold/i);
+    expect(notVisible).toMatch(/judgement/i);
+  });
+
+  it("never claims a vitals verdict or a ranking outcome anywhere in the report", () => {
+    const { text } = perfReport({ source: "<p>hello</p>", filename: "index.html" });
+    const forbidden = new RegExp([
+      "your (?:LCP|INP|CLS)",
+      "(?:LCP|INP|CLS) (?:is|will be|would be) (?:good|bad|fine|poor|fast|slow)",
+      "Core Web Vitals (?:score|verdict|pass|fail)",
+      "passes? (?:CWV|Core Web Vitals)", "fails? (?:CWV|Core Web Vitals)",
+      "will rank", "rank higher", "improve your rankings", "boost your ranking", "guarantee",
+    ].join("|"), "i");
+    expect(forbidden.test(text), text).toBe(false);
   });
 });

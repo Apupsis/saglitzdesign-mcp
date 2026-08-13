@@ -79,8 +79,9 @@
 // `hero-no-fetchpriority` do not cover every page, and the report should say
 // so rather than let a silent run read as a clean one.
 
-import { type LintFinding } from "./lint.js";
+import { type LintFinding, type AuditReport, assembleAuditReport } from "./lint.js";
 import { scanTags, type Tag, maskComments, elementSpan, flattenTags } from "./scan.js";
+import { scanProject, MAX_FILES } from "./project.js";
 
 const lineOf = (src: string, index: number): number =>
   src.slice(0, index).split("\n").length;
@@ -886,4 +887,66 @@ function nearestWrapper(masked: string, tags: Tag[], tag: Tag): Tag | null {
     if (!best || other.index > best.index) best = other;
   }
   return best;
+}
+
+// ── the report ───────────────────────────────────────────────────────────────
+
+/**
+ * What this audit structurally cannot see, as a machine-readable list.
+ *
+ * The first three entries are the ones every auditor in this family owes its
+ * reader. The rest are the specific limitations the rules above discovered and
+ * disclosed in their own comments — and a limitation disclosed only in a source
+ * comment has not reached the person acting on the output. `lazy-hero`'s
+ * scoping in particular buys its accuracy with silence, and silence read as a
+ * clean bill is the failure that scoping exists to avoid.
+ */
+export const PERF_NOT_VISIBLE: string[] = [
+  "**Nothing here is measured.** Core Web Vitals — LCP, INP, CLS — are 75th-percentile field data from real visitors on real devices. This reads authored signals out of source text, makes no request to your site and renders nothing, so no finding above is a vitals result and no clean run is a vitals verdict. Measure with field data (CrUX, RUM) and profile a real load; this only tells you what the source instructs the browser to do.",
+  "**Anything a framework or a server adds at build or request time.** A bundler that splits, preloads or inlines; an image component that generates `srcset` and dimensions; a font a plugin subsets and self-hosts; caching, compression and `Priority` hints set on the response. None of it is in the files that were read.",
+  "**Anything that needs the whole site graph.** Broken links, orphan pages, redirect chains, how many bytes a route really ships, and what a third-party script pulls in after it loads. Every finding above is scoped to the file it names.",
+  "**Whether an image is above the fold.** Nothing in a source file says which element the browser painted largest, or what fell inside the first viewport — that depends on a viewport, a device and a scroll position this audit never sees. `lazy-hero` and `hero-no-fetchpriority` report the first image inside `<main>` as a *candidate*; whether it is really the one that matters is a judgement the reader has to make.",
+  "**`lazy-hero` and `hero-no-fetchpriority` on a page whose hero cannot be located.** They say nothing at all when the file has no `<main>` (a Next.js page whose `<main>` lives in `layout.tsx`), when an unresolved component sits above the first image (`<Hero />` is very likely rendering the image that really comes first), or when more than 200 characters of visible copy precede it inside `<main>` (a mid-article diagram, correctly lazy). Silence from these two rules usually means no candidate could be identified — it is not a verdict on the hero.",
+  "**Sizing that lives outside the file being read.** `image-without-dimensions` reads `width`/`height` attributes, inline styles, Tailwind sizing utilities and CSS in the same file. An external stylesheet that was not scanned still counts as unsized, so a correctly sized image can be reported; and a CSS module reached through `className={styles.cover}` is unreadable, so the rule stays silent rather than invent a finding. It errs in both directions here, and the file it names is the one to check.",
+];
+
+/**
+ * The performance audit for one snippet or a whole project, in both registers.
+ *
+ * There are no project-level rules here — every performance rule is a fact
+ * about one file — so directory mode is the same rules run over every file, and
+ * a capped scan costs coverage rather than correctness. It is still reported:
+ * a partial audit that reads as a complete one is the failure this whole family
+ * of modules is built against.
+ */
+export function perfReport(input: { source?: string; filename?: string; root?: string }): AuditReport {
+  const findings: LintFinding[] = [];
+  let scanned: string;
+  let known: Set<string> | undefined;
+
+  if (input.root) {
+    const scan = scanProject(input.root, PERF_EXTENSIONS);
+    known = new Set(scan.files.map((f) => f.path));
+    for (const f of scan.files) {
+      findings.push(...perfRules(f.source, f.path).map((x) => ({ ...x, message: `${f.path}: ${x.message}` })));
+    }
+    scanned = `Scanned ${scan.files.length} files under \`${input.root}\`.`;
+    if (scan.hitFileCap) scanned += ` Stopped at the ${MAX_FILES}-file cap — results are partial, and files after it were not read at all.`;
+    if (scan.hitByteCap) scanned += ` Stopped at the total-bytes cap — results are partial, and files after it were not read at all.`;
+    if (scan.skippedLarge.length) scanned += ` Skipped ${scan.skippedLarge.length} oversized file(s).`;
+  } else {
+    findings.push(...perfRules(input.source ?? "", input.filename));
+    scanned = "Scanned one snippet. A stylesheet in another file cannot be seen from here — pass `path` to read the CSS beside the markup.";
+  }
+
+  return assembleAuditReport({
+    heading: "Performance audit",
+    scanned,
+    findings,
+    preamble: "This audit reads local files only — it makes no request to your site, loads nothing and times nothing. It cannot see:",
+    notVisible: PERF_NOT_VISIBLE,
+    closing: "A clean result here means the source that was read instructs the browser correctly on these specific points. What the page actually does for a real visitor is a measurement, and this is not one — take it from field data and a profiled load.",
+    knownFiles: known,
+    file: input.root ? undefined : input.filename,
+  });
 }

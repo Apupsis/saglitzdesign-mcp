@@ -60,7 +60,18 @@ const SMOKE: Record<string, Record<string, unknown>> = {
   audit_project: { path: join(root, "recipes") },
   audit_security: { code: `<script src="https://cdn.example.com/a.js"></script>` },
   audit_generic_design: { code: `<div class="bg-gradient-to-r from-indigo-500 to-purple-600"><h3>🚀 Fast</h3></div>` },
+  audit_seo_geo: {
+    code: `<!doctype html><html lang="en"><head><meta charset="utf-8"></head><body><main><h1>A</h1><h1>B</h1><img src="/a.png"></main></body></html>`,
+    filename: "index.html",
+  },
+  audit_performance: {
+    code: `<!doctype html><html lang="en"><head><script src="/js/tag.js"></script></head><body><main><img src="/hero.jpg" alt="Hero" loading="lazy" fetchpriority="high"></main></body></html>`,
+    filename: "index.html",
+  },
 };
+
+/** The only two tools that declare an outputSchema. */
+const STRUCTURED_TOOLS = ["audit_seo_geo", "audit_performance"];
 
 let client: Client;
 let transport: StdioClientTransport;
@@ -107,10 +118,11 @@ describe("server handshake", () => {
       expect(t.annotations?.title, t.name).toBeTruthy();
       expect(t.annotations?.readOnlyHint, t.name).toBe(true);
       expect(t.annotations?.openWorldHint, t.name).toBe(false);
-      // None of the 31 tools declares an outputSchema yet. The wrapper's
-      // conditional spread must keep the key absent — not present-as-undefined —
-      // so this checks the real wire representation, not the wrapper's args.
-      expect("outputSchema" in t, t.name).toBe(false);
+      // Exactly two tools declare an outputSchema. For every other tool the
+      // wrapper's conditional spread must keep the key absent — not
+      // present-as-undefined — so this checks the real wire representation,
+      // not the wrapper's arguments.
+      expect("outputSchema" in t, t.name).toBe(STRUCTURED_TOOLS.includes(t.name));
     }
   });
 
@@ -147,16 +159,15 @@ describe("every tool answers a representative call", () => {
 });
 
 describe("structured output (outputSchema)", () => {
-  // The production server is a singleton spawned once in beforeAll, and none
-  // of its 31 tools declares an outputSchema — that direction is covered
-  // above, against the real tools/list. To exercise the wrapper's other path
-  // (a tool that DOES pass one) without registering a 32nd tool on the real
-  // server, this stands up its own throwaway McpServer, wired to its own
-  // Client over an in-memory transport, and registers two tools the same way
-  // src/index.ts's `tool()` wrapper does: outputSchema spread in only when
-  // given. tools/list on this mini server is just as much the genuine wire
-  // representation as the real server's — it is what an MCP client actually
-  // sees, not the wrapper's JS arguments.
+  // Written when no registered tool declared an outputSchema and the wrapper's
+  // positive path could only be exercised on a throwaway server. Two real
+  // tools declare one now, and the describe below proves both directions
+  // against the production server — but this keeps the wrapper's contract
+  // isolated from the tools that happen to use it: `outputSchema` spread in
+  // only when given, and the key genuinely absent otherwise. tools/list on
+  // this mini server is just as much the real wire representation as the
+  // production server's — it is what an MCP client actually sees, not the
+  // wrapper's JS arguments.
   it("advertises an outputSchema only for the tool that declared one", async () => {
     const testServer = new McpServer({ name: "outputschema-probe", version: "0.0.0" });
 
@@ -217,6 +228,141 @@ describe("structured output (outputSchema)", () => {
       await testServer.close();
     }
   });
+});
+
+// The two audit tools are the first structured output this server ships. The
+// probe above proves the wrapper's shape on a throwaway server; this proves it
+// on the real one — that the schema reaches `tools/list`, that the payload
+// actually validates against the schema as declared, and that the summary
+// agrees with the findings it summarises.
+describe("audit_seo_geo and audit_performance return validated structured output", () => {
+  /**
+   * A minimal JSON Schema check, over the subset the declared schema uses:
+   * object/array/string/number/integer/boolean, `required`, `enum`. Written by
+   * hand rather than pulled in, because this repository ships no runtime
+   * dependency it does not need — and validating against the *advertised*
+   * schema is the point, so a hand-copied expectation would not do.
+   */
+  function schemaErrors(schema: any, value: unknown, path = "$"): string[] {
+    if (!schema || typeof schema !== "object") return [];
+    const errors: string[] = [];
+    if (Array.isArray(schema.enum) && !schema.enum.includes(value)) {
+      errors.push(`${path}: ${JSON.stringify(value)} is not one of ${JSON.stringify(schema.enum)}`);
+    }
+    switch (schema.type) {
+      case "object": {
+        if (value === null || typeof value !== "object" || Array.isArray(value)) {
+          return [...errors, `${path}: expected object, got ${JSON.stringify(value)}`];
+        }
+        const obj = value as Record<string, unknown>;
+        for (const key of schema.required ?? []) {
+          if (!(key in obj)) errors.push(`${path}.${key}: required but missing`);
+        }
+        for (const [key, sub] of Object.entries(schema.properties ?? {})) {
+          if (key in obj) errors.push(...schemaErrors(sub, obj[key], `${path}.${key}`));
+        }
+        break;
+      }
+      case "array": {
+        if (!Array.isArray(value)) return [...errors, `${path}: expected array`];
+        value.forEach((item, i) => errors.push(...schemaErrors(schema.items, item, `${path}[${i}]`)));
+        break;
+      }
+      case "string":
+        if (typeof value !== "string") errors.push(`${path}: expected string`);
+        break;
+      case "integer":
+        if (!Number.isInteger(value)) errors.push(`${path}: expected integer`);
+        break;
+      case "number":
+        if (typeof value !== "number") errors.push(`${path}: expected number`);
+        break;
+      case "boolean":
+        if (typeof value !== "boolean") errors.push(`${path}: expected boolean`);
+        break;
+      default:
+        break;
+    }
+    return errors;
+  }
+
+  it("validates the hand-written checker against a payload it must reject", () => {
+    const schema = {
+      type: "object",
+      required: ["a"],
+      properties: { a: { type: "array", items: { type: "string" } } },
+    };
+    expect(schemaErrors(schema, { a: ["ok"] })).toEqual([]);
+    expect(schemaErrors(schema, { a: [1] }).length).toBeGreaterThan(0);
+    expect(schemaErrors(schema, {}).length).toBeGreaterThan(0);
+  });
+
+  for (const name of STRUCTURED_TOOLS) {
+    it(`${name} advertises an outputSchema describing findings, summary and notVisible`, async () => {
+      const { tools } = await client.listTools();
+      const schema = tools.find((t) => t.name === name)?.outputSchema as any;
+      expect(schema, name).toBeTruthy();
+      expect(schema.type).toBe("object");
+      expect(Object.keys(schema.properties ?? {}).sort()).toEqual(["findings", "notVisible", "summary"]);
+      expect((schema.required ?? []).sort()).toEqual(["findings", "notVisible", "summary"]);
+      const finding = schema.properties.findings.items;
+      expect((finding.required ?? []).sort()).toEqual(["doc", "fix", "message", "rule", "severity"]);
+      expect(finding.properties.severity.enum.sort()).toEqual(["error", "info", "warning"]);
+    });
+
+    it(`${name} returns structuredContent that validates against that schema`, async () => {
+      const { tools } = await client.listTools();
+      const schema = tools.find((t) => t.name === name)?.outputSchema as any;
+      // `client.callTool` validates structuredContent against the cached
+      // schema itself and throws when it does not match, so reaching the
+      // assertions below is already half the proof.
+      const result = (await client.callTool({ name, arguments: SMOKE[name] })) as {
+        isError?: boolean;
+        structuredContent?: Record<string, unknown>;
+        content?: Array<{ type: string; text?: string }>;
+      };
+      expect(result.isError ?? false, name).toBe(false);
+      expect(result.structuredContent, name).toBeTruthy();
+      expect(schemaErrors(schema, result.structuredContent), name).toEqual([]);
+    }, 20_000);
+
+    it(`${name} returns a summary that agrees with its own findings`, async () => {
+      const result = (await client.callTool({ name, arguments: SMOKE[name] })) as {
+        structuredContent?: {
+          findings: Array<{ severity: string }>;
+          summary: { error: number; warning: number; info: number };
+          notVisible: string[];
+        };
+      };
+      const structured = result.structuredContent!;
+      const count = (s: string) => structured.findings.filter((f) => f.severity === s).length;
+      expect(structured.summary).toEqual({
+        error: count("error"), warning: count("warning"), info: count("info"),
+      });
+      expect(structured.findings.length, `${name} should find something in its smoke case`).toBeGreaterThan(0);
+    }, 20_000);
+
+    it(`${name} carries a non-empty notVisible list, every entry of which is in the prose`, async () => {
+      const result = (await client.callTool({ name, arguments: SMOKE[name] })) as {
+        structuredContent?: { notVisible: string[] };
+        content?: Array<{ type: string; text?: string }>;
+      };
+      const notVisible = result.structuredContent!.notVisible;
+      expect(notVisible.length, name).toBeGreaterThan(4);
+      const body = textOf(result);
+      for (const entry of notVisible) expect(body, `${name}: ${entry}`).toContain(entry);
+      // The one claim neither tool may make from source.
+      expect(notVisible.join(" ")).toMatch(/Nothing here is measured/i);
+    }, 20_000);
+
+    it(`${name}'s description tells a client it reads source and does not measure`, async () => {
+      const { tools } = await client.listTools();
+      const description = tools.find((t) => t.name === name)?.description ?? "";
+      expect(description.length, name).toBeGreaterThan(40);
+      expect(description, name).toMatch(/reads (?:your )?source/i);
+      expect(description, name).toMatch(/does not measure|measures nothing|no measurement/i);
+    });
+  }
 });
 
 describe("resources", () => {

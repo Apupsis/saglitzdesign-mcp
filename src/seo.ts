@@ -58,8 +58,9 @@
 //     never both report the same defect.
 // A framework component on its own gets silence, which is the honest answer.
 
-import { type LintFinding } from "./lint.js";
+import { type LintFinding, type AuditReport, assembleAuditReport } from "./lint.js";
 import { scanTags, type Tag, maskComments, elementSpan, flattenTags } from "./scan.js";
+import { scanProject, MAX_FILES } from "./project.js";
 
 const lineOf = (src: string, index: number): number =>
   src.slice(0, index).split("\n").length;
@@ -1247,4 +1248,95 @@ export function seoConfigRules(
   }
 
   return out.sort((a, b) => a.line - b.line);
+}
+
+// ── the report ───────────────────────────────────────────────────────────────
+
+/**
+ * The metadata shapes `metadataRegions`, `NAMED_TAG_SHAPE` and
+ * `METADATA_MENTION` between them can read. Stated in the report because the
+ * alternative is a reader concluding, from silence, that their metadata is
+ * absent — the same failure `securityReport` documents for header shapes, and
+ * the one this module's own header calls the framework-metadata question.
+ */
+const RECOGNISED_METADATA = [
+  "`<title>`, `<meta name=\"description\">` and `<link rel=\"canonical\">` inside a real `<head>`",
+  "a Next.js `metadata` export, `generateMetadata()`, and `metadata = someHelper({ … })` — where what the call's own arguments say is read and the helper's defaults are not",
+  "Remix / React Router `meta` and `links` exports",
+  "Nuxt `useHead`, `useSeoMeta` and `definePageMeta`",
+  "Astro frontmatter and `<svelte:head>`",
+  "`<Head>`, `<Helmet>`, `<NextSeo>` and `<Seo>` components",
+  "the site-level metadata in `nuxt.config`, `astro.config`, `gatsby-config`, `docusaurus.config`, `svelte.config` and `next-seo.config`",
+].join("; ");
+
+/**
+ * What this audit structurally cannot see, as a machine-readable list.
+ *
+ * Every entry is here because it is a limitation the rules actually have, and
+ * several were discovered by a false positive on correct work. An agent
+ * chaining audit → fix reads this as a peer of the findings: silence on a
+ * subject named below is this tool's reach, not a clean page.
+ */
+export const SEO_NOT_VISIBLE: string[] = [
+  "**Nothing here is measured.** Core Web Vitals are 75th-percentile field data from real visitors on real devices, and indexing and ranking are a search engine's own behaviour. This reads authored signals out of source text, makes no request to your site and renders nothing, so no finding above is — or can be — a vitals result, an indexing status or a ranking outcome.",
+  "**Metadata a framework injects at build or request time.** A title merged in from a layout, a description written by a CMS, a canonical assembled in middleware or a header set at a CDN edge is not in the files that were read. Its absence here is not its absence in the response a crawler receives.",
+  "**Anything that needs the whole site graph.** Broken links, orphan pages, redirect chains, duplicate content across routes, whether a sitemap's URLs resolve, and whether any of it is indexed. Every finding above is scoped to the file it names.",
+  `**Metadata shapes it does not recognise.** It reads ${RECOGNISED_METADATA}. A shape outside that list produces silence, not a finding — so a quiet run on an unrecognised stack is a statement about this audit's reach, not about the page.`,
+  "**An HTML email graded as a web page.** Email templates are exempted from the page rules when a layout table appears beside either a mail path (`emails/`, `mail/`, `mailers/`, `.eml`, `.mjml`) or Outlook-only markup (`xmlns:v`, `xmlns:o`, `mso-` declarations). A genuine email that sits outside a mail path and carries no Outlook markup is graded as a page, and its missing description and canonical are then reported as defects when they are correct for an email. The third signal that would have caught it also exempted a real landing page, so this miss is deliberate.",
+  "**A client-rendered shell whose mount point it does not recognise.** The head rules step aside for a shell that names a known mount — `root`, `app`, `__next`, `___gatsby`, `__nuxt`, `main-app`, `q-app`, `ember-app`, `app-root`, or an `<app-root>` / `<ember-app>` element — or that loads a script recognisable as the application's own bundle. A shell with some other mount id whose only script is a plain `type=\"module\"` file is read as a finished document, and is reported as missing the title, description and canonical its framework writes at runtime.",
+  "**A component demo page graded as an indexed page.** A standalone HTML file whose job is to demonstrate one component — this repository's own `recipes/*/html-css.html` files are the example — carries a real `<head>`, so it is graded as a self-contained document. The missing description, missing canonical and missing alt text reported against it are true of the file and beside the point for a page no crawler will ever fetch. Read findings on demo, style-guide and sandbox files as facts about those files.",
+  "**Whether the content deserves to rank.** Nothing here reads the writing: this checks that a description exists and is roughly the right length, never that it is worth clicking, answers the question, or says anything a reader wanted. `audit_ux_copy` grades the prose, and `get_design_doc(\"on-page-seo\")` covers the judgement.",
+];
+
+/**
+ * The SEO and GEO audit for one snippet or a whole project, in both registers.
+ *
+ * Directory mode is the useful one: `seoConfigRules` needs robots.txt, llms.txt
+ * and the whole file list to say anything, and a single component cannot prove
+ * its own metadata absent — see the module header.
+ */
+export function seoReport(input: { source?: string; filename?: string; root?: string }): AuditReport {
+  const findings: LintFinding[] = [];
+  let scanned: string;
+  let known: Set<string> | undefined;
+
+  if (input.root) {
+    const scan = scanProject(input.root, SEO_EXTENSIONS, SEO_FILENAMES);
+    const files = scan.files.map((f) => ({ path: f.path, source: f.source }));
+    known = new Set(files.map((f) => f.path));
+
+    for (const f of files) {
+      findings.push(...seoRules(f.source, f.path).map((x) => ({ ...x, message: `${f.path}: ${x.message}` })));
+    }
+
+    /**
+     * The one wiring that cannot be done anywhere else. `seoConfigRules`
+     * demotes every absence claim to an unconfirmed note when the scan stopped
+     * early, and this is the only place the scan's own caps meet the rules. Drop
+     * the flag and the demotion never runs: a capped scan then reports "no file
+     * read here declares a canonical" as a warning, about files it never opened.
+     * That is this package's forbidden claim in its plainest form.
+     */
+    const truncated = scan.hitFileCap || scan.hitByteCap;
+    findings.push(...seoConfigRules(files, { truncated }));
+
+    scanned = `Scanned ${scan.files.length} files under \`${input.root}\`.`;
+    if (scan.hitFileCap) scanned += ` Stopped at the ${MAX_FILES}-file cap — results are partial, and every absence claim below is unconfirmed.`;
+    if (scan.hitByteCap) scanned += ` Stopped at the total-bytes cap — results are partial, and every absence claim below is unconfirmed.`;
+    if (scan.skippedLarge.length) scanned += ` Skipped ${scan.skippedLarge.length} oversized file(s).`;
+  } else {
+    findings.push(...seoRules(input.source ?? "", input.filename));
+    scanned = "Scanned one snippet. robots.txt, llms.txt, sitemap and project-wide metadata rules need a directory — pass `path` for those.";
+  }
+
+  return assembleAuditReport({
+    heading: "SEO & GEO audit",
+    scanned,
+    findings,
+    preamble: "This audit reads local files only — it makes no request to your site and renders nothing. It cannot see:",
+    notVisible: SEO_NOT_VISIBLE,
+    closing: "A clean result here means the files that were read declare nothing wrong. It is not a statement about how the page is crawled, indexed, ranked or experienced — check those where they actually happen.",
+    knownFiles: known,
+    file: input.root ? undefined : input.filename,
+  });
 }

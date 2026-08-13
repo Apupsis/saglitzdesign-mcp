@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { join } from "node:path";
-import { seoRules, seoConfigRules, SEO_EXTENSIONS, SEO_FILENAMES } from "../dist/seo.js";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { seoRules, seoConfigRules, seoReport, SEO_NOT_VISIBLE, SEO_EXTENSIONS, SEO_FILENAMES } from "../dist/seo.js";
 import { loadKnowledge, findDoc } from "../dist/knowledge.js";
 
 const ids = (code: string, filename?: string) =>
@@ -1209,4 +1211,181 @@ describe("every doc a rule cites resolves and makes the rule's claim", () => {
       expect(forbidden.test(`${f.message} ${f.fix}`), `${f.rule}: ${f.message} ${f.fix}`).toBe(false);
     }
   });
+});
+
+// ── the report and its structured half ───────────────────────────────────────
+//
+// `seoReport` is the surface `audit_seo_geo` returns. The rules above are
+// tested for what they claim; these test what the *report* claims, which is a
+// separate liability: a summary that disagrees with its own findings, or a
+// "Not visible" section that quietly drops a limitation the rules disclosed,
+// is exactly the silent wrongness this package exists to avoid.
+
+describe("seoReport — the prose and the structure agree", () => {
+  const BAD_PAGE = `<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"></head>
+<body>
+  <main>
+    <h1>One</h1>
+    <h1>Two</h1>
+    <img src="/a.png">
+  </main>
+</body>
+</html>`;
+
+  it("returns markdown and a structured payload from one call", () => {
+    const { text, structured } = seoReport({ source: BAD_PAGE, filename: "index.html" });
+    expect(text).toContain("# SEO & GEO audit");
+    expect(text.length).toBeGreaterThan(40);
+    expect(structured.findings.length).toBeGreaterThan(0);
+  });
+
+  it("counts a summary that agrees with its own findings", () => {
+    const { structured } = seoReport({ source: BAD_PAGE, filename: "index.html" });
+    const count = (s: string) => structured.findings.filter((f) => f.severity === s).length;
+    expect(structured.summary).toEqual({
+      error: count("error"), warning: count("warning"), info: count("info"),
+    });
+    expect(structured.summary.error + structured.summary.warning + structured.summary.info)
+      .toBe(structured.findings.length);
+  });
+
+  it("prints the same counts in the prose as it returns in the summary", () => {
+    const { text, structured } = seoReport({ source: BAD_PAGE, filename: "index.html" });
+    const { error, warning, info } = structured.summary;
+    expect(text).toContain(`**${error} error · ${warning} warning · ${info} info**`);
+  });
+
+  it("gives every structured finding the fields an agent needs to act", () => {
+    const { structured } = seoReport({ source: BAD_PAGE, filename: "index.html" });
+    for (const f of structured.findings) {
+      expect(f.rule, JSON.stringify(f)).toBeTruthy();
+      expect(["error", "warning", "info"]).toContain(f.severity);
+      expect(f.message.length, f.rule).toBeGreaterThan(10);
+      expect(f.fix.length, f.rule).toBeGreaterThan(10);
+      expect(f.doc, f.rule).toBeTruthy();
+      expect(typeof f.line, f.rule).toBe("number");
+    }
+  });
+
+  it("names the file on every finding in directory mode, not only in the prose", () => {
+    const dir = mkdtempSync(join(tmpdir(), "saglitz-seo-report-"));
+    writeFileSync(join(dir, "index.html"), BAD_PAGE);
+    const { text, structured } = seoReport({ root: dir });
+    expect(text).toContain("index.html");
+    const withFile = structured.findings.filter((f) => f.file === "index.html");
+    expect(withFile.length).toBeGreaterThan(0);
+    // The path is a field, not only a prefix inside the sentence.
+    for (const f of withFile) expect(f.message.startsWith("index.html:")).toBe(false);
+  });
+
+  it("returns the notVisible list it printed, entry for entry", () => {
+    const { text, structured } = seoReport({ source: BAD_PAGE, filename: "index.html" });
+    expect(structured.notVisible).toEqual(SEO_NOT_VISIBLE);
+    expect(structured.notVisible.length).toBeGreaterThan(5);
+    for (const entry of structured.notVisible) expect(text).toContain(entry);
+  });
+});
+
+describe("seoReport — what it discloses it cannot see", () => {
+  const notVisible = SEO_NOT_VISIBLE.join("\n");
+
+  it("says plainly that nothing here is measured", () => {
+    expect(notVisible).toMatch(/Nothing here is measured/i);
+    expect(notVisible).toMatch(/75th-percentile field data/i);
+  });
+
+  it("discloses metadata injected at build or request time", () => {
+    expect(notVisible).toMatch(/build or request time/i);
+  });
+
+  it("discloses everything that needs the whole site graph", () => {
+    expect(notVisible).toMatch(/broken links/i);
+    expect(notVisible).toMatch(/orphan/i);
+    expect(notVisible).toMatch(/redirect chains/i);
+  });
+
+  it("names the metadata shapes it recognises, and says an unrecognised one is silent", () => {
+    for (const shape of [
+      "generateMetadata", "useHead", "useSeoMeta", "svelte:head", "Astro frontmatter",
+      "NextSeo", "Helmet", "links",
+    ]) {
+      expect(notVisible, shape).toContain(shape);
+    }
+    expect(notVisible).toMatch(/silence, not a finding/i);
+  });
+
+  it("discloses that a real email outside a mail path is graded as a page", () => {
+    expect(notVisible).toMatch(/mso-/);
+    expect(notVisible).toMatch(/graded as a (?:web )?page/i);
+  });
+
+  it("discloses the SPA shell whose mount id it does not recognise", () => {
+    expect(notVisible).toMatch(/mount/i);
+    expect(notVisible).toMatch(/type="module"/);
+  });
+
+  it("discloses that a component demo page draws findings that are true of the file", () => {
+    expect(notVisible).toMatch(/demo/i);
+    expect(notVisible).toMatch(/html-css\.html/);
+  });
+
+  it("hands the question of whether the content deserves to rank to the right tools", () => {
+    expect(notVisible).toMatch(/audit_ux_copy/);
+    expect(notVisible).toMatch(/on-page-seo/);
+  });
+
+  it("never claims a vitals verdict or a ranking outcome anywhere in the report", () => {
+    const { text } = seoReport({ source: "<p>hello</p>", filename: "index.html" });
+    const forbidden = new RegExp([
+      "your (?:LCP|INP|CLS)",
+      "(?:LCP|INP|CLS) (?:is|will be|would be) (?:good|bad|fine|poor)",
+      "Core Web Vitals (?:score|verdict|pass|fail)",
+      "will rank", "rank higher", "improve your rankings", "boost your ranking", "guarantee",
+    ].join("|"), "i");
+    expect(forbidden.test(text), text).toBe(false);
+  });
+});
+
+describe("seoReport — a truncated scan cannot prove absence", () => {
+  /** A project whose files are read in full: nothing is capped. */
+  const smallProject = (): string => {
+    const dir = mkdtempSync(join(tmpdir(), "saglitz-seo-small-"));
+    writeFileSync(join(dir, "robots.txt"), "User-agent: *\nDisallow: /admin\n");
+    writeFileSync(join(dir, "index.html"), "<!doctype html>\n<html><body><main><h1>Hi</h1><p>Words.</p></main></body></html>");
+    return dir;
+  };
+
+  /** The same project, plus enough bytes to trip `scanProject`'s total cap. */
+  const cappedProject = (): string => {
+    const dir = smallProject();
+    const padding = `<p>${"lorem ipsum dolor sit amet ".repeat(15_000)}</p>`; // ~405 KB, under the per-file cap
+    for (let i = 0; i < 9; i++) writeFileSync(join(dir, `page-${i}.html`), padding);
+    return dir;
+  };
+
+  it("claims absence outright when the whole project was read", () => {
+    const { structured } = seoReport({ root: smallProject() });
+    const sitemap = structured.findings.find((f) => f.rule === "sitemap-not-referenced");
+    expect(sitemap, "robots.txt without a Sitemap line should be reported").toBeTruthy();
+    expect(sitemap!.message).not.toMatch(/unconfirmed/i);
+  });
+
+  // The wiring this task exists to get right: `seoConfigRules` accepts
+  // `{ truncated }` and demotes every absence claim when it is set, and this
+  // report is the only place `hitFileCap || hitByteCap` can be handed to it.
+  // Without the pass-through the demotion never runs and a capped scan claims
+  // an absence it did not read far enough to prove.
+  it("demotes every absence claim to an unconfirmed note when the scan stopped at a cap", () => {
+    const { text, structured } = seoReport({ root: cappedProject() });
+    expect(text).toMatch(/results are partial/i);
+    const sitemap = structured.findings.find((f) => f.rule === "sitemap-not-referenced");
+    expect(sitemap, "the robots.txt finding should still be produced").toBeTruthy();
+    expect(sitemap!.message).toMatch(/absence is unconfirmed/i);
+    expect(sitemap!.severity).toBe("info");
+    for (const f of structured.findings.filter((x) => /missing|absent|not-referenced/.test(x.rule))) {
+      expect(f.severity, `${f.rule} should be demoted`).toBe("info");
+    }
+  }, 30_000);
 });
