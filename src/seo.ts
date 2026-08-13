@@ -1281,10 +1281,10 @@ export const SEO_NOT_VISIBLE: string[] = [
   "**Nothing here is measured.** Core Web Vitals are 75th-percentile field data from real visitors on real devices, and indexing and ranking are a search engine's own behaviour. This reads authored signals out of source text, makes no request to your site and renders nothing, so no finding above is — or can be — a vitals result, an indexing status or a ranking outcome.",
   "**Metadata a framework injects at build or request time.** A title merged in from a layout, a description written by a CMS, a canonical assembled in middleware or a header set at a CDN edge is not in the files that were read. Its absence here is not its absence in the response a crawler receives.",
   "**Anything that needs the whole site graph.** Broken links, orphan pages, redirect chains, duplicate content across routes, whether a sitemap's URLs resolve, and whether any of it is indexed. Every finding above is scoped to the file it names.",
-  `**Metadata shapes it does not recognise.** It reads ${RECOGNISED_METADATA}. A shape outside that list produces silence, not a finding — so a quiet run on an unrecognised stack is a statement about this audit's reach, not about the page.`,
-  "**An HTML email graded as a web page.** Email templates are exempted from the page rules when a layout table appears beside either a mail path (`emails/`, `mail/`, `mailers/`, `.eml`, `.mjml`) or Outlook-only markup (`xmlns:v`, `xmlns:o`, `mso-` declarations). A genuine email that sits outside a mail path and carries no Outlook markup is graded as a page, and its missing description and canonical are then reported as defects when they are correct for an email. The third signal that would have caught it also exempted a real landing page, so this miss is deliberate.",
-  "**A client-rendered shell whose mount point it does not recognise.** The head rules step aside for a shell that names a known mount — `root`, `app`, `__next`, `___gatsby`, `__nuxt`, `main-app`, `q-app`, `ember-app`, `app-root`, or an `<app-root>` / `<ember-app>` element — or that loads a script recognisable as the application's own bundle. A shell with some other mount id whose only script is a plain `type=\"module\"` file is read as a finished document, and is reported as missing the title, description and canonical its framework writes at runtime.",
-  "**A component demo page graded as an indexed page.** A standalone HTML file whose job is to demonstrate one component — this repository's own `recipes/*/html-css.html` files are the example — carries a real `<head>`, so it is graded as a self-contained document. The missing description, missing canonical and missing alt text reported against it are true of the file and beside the point for a page no crawler will ever fetch. Read findings on demo, style-guide and sandbox files as facts about those files.",
+  `**Metadata shapes it does not recognise.** It reads ${RECOGNISED_METADATA}. A shape outside that list is invisible, and that costs differently at the two scopes absence is claimed at. In one file it costs silence: nothing is claimed about metadata this audit cannot read. Across a directory it can cost a finding — \`title-missing\`, \`meta-description-missing\` and \`canonical-missing\` are project-scope claims, and a project whose title is declared in a shape above while its description and canonical are declared in a shape below will draw both as warnings. They are worded as what they are ("no file read here declares a meta description"), and on an unrecognised stack that is a fact about this audit's reach rather than about the page.`,
+  "**An HTML email graded as a web page.** Email templates are exempted from the page rules when a layout table appears beside either a mail path (`emails/`, `mail/`, `mailers/`, `.eml`, `.mjml`) or Outlook-only markup (`xmlns:v`, `xmlns:o`, `mso-` declarations). A genuine email that sits outside a mail path and carries no Outlook markup is graded as a page, and its missing description and canonical are then reported as defects when they are correct for an email — its subject-line title is graded as a page title too, which is how `title-length` turns up on one. The third signal that would have caught it also exempted a real landing page, so this miss is deliberate.",
+  "**A client-rendered shell whose mount point it does not recognise.** The head rules step aside for a shell that names a known mount — `root`, `app`, `__next`, `___gatsby`, `__nuxt`, `main-app`, `q-app`, `ember-app`, `app-root`, or an `<app-root>` / `<ember-app>` element — or that loads a script recognisable as the application's own bundle. A shell with some other mount id whose only script is a plain `type=\"module\"` file is read as a finished document, and is reported as missing the description and canonical its framework writes at runtime. A shell that ships a placeholder title (`<title>My App</title>`) is graded on that title rather than reported as having none.",
+  "**A component demo page graded as an indexed page.** A standalone HTML file whose job is to demonstrate one component — this repository's own `recipes/*/html-css.html` files are the example — carries a real `<head>`, so it is graded as a self-contained document. The missing description, missing canonical and short-title warnings reported against it are true of the file and beside the point for a page no crawler will ever fetch. Read findings on demo, style-guide and sandbox files as facts about those files.",
   "**Whether the content deserves to rank.** Nothing here reads the writing: this checks that a description exists and is roughly the right length, never that it is worth clicking, answers the question, or says anything a reader wanted. `audit_ux_copy` grades the prose, and `get_design_doc(\"on-page-seo\")` covers the judgement.",
 ];
 
@@ -1296,17 +1296,17 @@ export const SEO_NOT_VISIBLE: string[] = [
  * its own metadata absent — see the module header.
  */
 export function seoReport(input: { source?: string; filename?: string; root?: string }): AuditReport {
-  const findings: LintFinding[] = [];
+  const findings: Array<LintFinding & { file?: string }> = [];
   let scanned: string;
-  let known: Set<string> | undefined;
 
   if (input.root) {
     const scan = scanProject(input.root, SEO_EXTENSIONS, SEO_FILENAMES);
     const files = scan.files.map((f) => ({ path: f.path, source: f.source }));
-    known = new Set(files.map((f) => f.path));
 
+    // The path rides along as a field. The report folds it into the prose; a
+    // caller reading `structuredContent` gets it without parsing a sentence.
     for (const f of files) {
-      findings.push(...seoRules(f.source, f.path).map((x) => ({ ...x, message: `${f.path}: ${x.message}` })));
+      findings.push(...seoRules(f.source, f.path).map((x) => ({ ...x, file: f.path })));
     }
 
     /**
@@ -1336,7 +1336,6 @@ export function seoReport(input: { source?: string; filename?: string; root?: st
     preamble: "This audit reads local files only — it makes no request to your site and renders nothing. It cannot see:",
     notVisible: SEO_NOT_VISIBLE,
     closing: "A clean result here means the files that were read declare nothing wrong. It is not a statement about how the page is crawled, indexed, ranked or experienced — check those where they actually happen.",
-    knownFiles: known,
     file: input.root ? undefined : input.filename,
   });
 }

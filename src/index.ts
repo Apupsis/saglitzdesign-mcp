@@ -945,6 +945,7 @@ tool(
     + "It reads source and does not measure anything: no request is made to your site, nothing is rendered, and no finding is or can be a Core Web Vitals result, an indexing status or a ranking outcome — so do not call it expecting a vitals or ranking report. "
     + "Absence is only ever claimed where it can be proven — a self-contained HTML document, or a whole directory — and a scan that hits its cap downgrades every absence claim to an unconfirmed note. "
     + "Returns markdown plus structured output: findings (rule, severity, message, fix, doc, file, line), a severity summary, and a machine-readable `notVisible` list of what it could not check. "
+    + "A missing or non-directory path is returned as an error result, not as an empty audit. "
     + "Pair with audit_performance for the delivery signals, audit_ux_copy for whether the writing earns the click, and seo_geo_guide for the guidance behind the rules.",
   {
     path: z.string().optional().describe("Directory to audit. Absolute paths are strongly preferred. This is the useful mode — robots.txt, llms.txt, sitemap and project-wide metadata rules all need a directory."),
@@ -984,9 +985,10 @@ tool(
     + "It reads source and does not measure anything: Core Web Vitals are 75th-percentile field data from real devices, this loads nothing and times nothing, and no finding is or can be an LCP, INP or CLS verdict — so do not call it expecting a vitals report. "
     + "Its hero rules are deliberately narrow (the first image inside <main>, with the header logo and the mid-article diagram structurally excluded), which means some pages get no hero finding at all; that limitation and the others are returned explicitly rather than left to read as a clean result. "
     + "Returns markdown plus structured output: findings (rule, severity, message, fix, doc, file, line), a severity summary, and a machine-readable `notVisible` list of what it could not check. "
+    + "A missing or non-directory path is returned as an error result, not as an empty audit. "
     + "Pair with audit_seo_geo for the crawl and answer-engine signals, and measure_screenshot for the rendered result.",
   {
-    path: z.string().optional().describe("Directory to audit. Absolute paths are strongly preferred — it is the only mode that can read the CSS beside the markup."),
+    path: z.string().optional().describe("Directory to audit. Absolute paths are strongly preferred. Every file is audited on its own — a stylesheet in another file does not size an image in this one, even when both are scanned."),
     code: z.string().optional().describe("A single snippet to audit instead of a directory."),
     filename: z.string().optional().describe("Filename for the snippet, e.g. 'index.html', 'Page.tsx' or 'styles.css'. Some rules depend on it: a stylesheet and a component are read differently."),
   },

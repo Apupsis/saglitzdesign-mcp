@@ -361,6 +361,11 @@ describe("audit_seo_geo and audit_performance return validated structured output
       expect(description.length, name).toBeGreaterThan(40);
       expect(description, name).toMatch(/reads (?:your )?source/i);
       expect(description, name).toMatch(/does not measure|measures nothing|no measurement/i);
+      // These two are the only tools here that answer a bad path with an
+      // error result rather than prose — a consequence of declaring an
+      // outputSchema — and a caller should learn that from the description
+      // rather than from a surprise.
+      expect(description, name).toMatch(/error result, not as an empty audit/i);
     });
   }
 });

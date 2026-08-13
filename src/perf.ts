@@ -907,7 +907,7 @@ export const PERF_NOT_VISIBLE: string[] = [
   "**Anything that needs the whole site graph.** Broken links, orphan pages, redirect chains, how many bytes a route really ships, and what a third-party script pulls in after it loads. Every finding above is scoped to the file it names.",
   "**Whether an image is above the fold.** Nothing in a source file says which element the browser painted largest, or what fell inside the first viewport — that depends on a viewport, a device and a scroll position this audit never sees. `lazy-hero` and `hero-no-fetchpriority` report the first image inside `<main>` as a *candidate*; whether it is really the one that matters is a judgement the reader has to make.",
   "**`lazy-hero` and `hero-no-fetchpriority` on a page whose hero cannot be located.** They say nothing at all when the file has no `<main>` (a Next.js page whose `<main>` lives in `layout.tsx`), when an unresolved component sits above the first image (`<Hero />` is very likely rendering the image that really comes first), or when more than 200 characters of visible copy precede it inside `<main>` (a mid-article diagram, correctly lazy). Silence from these two rules usually means no candidate could be identified — it is not a verdict on the hero.",
-  "**Sizing that lives outside the file being read.** `image-without-dimensions` reads `width`/`height` attributes, inline styles, Tailwind sizing utilities and CSS in the same file. An external stylesheet that was not scanned still counts as unsized, so a correctly sized image can be reported; and a CSS module reached through `className={styles.cover}` is unreadable, so the rule stays silent rather than invent a finding. It errs in both directions here, and the file it names is the one to check.",
+  "**Sizing that lives outside the file being read.** `image-without-dimensions` reads `width`/`height` attributes, inline styles, Tailwind sizing utilities, and CSS in the *same* file — a `<style>` block beside the markup, or the stylesheet itself when a `.css` file is what was read. Every file is audited on its own, so an external stylesheet does not size an image even when that stylesheet was scanned in the same run: a `.cover` class sized in `styles.css` still draws the finding on `index.html`. A CSS module reached through `className={styles.cover}` goes the other way — the class is unreadable, so the rule stays silent rather than invent a finding. It errs in both directions here, and the file it names is the one to check.",
 ];
 
 /**
@@ -920,15 +920,14 @@ export const PERF_NOT_VISIBLE: string[] = [
  * of modules is built against.
  */
 export function perfReport(input: { source?: string; filename?: string; root?: string }): AuditReport {
-  const findings: LintFinding[] = [];
+  const findings: Array<LintFinding & { file?: string }> = [];
   let scanned: string;
-  let known: Set<string> | undefined;
 
   if (input.root) {
     const scan = scanProject(input.root, PERF_EXTENSIONS);
-    known = new Set(scan.files.map((f) => f.path));
+    // The path rides along as a field; the report folds it into the prose.
     for (const f of scan.files) {
-      findings.push(...perfRules(f.source, f.path).map((x) => ({ ...x, message: `${f.path}: ${x.message}` })));
+      findings.push(...perfRules(f.source, f.path).map((x) => ({ ...x, file: f.path })));
     }
     scanned = `Scanned ${scan.files.length} files under \`${input.root}\`.`;
     if (scan.hitFileCap) scanned += ` Stopped at the ${MAX_FILES}-file cap — results are partial, and files after it were not read at all.`;
@@ -936,7 +935,7 @@ export function perfReport(input: { source?: string; filename?: string; root?: s
     if (scan.skippedLarge.length) scanned += ` Skipped ${scan.skippedLarge.length} oversized file(s).`;
   } else {
     findings.push(...perfRules(input.source ?? "", input.filename));
-    scanned = "Scanned one snippet. A stylesheet in another file cannot be seen from here — pass `path` to read the CSS beside the markup.";
+    scanned = "Scanned one snippet. Sizing and font rules read only the CSS in this snippet — a separate stylesheet is not resolved here, and passing `path` audits each file on its own rather than joining them.";
   }
 
   return assembleAuditReport({
@@ -946,7 +945,6 @@ export function perfReport(input: { source?: string; filename?: string; root?: s
     preamble: "This audit reads local files only — it makes no request to your site, loads nothing and times nothing. It cannot see:",
     notVisible: PERF_NOT_VISIBLE,
     closing: "A clean result here means the source that was read instructs the browser correctly on these specific points. What the page actually does for a real visitor is a measurement, and this is not one — take it from field data and a profiled load.",
-    knownFiles: known,
     file: input.root ? undefined : input.filename,
   });
 }

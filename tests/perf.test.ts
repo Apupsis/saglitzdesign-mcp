@@ -844,6 +844,16 @@ describe("perfReport — the prose and the structure agree", () => {
     for (const f of withFile) expect(f.message.startsWith("index.html:")).toBe(false);
   });
 
+  /** The path is data, not a prefix parsed back out of the sentence. */
+  it("carries a path that contains a colon", () => {
+    const dir = mkdtempSync(join(tmpdir(), "saglitz-perf-colon-"));
+    writeFileSync(join(dir, "chapter 2: the fall.html"), BAD_PAGE);
+    const { text, structured } = perfReport({ root: dir });
+    expect(structured.findings.length).toBeGreaterThan(0);
+    for (const f of structured.findings) expect(f.file, f.rule).toBe("chapter 2: the fall.html");
+    expect(text).toContain("chapter 2: the fall.html:");
+  });
+
   it("reports a capped scan as partial rather than complete", () => {
     const dir = mkdtempSync(join(tmpdir(), "saglitz-perf-capped-"));
     const padding = `<p>${"lorem ipsum dolor sit amet ".repeat(15_000)}</p>`;
@@ -889,6 +899,20 @@ describe("perfReport — what it discloses it cannot see", () => {
     expect(notVisible).toContain("image-without-dimensions");
     expect(notVisible).toMatch(/external stylesheet/i);
     expect(notVisible).toMatch(/CSS module/i);
+    // Not "it cannot see an unscanned stylesheet" — every file is audited on
+    // its own, so a stylesheet scanned in the same run does not size an image
+    // in another file either. Implying that a directory audit joins them
+    // would send a reader to re-run the tool instead of to the file.
+    expect(notVisible).toMatch(/even when that stylesheet was scanned/i);
+  });
+
+  it("is right about that: a scanned sibling stylesheet does not size the image", () => {
+    const dir = mkdtempSync(join(tmpdir(), "saglitz-perf-css-"));
+    writeFileSync(join(dir, "index.html"),
+      `<!doctype html><html lang="en"><head><link rel="stylesheet" href="/styles.css"></head><body><main><p>Copy.</p><img src="/p.jpg" alt="A photo" class="cover"></main></body></html>`);
+    writeFileSync(join(dir, "styles.css"), `.cover { aspect-ratio: 16 / 9; width: 100%; }`);
+    const { structured } = perfReport({ root: dir });
+    expect(structured.findings.map((f) => f.rule)).toContain("image-without-dimensions");
   });
 
   it("leaves the above-the-fold judgement with the reader", () => {

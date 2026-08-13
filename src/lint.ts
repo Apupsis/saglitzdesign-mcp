@@ -392,11 +392,20 @@ export function designLintReport(code: string): string {
  * wrongness these tools exist to catch in other people's code. So both come out
  * of one function, counted once and rendered twice.
  *
- * The file convention follows `securityReport`: the path is folded into the
- * message for the prose, because a reader takes one line in at a glance and
- * `(line 12)` beside `app/page.tsx:12` puts the same number in their eye twice.
- * The structured half lifts it back out into its own field, because an agent
- * chaining audit → fix needs to open the file, not parse the sentence.
+ * The path travels as data and is folded into the prose here, never recovered
+ * from it. An earlier version did the reverse — the callers prefixed the
+ * message with `path: ` for the prose and this function split it back out on
+ * the first `": "` — and a file legitimately named `chapter 2: the fall.html`
+ * broke the split, silently dropping `file` from every finding in that file.
+ * The prose still reads the way `securityReport`'s does, with the path folded
+ * into the message (a reader takes one line in at a glance, and `(line 12)`
+ * beside `app/page.tsx:12` puts the same number in their eye twice), but that
+ * is now a rendering decision rather than a channel.
+ *
+ * Findings whose path is already inside their message — `seoConfigRules` writes
+ * `robots.txt: …` itself, and a project-wide claim is attributed to
+ * `configuration:` rather than to any file — simply arrive with no `file`, and
+ * nothing here goes looking for one.
  */
 export function assembleAuditReport(input: {
   heading: string;
@@ -404,19 +413,17 @@ export function assembleAuditReport(input: {
   scanned: string;
   /** Anything else that belongs above the counts, e.g. coverage. */
   notes?: string[];
-  findings: LintFinding[];
+  /** Each finding, carrying its own path where the caller knows one. */
+  findings: Array<LintFinding & { file?: string }>;
   /** The opening sentence of the "Not visible to this audit" section. */
   preamble: string;
   notVisible: string[];
   /** The closing sentence, which must never imply a measurement or a ranking. */
   closing: string;
-  /** Paths a `path: ` message prefix may be lifted out of, in directory mode. */
-  knownFiles?: Set<string>;
   /** Snippet mode: the filename the caller named, if any. */
   file?: string;
 }): AuditReport {
   const { findings, notVisible } = input;
-  const known = input.knownFiles ?? new Set<string>();
 
   const summary = {
     error: findings.filter((f) => f.severity === "error").length,
@@ -439,7 +446,7 @@ export function assembleAuditReport(input: {
       if (!group.items.length) continue;
       lines.push(`## ${group.title}`, "");
       for (const f of group.items) {
-        lines.push(`- **${f.rule}** (line ${f.line}) — ${f.message}`);
+        lines.push(`- **${f.rule}** (line ${f.line}) — ${f.file ? `${f.file}: ` : ""}${f.message}`);
         lines.push(`  - Fix: ${f.fix}`);
         if (f.doc) lines.push(`  - Read: \`get_design_doc("${f.doc}")\``);
       }
@@ -453,17 +460,11 @@ export function assembleAuditReport(input: {
 
   const structured: AuditStructured = {
     findings: findings.map((f): AuditFinding => {
-      let file = input.file;
-      let message = f.message;
-      const at = message.indexOf(": ");
-      if (at > 0 && known.has(message.slice(0, at))) {
-        file = message.slice(0, at);
-        message = message.slice(at + 2);
-      }
+      const file = f.file ?? input.file;
       return {
         rule: f.rule,
         severity: f.severity,
-        message,
+        message: f.message,
         fix: f.fix,
         doc: f.doc ?? "",
         ...(file ? { file } : {}),

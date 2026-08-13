@@ -1280,6 +1280,22 @@ describe("seoReport — the prose and the structure agree", () => {
     for (const f of withFile) expect(f.message.startsWith("index.html:")).toBe(false);
   });
 
+  /**
+   * The path travels as data, so a path that cannot survive a round trip
+   * through prose still arrives. An earlier version prefixed the message with
+   * `path: ` and split it back out on the first `": "`; a file named
+   * `chapter 2: the fall.html` — legal on macOS and Linux — broke the split,
+   * and `file` went silently missing from every finding in that file.
+   */
+  it("carries a path that contains a colon", () => {
+    const dir = mkdtempSync(join(tmpdir(), "saglitz-seo-colon-"));
+    writeFileSync(join(dir, "chapter 2: the fall.html"), BAD_PAGE);
+    const { text, structured } = seoReport({ root: dir });
+    expect(structured.findings.length).toBeGreaterThan(0);
+    for (const f of structured.findings) expect(f.file, f.rule).toBe("chapter 2: the fall.html");
+    expect(text).toContain("chapter 2: the fall.html:");
+  });
+
   it("returns the notVisible list it printed, entry for entry", () => {
     const { text, structured } = seoReport({ source: BAD_PAGE, filename: "index.html" });
     expect(structured.notVisible).toEqual(SEO_NOT_VISIBLE);
@@ -1313,7 +1329,31 @@ describe("seoReport — what it discloses it cannot see", () => {
     ]) {
       expect(notVisible, shape).toContain(shape);
     }
-    expect(notVisible).toMatch(/silence, not a finding/i);
+    // The claim this entry makes about an unrecognised shape has to be the
+    // true one, and the true one has two halves: silence in a single file,
+    // and — because `title-missing`, `meta-description-missing` and
+    // `canonical-missing` are also claimed at project scope — a possible
+    // finding across a directory, against metadata that is really there in a
+    // shape this audit cannot read. An earlier draft of this entry said only
+    // "silence, not a finding", which understated it in the damaging
+    // direction: a disclosure that hides a false positive is worse than none.
+    expect(notVisible).toMatch(/costs silence/i);
+    expect(notVisible).toMatch(/can cost a finding/i);
+    expect(notVisible).toContain("meta-description-missing");
+  });
+
+  // The project-scope half of that entry, driven rather than asserted: a
+  // directory whose description and canonical are declared in a shape this
+  // module does not read draws both absence warnings anyway.
+  it("does draw a project-scope absence finding against an unrecognised shape", () => {
+    const dir = mkdtempSync(join(tmpdir(), "saglitz-seo-shape-"));
+    writeFileSync(join(dir, "page.tsx"),
+      `export const metadata = { title: "A recognised title" };\nexport default function P() { return <main><h1>Home</h1><p>Words.</p></main>; }\n`);
+    writeFileSync(join(dir, "other.tsx"),
+      `export const seo = defineSeo({ description: "Declared in a shape this module does not read.", canonical: "https://example.com/" });\nexport default function O() { return <main><h1>Other</h1><p>Words.</p></main>; }\n`);
+    const rules = seoReport({ root: dir }).structured.findings.map((f) => f.rule);
+    expect(rules).toContain("meta-description-missing");
+    expect(rules).toContain("canonical-missing");
   });
 
   it("discloses that a real email outside a mail path is graded as a page", () => {
@@ -1329,6 +1369,22 @@ describe("seoReport — what it discloses it cannot see", () => {
   it("discloses that a component demo page draws findings that are true of the file", () => {
     expect(notVisible).toMatch(/demo/i);
     expect(notVisible).toMatch(/html-css\.html/);
+  });
+
+  /**
+   * The named example, driven. A disclosure that names the wrong rules is the
+   * inversion of the thing it exists to serve, and this entry named one rule
+   * that never fires here (`alt-missing` — only one recipe ships an `<img>`
+   * and it carries `alt`) while omitting a third of the findings by count
+   * (`title-length`). So the entry is checked against the rules the example
+   * actually produces rather than against a memory of them.
+   */
+  it("names exactly the rules its own worked example produces", () => {
+    const { structured } = seoReport({ root: join(__dirname, "..", "recipes") });
+    const fired = new Set(structured.findings.map((f) => f.rule));
+    expect([...fired].sort()).toEqual(["canonical-missing", "meta-description-missing", "title-length"]);
+    expect(notVisible).toMatch(/missing description, missing canonical and short-title/i);
+    expect(notVisible).not.toMatch(/missing alt text/i);
   });
 
   it("hands the question of whether the content deserves to rank to the right tools", () => {
