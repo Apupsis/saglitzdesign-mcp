@@ -53,6 +53,18 @@ describe("scanning", () => {
   it("is deterministic", () => {
     expect(scanProject(root).files.map((f) => f.path)).toEqual(scanProject(root).files.map((f) => f.path));
   });
+
+  it("scans files matched by exact name even without an extension", () => {
+    const dir = mkdtempSync(join(tmpdir(), "sd-scan-"));
+    writeFileSync(join(dir, "_headers"), "/*\n  X-Frame-Options: DENY\n");
+    writeFileSync(join(dir, "app.css"), "a { color: red }");
+
+    const withNames = scanProject(dir, [".css"], ["_headers"]);
+    expect(withNames.files.map((f) => f.path).sort()).toEqual(["_headers", "app.css"]);
+
+    const withoutNames = scanProject(dir, [".css"]);
+    expect(withoutNames.files.map((f) => f.path)).toEqual(["app.css"]);
+  });
 });
 
 describe("auditing", () => {

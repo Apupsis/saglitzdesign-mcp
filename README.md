@@ -9,7 +9,7 @@ expert‑level guidance on **web, iOS, Android and macOS design** — plus the
 **UX, copywriting, SEO, GEO and marketing** knowledge that makes a product
 actually convert.
 
-88 curated knowledge documents · 29 tools · 8 build/review/port workflows · MCP resources with id autocomplete · a one‑call design‑system builder · real token/color/type/elevation/motion/a11y generators · design & UX‑copy linters · production component recipes · phased roadmaps · real‑world visual examples
+93 curated knowledge documents · 30 tools · 8 build/review/port workflows · MCP resources with id autocomplete · a one‑call design‑system builder · real token/color/type/elevation/motion/a11y generators · design & UX‑copy linters · production component recipes · phased roadmaps · real‑world visual examples
 
 [![npm](https://img.shields.io/npm/v/saglitzdesign-mcp?color=cb3837&logo=npm)](https://www.npmjs.com/package/saglitzdesign-mcp)
 [![CI](https://github.com/HalidSaglam/saglitzdesign-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/HalidSaglam/saglitzdesign-mcp/actions/workflows/ci.yml)
@@ -50,7 +50,7 @@ instead of guessing.
 
 ## What's inside
 
-**88 knowledge documents across 10 categories:**
+**93 knowledge documents across 11 categories:**
 
 | Category | Coverage |
 |---|---|
@@ -63,6 +63,7 @@ instead of guessing.
 | 📣 **Marketing** | Branding & identity · email marketing · **HTML email development** (Outlook, dark mode, bulletproof) · ad creative · paywall benchmarks (RevenueCat 2026) · growth frameworks (loops/AARRR/PLG) · pricing strategy · analytics & experimentation · value proposition & JTBD · **content & distribution** (topic clusters, community, referral) · **App Store Optimization (ASO)** |
 | 🔎 **SEO** | Technical SEO (Core Web Vitals) · on‑page & E‑E‑A‑T · SEO for designers |
 | 🤖 **GEO** | Generative Engine Optimization — visibility in ChatGPT / Perplexity / AI Overviews, llms.txt, citation tactics |
+| 🔐 **Security** | Web security headers & CSP — strict nonce/hash policies, `strict-dynamic`, Trusted Types, HSTS, SRI, cross-origin isolation, and the superseded headers auditors still ask for. Every claim sourced to a spec or vendor doc, re-verified on a 90-day clock. |
 | 🖼️ **Patterns & examples** | Real‑world patterns studied from top apps & sites (incl. **e‑commerce & checkout** and **fintech / trust** flows), plus a curated library of real‑world example screens |
 
 ## Workflows (`/` prompts) — "build me a…"
@@ -122,6 +123,7 @@ critique rubric, and iterates until it passes.
 | **`design_lint`** | Lints an HTML/CSS/JSX/Tailwind snippet for design & a11y anti‑patterns (hardcoded values, killed focus, missing alt/labels, clickable divs, unlabelled inputs…) with line numbers and fixes. Tag‑aware, so formatting never changes the verdict. |
 | **`measure_screenshot`** | **Measures your actual screen.** Give it a PNG and it reports the real palette and colour count, true WCAG contrast ratios for the pairs on screen, density, and structural detections (alignment, rhythm, off‑grid gaps) each with a confidence level — plus a self‑contained HTML report you can open and share. Pure‑Node PNG decoding, no network, no dependencies. |
 | **`audit_project`** | **Audits a real codebase, not a snippet.** Point it at a directory: it walks your design source, lints every file, and scores the whole project for consistency — cross‑file drift being exactly what a single‑file lint cannot see. Findings ranked worst‑file‑first with file:line, plus an explicit list of what it did not look at. |
+| **`audit_security`** | **Audits a web project or snippet for the defects that actually ship** — missing or weak Content‑Security‑Policy, absent HSTS, unpinned cross‑origin scripts, mixed content, credentials in `localStorage`, secret‑named `NEXT_PUBLIC_`/`VITE_` variables, unsandboxed third‑party iframes, wildcard `postMessage`, raw‑HTML sinks with no sanitiser, production source maps and un‑ignored `.env` files. Header state is inferred from `next.config` / `vercel.json` / `netlify.toml` / `_headers` / middleware, read as text and never evaluated — this makes no network request, and says what it could not see. |
 | **`audit_design_system`** | **Is there actually a system here?** Point it at real CSS/JSX and get a consistency score plus the sprawl behind it: how many distinct colors, sizes, radii, shadows and spacings are in use, which colors are indistinguishable duplicates, what's off the 4pt grid, token adoption — and a consolidation plan. |
 | **`audit_ux_copy`** | Objective copy audit — readability (Flesch), sentence length, passive voice, jargon, filler, user‑focus, weak CTAs — with flagged phrases and fixes. |
 | **`list_design_knowledge`** | Browse the full knowledge index by category / platform. |
@@ -136,7 +138,7 @@ with id autocompletion — instead of spending a tool call:
 | URI | What it is |
 |---|---|
 | `saglitzdesign://index` | The whole index: every document by category, with platform and last‑verified date. |
-| `saglitzdesign://doc/{id}` | One knowledge document in full (83 of them). Autocompletes on `id`. |
+| `saglitzdesign://doc/{id}` | One knowledge document in full (93 of them). Autocompletes on `id`. |
 | `saglitzdesign://recipe/{component}` | A component's spec plus its reference implementation in every available stack. |
 
 ### Visual examples
@@ -288,7 +290,7 @@ Drop a Markdown file anywhere under `knowledge/` with frontmatter:
 ---
 id: my-topic
 title: "My Topic"
-category: ux            # design-language | component | ux | seo | geo | pattern | craft | book | process | marketing
+category: ux            # design-language | component | ux | seo | geo | pattern | craft | book | process | marketing | security
 platform: both          # mobile | web | macos | both
 tags: [tag1, tag2]
 sources: ["https://…"]

@@ -83,7 +83,12 @@ false sense of coverage. So sourcing is a hard constraint here, not a preference
    MDN, FIDO Alliance/WebAuthn specs.
 2. The implementers — web.dev, Chrome Developers, WebKit, Mozilla security blog,
    the framework's own security documentation (Next.js, Astro, SvelteKit).
-3. OWASP — Top 10, ASVS, and the Cheat Sheet Series.
+3. OWASP — Top 10, ASVS, the Cheat Sheet Series, and the GenAI Security Project.
+   OWASP moved that project to its own `genai.owasp.org` domain and the
+   `owasp.org` page is now a legacy archive, so the allowlist names the
+   subdomain explicitly. Enumerating hosts means a project that moves goes
+   silently unciteable until the list catches up — Task 5 hit exactly that and
+   had to label the current LLM Top 10 as superseded 2023 numbering.
 4. Regulators for the privacy document — EDPB guidelines, the ICO, the KVKK
    authority. Not law-firm marketing pages.
 
@@ -183,7 +188,8 @@ Fired over `.html`, `.htm`, `.jsx`, `.tsx`, `.vue`, `.svelte`, `.astro`, `.ts`, 
 
 | Rule | Severity |
 |---|---|
-| `blank-without-noopener` — `target="_blank"` without `rel="noopener"` | error |
+| `window-open-without-noopener` — `window.open()` with no `noopener` in its features | warning |
+| `blank-without-noopener` — `target="_blank"` without `rel="noopener"` | info |
 | `external-script-no-sri` — cross-origin `<script src>` without `integrity` | error |
 | `http-subresource` — `src`/`href` on `http://` | error |
 | `token-in-localstorage` — `localStorage.setItem` keyed on token/jwt/auth/session | error |
@@ -210,7 +216,7 @@ Fired over `next.config.*`, `vercel.json`, `netlify.toml`, `_headers`,
 | `env-committed` — a `.env` present and not covered by `.gitignore` | error |
 | `hsts-missing` / `hsts-short-max-age` (< 15552000) / `hsts-no-subdomains` | warning |
 | `csp-missing-object-src` / `csp-missing-base-uri` / `csp-missing-frame-ancestors` | warning |
-| `referrer-policy-missing-or-unsafe` | warning |
+| `referrer-policy-unsafe` — set to a value that leaks more than the browser default | warning |
 | `permissions-policy-missing` | warning |
 | `x-content-type-options-missing` | warning |
 | `sourcemaps-in-production` | warning |

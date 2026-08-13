@@ -6,7 +6,7 @@
 
 import type { KnowledgeDoc } from "./knowledge.js";
 
-export const CATEGORIES = ["design-language", "component", "ux", "seo", "geo", "pattern", "craft", "book", "process", "marketing"] as const;
+export const CATEGORIES = ["design-language", "component", "ux", "seo", "geo", "pattern", "craft", "book", "process", "marketing", "security"] as const;
 export const PLATFORMS = ["mobile", "web", "macos"] as const;
 
 /**
@@ -39,6 +39,7 @@ export const REVIEW_MAP: Record<string, string[]> = {
     "spacing-layout", "motion-microinteractions", "animation-craft", "wwdc-design-principles", "visual-craft-standards",
     "clean-app-design", "iconography", "brand-on-native-platforms", "interaction-design-classics", "ux-writing", "naming-features-and-labels", "i18n-localization",
     "onboarding-permission-priming", "ai-product-ux", "app-store-optimization", "ethical-design", "fintech-trust",
+    "ai-feature-security",
   ],
   "macos-app": [
     "macos-app-design", "apple-hig-liquid-glass", "apple-intelligence-design", "buttons", "forms-inputs",
@@ -53,19 +54,22 @@ export const REVIEW_MAP: Record<string, string[]> = {
     "motion-microinteractions", "animation-craft", "visual-craft-standards", "clean-app-design", "iconography",
     "modern-css-design-primitives", "ux-writing", "naming-features-and-labels", "i18n-localization",
     "technical-seo", "on-page-seo", "seo-for-designers", "geo-tactics-checklist", "analytics-experimentation",
-    "ethical-design", "ecommerce-checkout",
+    "ethical-design", "ecommerce-checkout", "web-security-headers", "frontend-attack-surface",
+    "privacy-consent-and-tracking",
   ],
   "landing-page": [
     "conversion-ux", "storybrand-copywriting", "value-proposition-jtbd", "influence-persuasion", "psychology-of-design",
     "web-hero-sections", "web-feature-sections", "web-social-proof-footer", "web-landing-signup", "buttons",
     "typography", "color-systems", "spacing-layout", "visual-craft-standards", "clean-app-design", "iconography",
     "seo-for-designers", "on-page-seo", "geo-tactics-checklist", "accessibility", "ethical-design",
+    "privacy-consent-and-tracking",
   ],
   dashboard: [
     "navigation", "search-design", "web-dashboards", "cards-lists-modals", "data-visualization", "design-systems-methodology",
     "information-architecture", "theming-off-the-shelf", "principles-heuristics", "typography", "color-systems", "spacing-layout", "accessibility",
     "buttons", "forms-inputs", "visual-craft-standards", "clean-app-design", "iconography", "ux-writing",
-    "i18n-localization", "ai-product-ux", "ethical-design",
+    "i18n-localization", "ai-product-ux", "ethical-design", "web-security-headers", "auth-and-session-ux",
+    "frontend-attack-surface", "ai-feature-security",
   ],
 };
 
@@ -76,6 +80,7 @@ export const FOCUS_MAP: Record<string, (d: KnowledgeDoc) => boolean> = {
   accessibility: (d) => d.id === "accessibility",
   seo: (d) => d.category === "seo",
   geo: (d) => d.category === "geo",
+  security: (d) => d.category === "security",
   conversion: (d) => ["conversion-ux", "storybrand-copywriting", "influence-persuasion", "positioning-messaging"].includes(d.id) || d.category === "pattern",
   copywriting: (d) => ["ux-writing", "storybrand-copywriting", "positioning-messaging"].includes(d.id),
 };
@@ -105,8 +110,8 @@ export const ROADMAPS: Record<string, Roadmap> = {
       { title: "2. Message & copy", goal: "Homepage narrative + proof inventory before wireframes", docs: ["storybrand-copywriting", "influence-persuasion", "psychology-of-design", "ux-writing"] },
       { title: "3. Architecture & SEO/GEO foundations", goal: "Page map by search intent; rendering, schema, llms.txt planned", docs: ["information-architecture", "on-page-seo", "technical-seo", "geo-tactics-checklist", "navigation"] },
       { title: "4. Wireframe & visual design", goal: "Real copy in layouts; conversion patterns; clean craft pass", docs: ["conversion-ux", "web-hero-sections", "web-feature-sections", "web-pricing-sections", "web-landing-signup", "web-social-proof-footer", "ecommerce-checkout", "clean-app-design", "web-trends-2026", "modern-css-design-primitives", "design-engineering", "i18n-localization", ...CORE_FOUNDATION, ...CORE_CRAFT] },
-      { title: "5. Build & performance", goal: "CWV budget met; semantic, extractable HTML", docs: ["seo-for-designers", "design-engineering", "modern-css-design-primitives", "accessibility", "motion-microinteractions"] },
-      { title: "6. Launch & growth loop", goal: "Instrumented funnel; growth loops; one-variable tests; GEO visibility; distribution; honest conversion", docs: ["marketing-website-roadmap", "growth-frameworks", "analytics-experimentation", "geo-fundamentals", "content-distribution", "email-marketing", "email-html-development", "ad-creative", "ethical-design", "design-critique-scoring"] },
+      { title: "5. Build, performance & hardening", goal: "CWV budget met; semantic, extractable HTML; security headers set and the injection sinks swept before launch, not after an audit", docs: ["seo-for-designers", "design-engineering", "modern-css-design-primitives", "accessibility", "motion-microinteractions", "web-security-headers", "frontend-attack-surface"] },
+      { title: "6. Launch & growth loop", goal: "Instrumented funnel; growth loops; one-variable tests; GEO visibility; distribution; honest conversion", docs: ["marketing-website-roadmap", "growth-frameworks", "analytics-experimentation", "geo-fundamentals", "content-distribution", "email-marketing", "email-html-development", "ad-creative", "ethical-design", "privacy-consent-and-tracking", "design-critique-scoring"] },
     ],
   },
   "landing-page": {
@@ -116,7 +121,7 @@ export const ROADMAPS: Record<string, Roadmap> = {
       { title: "1. Offer & message", goal: "Value prop + headline/subhead/CTA + risk reducers written first", docs: ["positioning-messaging", "value-proposition-jtbd", "branding-identity", "storybrand-copywriting", "conversion-ux"] },
       { title: "2. Page narrative", goal: "Hero → proof → benefits → objections → final CTA", docs: ["conversion-ux", "web-hero-sections", "web-feature-sections", "web-social-proof-footer", "web-landing-signup", "influence-persuasion", "psychology-of-design"] },
       { title: "3. Design & craft", goal: "CTA pops (squint test); clean & mobile-first", docs: ["buttons", ...CORE_FOUNDATION, "clean-app-design", "web-trends-2026", "visual-craft-standards", "refactoring-ui"] },
-      { title: "4. Performance, SEO/GEO & launch", goal: "Lighthouse ≥90; schema + answer-first content; funnel instrumented; paid creative aligned", docs: ["seo-for-designers", "on-page-seo", "geo-tactics-checklist", "ad-creative", "accessibility"] },
+      { title: "4. Performance, SEO/GEO & launch", goal: "Lighthouse ≥90; schema + answer-first content; funnel instrumented; paid creative aligned; consent banner and tracking scripts reviewed before launch", docs: ["seo-for-designers", "on-page-seo", "geo-tactics-checklist", "ad-creative", "accessibility", "privacy-consent-and-tracking"] },
     ],
   },
   "ios-app": {
@@ -165,7 +170,7 @@ export const ROADMAPS: Record<string, Roadmap> = {
       { title: "2. IA & app shell", goal: "Sidebar structure, command palette, breadcrumbs", docs: ["information-architecture", "navigation", "search-design", "web-dashboards"] },
       { title: "3. Wireframes, copy & edge states", goal: "Real data shapes; empty/loading/error/zero-results for every view", docs: ["ux-writing", "cards-lists-modals", "mobile-empty-states-buttons", "i18n-localization"] },
       { title: "4. Design system & data-viz", goal: "Token system + governance; density mode; tables/forms/charts standardized", docs: ["design-systems-methodology", "theming-off-the-shelf", "data-visualization", ...CORE_FOUNDATION, "forms-inputs", "buttons"] },
-      { title: "5. Hi-fi & craft", goal: "Dense screens first; keyboard support; dark mode; clean & maintainable", docs: [...CORE_CRAFT, "clean-app-design", "design-engineering", "ai-product-ux", "motion-microinteractions", "principles-heuristics"] },
+      { title: "5. Hi-fi & craft", goal: "Dense screens first; keyboard support; dark mode; clean & maintainable; hardened at the header level, across sign-in, session and account-recovery flows, and at the injection sinks in the client code", docs: [...CORE_CRAFT, "clean-app-design", "design-engineering", "ai-product-ux", "motion-microinteractions", "principles-heuristics", "web-security-headers", "auth-and-session-ux", "frontend-attack-surface", "ai-feature-security"] },
       { title: "6. Pricing, onboarding & retention", goal: "Value-based pricing; time-to-value <60s; activation instrumented; honest, non-manipulative flows", docs: ["pricing-strategy", "web-pricing-sections", "mobile-onboarding-paywall", "hooked-retention", "growth-frameworks", "conversion-ux", "email-marketing", "ethical-design"] },
       { title: "7. Validate & iterate", goal: "Task-based tests; heuristic score; clean design→dev handoff; metrics + experiments", docs: [...CORE_VALIDATE, "design-handoff", "analytics-experimentation"] },
     ],
@@ -174,6 +179,10 @@ export const ROADMAPS: Record<string, Roadmap> = {
 
 // ── knowledge_freshness ──────────────────────────────────────────────────────
 export const STALE_DAYS: Record<string, number> = {
+  // Security guidance rots dangerously rather than merely going out of style: a
+  // reader who believes a stale claim thinks they are covered when they are not.
+  // Hence the tightest threshold in the table.
+  security: 90,
   seo: 120, geo: 120, "design-language": 240, pattern: 300,
   component: 365, ux: 365, craft: 365, book: 730, process: 365, marketing: 240,
 };

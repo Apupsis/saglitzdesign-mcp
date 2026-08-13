@@ -55,8 +55,28 @@ export interface ProjectAudit {
   worstFiles: Array<{ file: string; errors: number; warnings: number; info: number }>;
 }
 
-export function scanProject(root: string, extensions: string[] = UI_EXTENSIONS): ScanResult {
+/**
+ * Walk the tree, then read — in that order, and name-matched files first.
+ *
+ * The caps must never decide *which kind* of file gets read. A single pass
+ * that reads as it walks and hard-returns at `MAX_FILES` lets alphabetical
+ * order do the choosing: `app/`, `components/` and `lib/` all sort before
+ * `next.config.js`, so on a 420-component project the one file that declares
+ * the security headers was never opened — and the audit then reported the
+ * headers absent. A directory listing is cheap; the file *contents* are what
+ * the caps exist to bound. So the walk collects candidates unbounded (it is
+ * only readdir), the `filenames` matches — configuration, by construction a
+ * handful of small files — are read first and exempt from the file cap, and
+ * only the extension matches are capped. `hitFileCap` therefore means "some
+ * source files were not read", which is exactly what callers report.
+ */
+export function scanProject(
+  root: string,
+  extensions: string[] = UI_EXTENSIONS,
+  filenames: string[] = [],
+): ScanResult {
   const wanted = new Set(extensions.map((e) => e.toLowerCase()));
+  const wantedNames = new Set(filenames);
   const files: ProjectFile[] = [];
   const skippedLarge: string[] = [];
   const unreadable: string[] = [];
@@ -64,8 +84,10 @@ export function scanProject(root: string, extensions: string[] = UI_EXTENSIONS):
   let hitFileCap = false;
   let hitByteCap = false;
 
+  const named: string[] = [];
+  const byExt: string[] = [];
+
   const walk = (dir: string) => {
-    if (hitFileCap || hitByteCap) return;
     let entries;
     try {
       entries = readdirSync(dir, { withFileTypes: true });
@@ -75,7 +97,6 @@ export function scanProject(root: string, extensions: string[] = UI_EXTENSIONS):
     }
     // Deterministic order, so the same project always produces the same report.
     for (const entry of [...entries].sort((a, b) => a.name.localeCompare(b.name))) {
-      if (hitFileCap || hitByteCap) return;
       if (entry.name.startsWith(".") && entry.isDirectory() && !SKIP_DIRS.has(entry.name)) continue;
       const full = join(dir, entry.name);
       if (entry.isDirectory()) {
@@ -84,20 +105,29 @@ export function scanProject(root: string, extensions: string[] = UI_EXTENSIONS):
         continue;
       }
       if (!entry.isFile()) continue;
-      if (!wanted.has(extname(entry.name).toLowerCase())) continue;
+      // A name match is configuration; it is read before any of the capped
+      // source files, wherever in the tree it turned up.
+      if (wantedNames.has(entry.name)) named.push(full);
+      else if (wanted.has(extname(entry.name).toLowerCase())) byExt.push(full);
+    }
+  };
 
-      let size = 0;
-      try {
-        size = statSync(full).size;
-      } catch {
-        unreadable.push(relative(root, full));
-        continue;
-      }
-      const rel = relative(root, full);
-      if (size > MAX_FILE_BYTES) {
-        skippedLarge.push(rel);
-        continue;
-      }
+  walk(root);
+
+  const read = (full: string, capped: boolean): void => {
+    let size = 0;
+    try {
+      size = statSync(full).size;
+    } catch {
+      unreadable.push(relative(root, full));
+      return;
+    }
+    const rel = relative(root, full);
+    if (size > MAX_FILE_BYTES) {
+      skippedLarge.push(rel);
+      return;
+    }
+    if (capped) {
       if (files.length >= MAX_FILES) {
         hitFileCap = true;
         return;
@@ -106,16 +136,21 @@ export function scanProject(root: string, extensions: string[] = UI_EXTENSIONS):
         hitByteCap = true;
         return;
       }
-      try {
-        files.push({ path: rel, bytes: size, source: readFileSync(full, "utf8") });
-        scannedBytes += size;
-      } catch {
-        unreadable.push(rel);
-      }
+    }
+    try {
+      files.push({ path: rel, bytes: size, source: readFileSync(full, "utf8") });
+      scannedBytes += size;
+    } catch {
+      unreadable.push(rel);
     }
   };
 
-  walk(root);
+  for (const full of named) read(full, false);
+  for (const full of byExt) {
+    if (hitFileCap || hitByteCap) break; // everything after the first drop is unread too
+    read(full, true);
+  }
+
   return { files, scannedBytes, skippedLarge, hitFileCap, hitByteCap, unreadable };
 }
 

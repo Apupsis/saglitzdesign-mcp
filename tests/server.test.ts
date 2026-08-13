@@ -55,6 +55,7 @@ const SMOKE: Record<string, Record<string, unknown>> = {
   measure_screenshot: { path: fixturePath, format: "both" },
   import_design_tokens: { source: ":root{--color-primary:#4f46e5;--color-surface:#ffffff}", format: "css" },
   audit_project: { path: join(root, "recipes") },
+  audit_security: { code: `<script src="https://cdn.example.com/a.js"></script>` },
 };
 
 let client: Client;

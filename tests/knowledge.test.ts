@@ -23,7 +23,7 @@ describe("loadKnowledge", () => {
     expect(new Set(ids).size, `duplicate ids: ${ids.filter((v, i) => ids.indexOf(v) !== i)}`).toBe(ids.length);
   });
   it("categories stay within the registered enum", () => {
-    const allowed = new Set(["design-language", "component", "ux", "seo", "geo", "pattern", "craft", "book", "process", "marketing"]);
+    const allowed = new Set(["design-language", "component", "ux", "seo", "geo", "pattern", "craft", "book", "process", "marketing", "security"]);
     for (const d of docs) expect(allowed.has(d.category), `${d.id}: ${d.category}`).toBe(true);
   });
 });

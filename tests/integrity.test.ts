@@ -23,6 +23,7 @@ const TOOL_NAMES = new Set([
   "suggest_icon_library", "generate_type_scale", "generate_elevation_system", "generate_motion",
   "design_lint", "audit_ux_copy", "create_design_system", "audit_design_system",
   "generate_layout_system", "compare_design_languages", "measure_screenshot", "import_design_tokens", "audit_project",
+  "audit_security",
 ]);
 
 describe("knowledge base metadata", () => {
@@ -59,6 +60,17 @@ describe("knowledge base metadata", () => {
 
   it("has a staleness threshold for every category in use", () => {
     const missing = [...new Set(docs.map((d) => d.category))].filter((c) => !(c in STALE_DAYS));
+    expect(missing).toEqual([]);
+  });
+
+  it("declares a security category with documents in it", () => {
+    expect(CATEGORIES).toContain("security");
+    const sec = docs.filter((d) => d.category === "security");
+    expect(sec.length).toBeGreaterThan(0);
+  });
+
+  it("gives every category a staleness threshold", () => {
+    const missing = [...CATEGORIES].filter((c) => STALE_DAYS[c] === undefined);
     expect(missing).toEqual([]);
   });
 });
@@ -136,6 +148,37 @@ describe("catalogue references resolve", () => {
       d.category === "seo" || d.category === "geo" || languages.has(d.id);
     const orphans = docs.filter((d) => !referenced.has(d.id) && !exempt(d)).map((d) => d.id);
     expect(orphans).toEqual([]);
+  });
+});
+
+describe("security documents are reachable from the workflows", () => {
+  it("puts security in every web-facing review checklist", () => {
+    for (const key of ["website", "landing-page", "dashboard"]) {
+      const list = REVIEW_MAP[key] ?? [];
+      const hasSecurity = list.some((id) => docs.find((d) => d.id === id)?.category === "security");
+      expect(`${key}:${hasSecurity}`).toBe(`${key}:true`);
+    }
+  });
+
+  it("puts security in every web-facing roadmap", () => {
+    for (const key of ["website", "landing-page", "saas-web-app"]) {
+      const ids = (ROADMAPS[key]?.phases ?? []).flatMap((p) => p.docs);
+      const hasSecurity = ids.some((id) => docs.find((d) => d.id === id)?.category === "security");
+      expect(`${key}:${hasSecurity}`).toBe(`${key}:true`);
+    }
+  });
+
+  it("references all five security documents, not just the one that satisfies the orphan check", () => {
+    const referenced = new Set<string>();
+    for (const list of Object.values(REVIEW_MAP)) list.forEach((id) => referenced.add(id));
+    for (const rm of Object.values(ROADMAPS)) {
+      rm.fullGuides.forEach((id) => referenced.add(id));
+      rm.phases.forEach((p) => p.docs.forEach((id) => referenced.add(id)));
+    }
+    const unreferenced = docs
+      .filter((d) => d.category === "security" && !referenced.has(d.id))
+      .map((d) => d.id);
+    expect(unreferenced).toEqual([]);
   });
 });
 
@@ -260,5 +303,47 @@ describe("release metadata is in sync", () => {
 
   it("keeps the registry description within the 100-char limit", () => {
     expect(manifest.description.length).toBeLessThanOrEqual(100);
+  });
+});
+
+// Security guidance is only worth shipping if it is traceable to a standard or a
+// first-party vendor doc. Blog-tier sourcing is how confidently-wrong security
+// advice spreads, so the allowlist is enforced rather than merely documented.
+const PERMITTED_SOURCE_HOSTS = new Set([
+  "w3.org", "www.w3.org", "w3c.github.io", "whatwg.org", "html.spec.whatwg.org",
+  "datatracker.ietf.org", "rfc-editor.org", "developer.mozilla.org",
+  "web.dev", "developer.chrome.com", "developers.google.com", "webkit.org",
+  "hacks.mozilla.org", "owasp.org", "cheatsheetseries.owasp.org", "genai.owasp.org",
+  "fidoalliance.org", "passkeys.dev", "nextjs.org", "docs.astro.build",
+  "svelte.dev", "vite.dev", "edpb.europa.eu", "ico.org.uk", "kvkk.gov.tr",
+  "eur-lex.europa.eu", "caniuse.com",
+]);
+
+describe("security documents cite permitted sources only", () => {
+  it("uses no blog-tier source", () => {
+    const offenders: string[] = [];
+    for (const d of docs.filter((x) => x.category === "security")) {
+      for (const url of d.sources ?? []) {
+        let host: string;
+        try {
+          host = new URL(url).hostname.replace(/^www\./, "");
+        } catch {
+          offenders.push(`${d.id}: unparseable source ${url}`);
+          continue;
+        }
+        if (!PERMITTED_SOURCE_HOSTS.has(host) && !PERMITTED_SOURCE_HOSTS.has(`www.${host}`)) {
+          offenders.push(`${d.id}: ${host}`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it("cites at least three sources per document", () => {
+    const thin = docs
+      .filter((d) => d.category === "security")
+      .filter((d) => (d.sources ?? []).length < 3)
+      .map((d) => d.id);
+    expect(thin).toEqual([]);
   });
 });

@@ -17,7 +17,7 @@
 - **No heuristic rules.** A rule ships only if it can be stated as a fact about the source. False positives in security output teach the reader to distrust all of it.
 - **Every rule sets `doc`** to a knowledge document id that exists.
 - **Permitted source domains** for every `sources:` entry in the new documents:
-  `w3.org`, `www.w3.org`, `w3c.github.io`, `whatwg.org`, `html.spec.whatwg.org`, `datatracker.ietf.org`, `rfc-editor.org`, `developer.mozilla.org`, `web.dev`, `developer.chrome.com`, `developers.google.com`, `webkit.org`, `hacks.mozilla.org`, `owasp.org`, `cheatsheetseries.owasp.org`, `fidoalliance.org`, `passkeys.dev`, `nextjs.org`, `docs.astro.build`, `svelte.dev`, `vite.dev`, `edpb.europa.eu`, `ico.org.uk`, `kvkk.gov.tr`, `eur-lex.europa.eu`, `caniuse.com`.
+  `w3.org`, `www.w3.org`, `w3c.github.io`, `whatwg.org`, `html.spec.whatwg.org`, `datatracker.ietf.org`, `rfc-editor.org`, `developer.mozilla.org`, `web.dev`, `developer.chrome.com`, `developers.google.com`, `webkit.org`, `hacks.mozilla.org`, `owasp.org`, `cheatsheetseries.owasp.org`, `genai.owasp.org`, `fidoalliance.org`, `passkeys.dev`, `nextjs.org`, `docs.astro.build`, `svelte.dev`, `vite.dev`, `edpb.europa.eu`, `ico.org.uk`, `kvkk.gov.tr`, `eur-lex.europa.eu`, `caniuse.com`.
   Nothing else. No Medium, no dev.to, no listicles, no scanner vendors.
 - **`updated:`** is the date the claims were verified against the source, not the date the file was created. Use `2026-08-12` unless verification happens later.
 - **British/US spelling:** match surrounding files — the codebase uses British spelling in comments (`normalise`, `behaviour`) and US in user-facing docs. Follow the file you are in.
@@ -80,7 +80,7 @@ const PERMITTED_SOURCE_HOSTS = new Set([
   "w3.org", "www.w3.org", "w3c.github.io", "whatwg.org", "html.spec.whatwg.org",
   "datatracker.ietf.org", "rfc-editor.org", "developer.mozilla.org",
   "web.dev", "developer.chrome.com", "developers.google.com", "webkit.org",
-  "hacks.mozilla.org", "owasp.org", "cheatsheetseries.owasp.org",
+  "hacks.mozilla.org", "owasp.org", "cheatsheetseries.owasp.org", "genai.owasp.org",
   "fidoalliance.org", "passkeys.dev", "nextjs.org", "docs.astro.build",
   "svelte.dev", "vite.dev", "edpb.europa.eu", "ico.org.uk", "kvkk.gov.tr",
   "eur-lex.europa.eu", "caniuse.com",
@@ -254,7 +254,13 @@ Required sections and claims:
 
 Every claim verified against the OWASP cheat sheets and MDN listed above.
 
-- [ ] **Step 2: Run tests**
+- [ ] **Step 2: Wire it in — the suite fails otherwise**
+
+`tests/integrity.test.ts:131` asserts no document is orphaned from every checklist and roadmap (only `seo`, `geo` and design-language docs are exempt). A new security document that is not referenced fails the suite, so wiring is part of this task, not Task 10.
+
+In `src/catalog.ts`, add `"auth-and-session-ux"` to `REVIEW_MAP.dashboard` and to a phase of `ROADMAPS["saas-web-app"]`. Not `website` or `landing-page`: a marketing site rarely has sessions, and a checklist padded with documents that do not apply stops being read.
+
+- [ ] **Step 3: Run tests**
 
 ```bash
 npm test
@@ -262,7 +268,7 @@ npm test
 
 Expected: PASS — source allowlist and the ≥3-sources assertion both hold.
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
 git add knowledge/security/auth-and-session-ux.md
@@ -312,7 +318,13 @@ Required sections and claims:
 6. **`## Third-party scripts`** — every analytics, chat, A/B or tag-manager snippet is arbitrary script execution on your origin with your users' session. SRI, self-hosting, a subresource budget, and gating on consent. Tag managers specifically let a non-engineer ship script to production.
 7. **`## Secrets in the bundle`** — `NEXT_PUBLIC_*` and `VITE_*` are inlined into client JavaScript at build time and are public forever once shipped; rotate anything that has been. Source maps in production expose original sources. `.env` committed to git stays in history after deletion.
 
-- [ ] **Step 2: Run tests**
+- [ ] **Step 2: Wire it in — the suite fails otherwise**
+
+`tests/integrity.test.ts:131` asserts no document is orphaned from every checklist and roadmap (only `seo`, `geo` and design-language docs are exempt). A new security document that is not referenced fails the suite, so wiring is part of this task, not Task 10.
+
+In `src/catalog.ts`, add `"frontend-attack-surface"` to `REVIEW_MAP.website` and `REVIEW_MAP.dashboard`, and to the build/hardening phase of `ROADMAPS["website"]` and `ROADMAPS["saas-web-app"]`.
+
+- [ ] **Step 3: Run tests**
 
 ```bash
 npm test
@@ -320,7 +332,7 @@ npm test
 
 Expected: PASS.
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
 git add knowledge/security/frontend-attack-surface.md
@@ -372,7 +384,13 @@ Required sections and claims:
 
 The document opens with a one-line notice: this is engineering and design guidance, not legal advice.
 
-- [ ] **Step 2: Run tests**
+- [ ] **Step 2: Wire it in — the suite fails otherwise**
+
+`tests/integrity.test.ts:131` asserts no document is orphaned from every checklist and roadmap (only `seo`, `geo` and design-language docs are exempt). A new security document that is not referenced fails the suite, so wiring is part of this task, not Task 10.
+
+In `src/catalog.ts`, add `"privacy-consent-and-tracking"` to `REVIEW_MAP.website` and `REVIEW_MAP["landing-page"]` — both already carry `ethical-design`, which is the document it sits beside — and to a phase of `ROADMAPS["website"]`.
+
+- [ ] **Step 3: Run tests**
 
 ```bash
 npm test
@@ -380,7 +398,7 @@ npm test
 
 Expected: PASS.
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
 git add knowledge/security/privacy-consent-and-tracking.md
@@ -430,7 +448,13 @@ Required sections and claims:
 
 Cross-link `ai-product-ux` for the non-security side of these interfaces.
 
-- [ ] **Step 2: Run tests**
+- [ ] **Step 2: Wire it in — the suite fails otherwise**
+
+`tests/integrity.test.ts:131` asserts no document is orphaned from every checklist and roadmap (only `seo`, `geo` and design-language docs are exempt). A new security document that is not referenced fails the suite, so wiring is part of this task, not Task 10.
+
+In `src/catalog.ts`, add `"ai-feature-security"` to `REVIEW_MAP.dashboard` and `REVIEW_MAP["mobile-app"]` — both already list `ai-product-ux`, which is the document it pairs with — and to a phase of `ROADMAPS["saas-web-app"]`.
+
+- [ ] **Step 3: Run tests**
 
 ```bash
 npm test
@@ -438,7 +462,7 @@ npm test
 
 Expected: PASS.
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
 git add knowledge/security/ai-feature-security.md
@@ -562,7 +586,7 @@ UI_EXTENSIONS is untouched and existing calls keep their behaviour."
 - Consumes: `LintFinding` and `scanTags` from `src/lint.js`.
 - Produces:
   - `export function securitySourceRules(code: string, filename?: string): LintFinding[]`
-  - Rule ids: `blank-without-noopener`, `external-script-no-sri`, `http-subresource`, `token-in-localstorage`, `public-env-secret`, `hardcoded-secret`, `dangerous-html`, `iframe-no-sandbox`, `postmessage-wildcard-origin`, `inline-event-handler`, `inline-script-no-nonce`, `password-autocomplete`.
+  - Rule ids: `blank-without-noopener` (info), `window-open-without-noopener`, `external-script-no-sri`, `http-subresource`, `token-in-localstorage`, `public-env-secret`, `hardcoded-secret`, `dangerous-html`, `iframe-no-sandbox`, `postmessage-wildcard-origin`, `inline-event-handler`, `inline-script-no-nonce`, `password-autocomplete`. Thirteen rules, not twelve.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -576,8 +600,24 @@ const ids = (code: string, filename?: string) =>
   securitySourceRules(code, filename).map((f) => f.rule).sort();
 
 describe("source rules — fire when they should", () => {
-  it("flags target=_blank without rel=noopener", () => {
-    expect(ids(`<a href="https://x.com" target="_blank">go</a>`)).toContain("blank-without-noopener");
+  it("flags target=_blank without rel=noopener, at info severity", () => {
+    const findings = securitySourceRules(`<a href="https://x.com" target="_blank">go</a>`);
+    const f = findings.find((x) => x.rule === "blank-without-noopener");
+    expect(f).toBeDefined();
+    // Browsers imply noopener on anchors at 95.58% (caniuse). Erroring here
+    // would fire on correct modern markup; the live risk is window.open().
+    expect(f!.severity).toBe("info");
+  });
+
+  it("flags window.open without noopener, more severely than the anchor case", () => {
+    const findings = securitySourceRules(`const w = window.open(url, "_blank")`);
+    const f = findings.find((x) => x.rule === "window-open-without-noopener");
+    expect(f).toBeDefined();
+    expect(f!.severity).toBe("warning");
+  });
+
+  it("accepts window.open with noopener in the features string", () => {
+    expect(ids(`window.open(url, "_blank", "noopener,noreferrer")`)).not.toContain("window-open-without-noopener");
   });
 
   it("still flags it when a formatter split the tag over lines", () => {
@@ -721,8 +761,21 @@ const MARKUP_FILE = /\.(html?|vue|svelte|astro)$/i;
 /** Sanitiser imports that make a raw-HTML sink defensible. */
 const SANITISER = /\b(dompurify|sanitize-html|xss|Sanitizer)\b/i;
 
-const SECRET_WORD = /(SECRET|PRIVATE|TOKEN|PASSWORD|PASSWD|API_?KEY|ACCESS_?KEY)/i;
-const CREDENTIAL_KEY = /(token|jwt|auth|session|credential|refresh)/i;
+// Both of these match WHOLE SEGMENTS, never substrings. A bare
+// /(token|auth|...)/i fires on `tokenizer-settings`, `authorized-theme`,
+// `credentialsPolicy` and `NEXT_PUBLIC_TOKENIZER_URL` — ordinary names, flagged
+// at error severity. That is the false positive this module refuses to ship,
+// and it is worse than a miss: three bad warnings and nobody reads the fourth.
+//
+// `\b` is NOT sufficient. It fixes `authorized` but breaks `authToken`, because
+// camelCase has no non-word boundary between the parts. Split the identifier on
+// `_`, `-` and lowercase->uppercase transitions, then compare whole segments.
+const SECRET_WORDS = new Set(["SECRET", "PRIVATE", "TOKEN", "PASSWORD", "PASSWD", "APIKEY", "API", "ACCESSKEY"]);
+const CREDENTIAL_WORDS = new Set(["token", "jwt", "auth", "session", "credential"]);
+
+/** Split `authToken`, `auth_token` and `NEXT_PUBLIC_API_KEY` into comparable parts. */
+const segments = (name: string): string[] =>
+  name.split(/[_\-]|(?<=[a-z0-9])(?=[A-Z])/).filter(Boolean);
 
 export function securitySourceRules(code: string, filename?: string): LintFinding[] {
   const out: LintFinding[] = [];
@@ -739,12 +792,22 @@ export function securitySourceRules(code: string, filename?: string): LintFindin
   for (const tag of scanTags(code)) {
     const name = tag.name.toLowerCase();
 
+    // Severity is deliberately `info`, not `error`. Browsers imply `noopener`
+    // for `target="_blank"` on anchors — 95.58% global (caniuse
+    // `mdn-html_elements_a_implicit_noopener`), and MDN states windows opened
+    // from a `_blank` link "don't get an opener, unless explicitly requested
+    // with rel=opener". Verified twice during Task 3, once by the implementer
+    // and once by an independent reviewer.
+    //
+    // Erroring here would fire on correct modern markup. The attribute is still
+    // worth adding for legacy engines and embedded webviews, which is what an
+    // `info` says. The real residual risk moved to `window.open()` — see below.
     if (name === "a" && /target\s*=\s*["']?_blank/i.test(tag.attrs)) {
       const rel = attr(tag, "rel") ?? "";
       if (!/\bnoopener\b/i.test(rel)) {
-        push(tag.index, "error", "blank-without-noopener",
-          `target="_blank" without rel="noopener" hands the opened page a window.opener reference back to yours.`,
-          `Add rel="noopener noreferrer".`,
+        push(tag.index, "info", "blank-without-noopener",
+          `target="_blank" without rel="noopener". Modern browsers imply noopener here, so this is defence for legacy engines and embedded webviews rather than a live hole.`,
+          `Add rel="noopener noreferrer" — noreferrer also stops the Referer header, which the implicit behaviour does not.`,
           "frontend-attack-surface");
       }
     }
@@ -853,6 +916,18 @@ export function securitySourceRules(code: string, filename?: string): LintFindin
         "frontend-attack-surface");
     }
 
+    // This is where the reverse-tabnabbing risk actually lives now. Unlike an
+    // anchor, `window.open()` still grants `window.opener` by default (MDN,
+    // verified in Task 3), so an omitted `noopener` here is a live hole rather
+    // than a legacy hedge — hence `warning` where the anchor rule is `info`.
+    const opened = /window\.open\s*\(/.exec(line);
+    if (opened && !/noopener/i.test(line)) {
+      push(at, "warning", "window-open-without-noopener",
+        `window.open() without "noopener" in its features string leaves the opened page a window.opener handle back to this one, which it can use to navigate you somewhere else.`,
+        `Pass "noopener" in the third argument, or null the returned handle's opener.`,
+        "frontend-attack-surface");
+    }
+
     if (/postMessage\s*\([^)]*,\s*["'`]\*["'`]\s*\)/.test(line)) {
       push(at, "warning", "postmessage-wildcard-origin",
         `postMessage with a "*" target origin delivers the payload to whatever document currently occupies that frame.`,
@@ -949,6 +1024,14 @@ describe("config rules — CSP discovery", () => {
     expect(ids).not.toContain("csp-missing");
     expect(ids).toContain("csp-undeterminable");
   });
+
+  it("finds a CSP in proxy.ts, the Next.js 16 name for middleware", () => {
+    // Next.js 16 deprecated and renamed middleware.ts to proxy.ts. Reading only
+    // the old name would report csp-missing on every Next.js 16 project that
+    // sets a CSP correctly — a false positive on the most common modern stack.
+    const source = `export function proxy() { res.headers.set('Content-Security-Policy', "default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'") }`;
+    expect(cfgIds([{ path: "proxy.ts", source }])).not.toContain("csp-missing");
+  });
 });
 
 describe("config rules — CSP weaknesses", () => {
@@ -1000,8 +1083,19 @@ describe("config rules — the other headers", () => {
     expect(ids).not.toContain("hsts-no-subdomains");
   });
 
-  it("flags an unsafe referrer policy", () => {
-    expect(cfgIds(headersFile("  Referrer-Policy: unsafe-url"))).toContain("referrer-policy-missing-or-unsafe");
+  it("flags a referrer policy that leaks more than the browser default", () => {
+    expect(cfgIds(headersFile("  Referrer-Policy: unsafe-url"))).toContain("referrer-policy-unsafe");
+  });
+
+  it("does not flag an absent Referrer-Policy", () => {
+    // strict-origin-when-cross-origin has been the browser default since the
+    // November 2020 spec revision, so absence is already the recommended value.
+    // A rule that fires here would fire on correct configuration.
+    expect(cfgIds(headersFile("  X-Content-Type-Options: nosniff"))).not.toContain("referrer-policy-unsafe");
+  });
+
+  it("does not flag strict-origin-when-cross-origin set explicitly", () => {
+    expect(cfgIds(headersFile("  Referrer-Policy: strict-origin-when-cross-origin"))).not.toContain("referrer-policy-unsafe");
   });
 
   it("flags production source maps", () => {
@@ -1051,6 +1145,9 @@ Append to `src/security.ts`:
 // Configuration is read as text and never evaluated, the same rule
 // import_design_tokens set for tailwind.config.js.
 
+// `.ts` covers both middleware.ts and proxy.ts — Next.js 16 deprecated the
+// former and renamed it to the latter, so narrowing this list to named files
+// would go blind on every Next.js 16 project.
 export const SECURITY_EXTENSIONS = [
   ".html", ".htm", ".jsx", ".tsx", ".vue", ".svelte", ".astro", ".ts", ".js", ".mjs", ".cjs", ".json", ".toml",
 ];
@@ -1215,12 +1312,17 @@ export function securityConfigRules(files: Array<{ path: string; source: string 
       `X-Content-Type-Options is not set, so browsers may MIME-sniff a response into a script.`,
       `Set X-Content-Type-Options: nosniff. It has no downside.`);
   }
+  // There is deliberately no "referrer-policy-missing" rule. Since the November
+  // 2020 spec revision, strict-origin-when-cross-origin IS the browser default
+  // (verified against MDN) — an absent header already behaves the way we would
+  // have recommended, so flagging its absence would fire on correct
+  // configuration. Only an explicitly worse value is a finding.
+  const LEAKY_REFERRER = /^(unsafe-url|no-referrer-when-downgrade|origin-when-cross-origin)$/i;
   const ref = headers.get("referrer-policy");
-  if (!ref || (!ref.undeterminable && /unsafe-url|^no-referrer-when-downgrade$/i.test(ref.value.trim()))) {
-    push(ref?.file ?? "configuration", ref?.line ?? 1, "warning", "referrer-policy-missing-or-unsafe",
-      ref ? `Referrer-Policy "${ref.value.trim()}" leaks full URLs, including any token in a path or query, to other origins.`
-          : `No Referrer-Policy, so full URLs may be sent to other origins.`,
-      `Set Referrer-Policy: strict-origin-when-cross-origin.`);
+  if (ref && !ref.undeterminable && LEAKY_REFERRER.test(ref.value.trim())) {
+    push(ref.file, ref.line, "warning", "referrer-policy-unsafe",
+      `Referrer-Policy "${ref.value.trim()}" sends more than the browser default, leaking full URLs — including any token in a path or query — to other origins.`,
+      `Remove the header to get strict-origin-when-cross-origin, or set that value explicitly.`);
   }
   if (!headers.has("permissions-policy")) {
     push("configuration", 1, "warning", "permissions-policy-missing",
@@ -1308,9 +1410,9 @@ describe("the report", () => {
   });
 
   it("states it for a report with findings too", () => {
-    const dirty = securityReport({ source: `<a href="https://x.com" target="_blank">go</a>` });
+    const dirty = securityReport({ source: `<script src="https://cdn.example.com/a.js"></script>` });
     expect(dirty).toMatch(/not visible to this audit/i);
-    expect(dirty).toContain("blank-without-noopener");
+    expect(dirty).toContain("external-script-no-sri");
   });
 });
 ```
@@ -1320,7 +1422,7 @@ Add `"audit_security"` to the `TOOL_NAMES` set in `tests/integrity.test.ts`.
 `tests/server.test.ts` holds a `SMOKE` map (line 28) and asserts that **every registered tool has an entry in it** — a new tool without one fails the suite. Add:
 
 ```ts
-  audit_security: { code: `<a href="https://x.com" target="_blank">go</a>` },
+  audit_security: { code: `<script src="https://cdn.example.com/a.js"></script>` },
 ```
 
 That same suite calls each tool and requires the response body to exceed 40 characters and not begin with "no matches" — the snippet above produces a real finding, so it satisfies both. Its tool-count assertion is a `>=` floor, not an exact number, so nothing there needs changing.
@@ -1484,38 +1586,59 @@ file is not neutral, it is harmful."
 ### Task 10: Wire the documents into the orchestration surfaces
 
 **Files:**
-- Modify: `src/catalog.ts` (`REVIEW_MAP`, `ROADMAPS`), `README.md`, `CHANGELOG.md`
+- Modify: `README.md`, `CHANGELOG.md`, and any `src/catalog.ts` wiring Tasks 1-5 did not already do
 - Test: `tests/integrity.test.ts`
 
 **Interfaces:**
 - Consumes: all five doc ids from Tasks 1-5, the tool from Task 9.
-- Produces: nothing new; this closes the loop so the documents are reachable from the workflows people actually run.
+- Produces: nothing new; this verifies the loop is closed and updates the public-facing counts.
+
+**Scope correction, discovered during Task 1.** `tests/integrity.test.ts:131` asserts that no knowledge document is orphaned from every checklist and roadmap — exempting only `seo`, `geo` and design-language docs. A new `security` document therefore **cannot be committed unwired**: its own task must add it to `REVIEW_MAP`/`ROADMAPS` or the suite fails. Tasks 1-5 each do their own wiring as a result, and this task verifies the total rather than performing it.
+
+That test is doing exactly its job — it is the check added after v0.14.0, where roadmaps referenced docs by ids that did not exist and those docs silently vanished from every checklist.
+
+**`REVIEW_MAP` has five keys**, not three: `mobile-app`, `macos-app`, `website`, `landing-page`, `dashboard`. `website` and `dashboard` are written as bare identifiers rather than quoted strings, so a grep for `"key":` misses them. `ROADMAPS` has six: `website`, `landing-page`, `ios-app`, `android-app`, `macos-app`, `saas-web-app`.
 
 - [ ] **Step 1: Write the failing test**
 
 Add to `tests/integrity.test.ts`:
 
-`REVIEW_MAP` has exactly three keys — `mobile-app`, `macos-app`, `landing-page` — and `landing-page` is the only web one. `ROADMAPS` has six: `website`, `landing-page`, `ios-app`, `android-app`, `macos-app`, `saas-web-app`. The test targets the real keys:
+The orphan test already guarantees each document is referenced *somewhere*. What it cannot guarantee is that the web-facing surfaces carry security at all — every security doc could be parked on `mobile-app` and the test would pass. This asserts the intent:
 
 ```ts
 describe("security documents are reachable from the workflows", () => {
-  it("appears in the web-facing review checklist", () => {
-    const list = REVIEW_MAP["landing-page"] ?? [];
-    const hasSecurity = list.some((id) => docs.find((d) => d.id === id)?.category === "security");
-    expect(hasSecurity).toBe(true);
+  it("puts security in every web-facing review checklist", () => {
+    for (const key of ["website", "landing-page", "dashboard"]) {
+      const list = REVIEW_MAP[key] ?? [];
+      const hasSecurity = list.some((id) => docs.find((d) => d.id === id)?.category === "security");
+      expect(`${key}:${hasSecurity}`).toBe(`${key}:true`);
+    }
   });
 
-  it("appears in the web-facing roadmaps", () => {
+  it("puts security in every web-facing roadmap", () => {
     for (const key of ["website", "landing-page", "saas-web-app"]) {
       const ids = (ROADMAPS[key]?.phases ?? []).flatMap((p) => p.docs);
       const hasSecurity = ids.some((id) => docs.find((d) => d.id === id)?.category === "security");
       expect(`${key}:${hasSecurity}`).toBe(`${key}:true`);
     }
   });
+
+  it("references all five security documents, not just the one that satisfies the orphan check", () => {
+    const referenced = new Set<string>();
+    for (const list of Object.values(REVIEW_MAP)) list.forEach((id) => referenced.add(id));
+    for (const rm of Object.values(ROADMAPS)) {
+      rm.fullGuides.forEach((id) => referenced.add(id));
+      rm.phases.forEach((p) => p.docs.forEach((id) => referenced.add(id)));
+    }
+    const unreferenced = docs
+      .filter((d) => d.category === "security" && !referenced.has(d.id))
+      .map((d) => d.id);
+    expect(unreferenced).toEqual([]);
+  });
 });
 ```
 
-Read the `Roadmap` interface before writing the second test — if the phase array is not named `phases`, use the real property name.
+`Roadmap` carries `fullGuides` and `phases` (each phase `{ title, goal, docs }`) — confirmed against `src/catalog.ts`.
 
 - [ ] **Step 2: Run to verify it fails**
 
@@ -1527,13 +1650,19 @@ Expected: FAIL — no security doc in those lists.
 
 - [ ] **Step 3: Wire them in**
 
-In `src/catalog.ts`:
+Tasks 1-5 each wired their own document (the orphan test forced it). Read the current `REVIEW_MAP` and `ROADMAPS`, then add only what the three tests above still find missing. The intended placement, for reference:
 
-- `REVIEW_MAP["landing-page"]` — add `"web-security-headers"`, `"frontend-attack-surface"`, `"privacy-consent-and-tracking"`. It already carries `ethical-design`, which is where the consent document belongs alongside.
-- `REVIEW_MAP["mobile-app"]` — add `"ai-feature-security"`, next to the `ai-product-ux` it already lists. The other four are web-only and do not belong in a native checklist.
-- `ROADMAPS["website"]`, `["landing-page"]`, `["saas-web-app"]` — extend the final phase (or add one) with the security docs, matching the existing `{ title, goal, docs }` shape. `saas-web-app` is the one that needs `auth-and-session-ux`; a marketing site rarely has sessions.
+| Document | `REVIEW_MAP` | `ROADMAPS` |
+|---|---|---|
+| `web-security-headers` | `website`, `dashboard` | `website` p5, `saas-web-app` p5 |
+| `frontend-attack-surface` | `website`, `dashboard` | `website` p5, `saas-web-app` p5 |
+| `auth-and-session-ux` | `dashboard` | `saas-web-app` |
+| `privacy-consent-and-tracking` | `website`, `landing-page` | `website` |
+| `ai-feature-security` | `dashboard`, `mobile-app` | `saas-web-app` |
 
-`integrity.test.ts` already asserts that every id referenced from `catalog.ts` exists in the knowledge base — that check is what caught the v0.14.0 bug where roadmaps named docs that did not exist. A typo here fails the suite rather than silently orphaning a document.
+`auth-and-session-ux` belongs to `dashboard`/`saas-web-app` rather than `website` — a marketing site rarely has sessions, and padding a checklist with documents that do not apply to it is how checklists stop being read.
+
+`integrity.test.ts` already asserts that every id referenced from `catalog.ts` exists in the knowledge base — the check added after v0.14.0, where roadmaps named docs that did not exist. A typo here fails the suite rather than silently orphaning a document.
 
 - [ ] **Step 4: Update README and CHANGELOG**
 
