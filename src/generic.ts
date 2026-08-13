@@ -879,8 +879,14 @@ recurring defaults — not that the design is good.`;
  * inside any one of the ten. It is disclosed in `GENERIC_NOT_VISIBLE` and
  * counted in the report's scanned line, so a skip is never silent.
  */
+// The extension is left open rather than listed. `scanProject` reads `.vue`,
+// `.svelte` and `.astro` alongside `.jsx`/`.tsx`, so a `[jt]sx?` tail let
+// `Button.stories.svelte` and `Card.spec.vue` reproduce the whole defect this
+// constant exists to close; and a `.stories.` / `.spec.` segment identifies the
+// file's job whatever it is written in, including the `.html` and `.css` this
+// scanner also reads.
 const NOT_A_SHIPPED_SURFACE =
-  /(?:^|[\\/])(?:__fixtures__|__mocks__)[\\/]|\.(?:stories|story|spec|test)\.[jt]sx?$/i;
+  /(?:^|[\\/])(?:__fixtures__|__mocks__)[\\/]|\.(?:stories|story|spec|test)\.[a-z0-9]+$/i;
 
 /**
  * Reports the generic-default findings for one snippet or a whole project,

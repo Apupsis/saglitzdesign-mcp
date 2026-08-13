@@ -873,8 +873,13 @@ describe("the report — directory-mode breadth", () => {
       return dir;
     };
 
+    // `scanProject` reads `.vue`, `.svelte` and `.astro` alongside `.jsx`/`.tsx`,
+    // so a `[jt]sx?`-only tail let a Svelte or Vue component's stories
+    // reproduce the whole defect. The extension is open now.
     it.each([
       ["Button.stories.tsx"], ["Button.story.jsx"], ["Button.spec.tsx"], ["Card.test.jsx"],
+      ["Button.stories.svelte"], ["Card.spec.svelte"], ["Button.stories.vue"], ["Card.test.vue"],
+      ["Button.stories.astro"], ["Panel.stories.html"],
     ])("scores a bespoke project zero despite %s", (name) => {
       const dir = withStory(name);
       try {
