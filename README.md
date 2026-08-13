@@ -9,7 +9,7 @@ expert‑level guidance on **web, iOS, Android and macOS design** — plus the
 **UX, copywriting, SEO, GEO and marketing** knowledge that makes a product
 actually convert.
 
-93 curated knowledge documents · 30 tools · 8 build/review/port workflows · MCP resources with id autocomplete · a one‑call design‑system builder · real token/color/type/elevation/motion/a11y generators · design & UX‑copy linters · production component recipes · phased roadmaps · real‑world visual examples
+94 curated knowledge documents · 31 tools · 8 build/review/port workflows · MCP resources with id autocomplete · a one‑call design‑system builder · real token/color/type/elevation/motion/a11y generators · design & UX‑copy linters · production component recipes · phased roadmaps · real‑world visual examples
 
 [![npm](https://img.shields.io/npm/v/saglitzdesign-mcp?color=cb3837&logo=npm)](https://www.npmjs.com/package/saglitzdesign-mcp)
 [![CI](https://github.com/HalidSaglam/saglitzdesign-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/HalidSaglam/saglitzdesign-mcp/actions/workflows/ci.yml)
@@ -50,14 +50,14 @@ instead of guessing.
 
 ## What's inside
 
-**93 knowledge documents across 11 categories:**
+**94 knowledge documents across 11 categories:**
 
 | Category | Coverage |
 |---|---|
 | 🎨 **Design languages** | Material 3 & M3 Expressive · Apple HIG + Liquid Glass (iOS 26) · deep **iOS**, **Android** (Android 16 / M3 Expressive) and **macOS** app‑design guides · **Apple Intelligence design** (AI features: Writing Tools, App Intents, on‑device Foundation Models) · **visionOS / spatial design** (Vision Pro) · Fluent 2 · 2026 web trends · design tokens & theming (W3C DTCG) · Apple WWDC design principles (fluid interfaces) |
 | 🧩 **Components** | Buttons (hierarchy, sizing, states, labels) · forms & inputs · navigation · cards / lists / modals / sheets / empty states |
 | 🧠 **UX** | Nielsen heuristics & behavioral laws · accessibility (WCAG 2.2) · typography · color & dark mode · spacing & grids · motion · mobile UX · conversion / CRO · **data visualization** · **information architecture** · **i18n / localization (RTL)** · **AI product UX** (chat, streaming, agentic) · **onboarding & permission priming** |
-| ✨ **Craft** | Expert polish standards · typographic craft · animation craft (easing, springs, interruptibility) · UX writing & cognitive load · 0–40 critique rubric · **clean/minimal app design** · **design‑engineering** (semantic HTML, CSS architecture, tokens‑in‑code) · **ethical design** (avoiding dark patterns) · **iconography** (choosing & using an icon system) |
+| ✨ **Craft** | Expert polish standards · typographic craft · animation craft (easing, springs, interruptibility) · UX writing & cognitive load · 0–40 critique rubric · **clean/minimal app design** · **design‑engineering** (semantic HTML, CSS architecture, tokens‑in‑code) · **ethical design** (avoiding dark patterns) · **iconography** (choosing & using an icon system) · **the AI‑default aesthetic** (the stock gradient, font, card chrome and copy generated interfaces reach for, cited to each system's own docs) |
 | 📚 **Books** | Distilled classics — *design:* Norman, Krug, Refactoring UI, psychology of design, grid/typography, interaction design (Cooper/Tidwell), **emotional design (Walter/Norman)** · *marketing:* Cialdini, Positioning, StoryBrand + Ogilvy, Hooked |
 | 🗺️ **Process** | Product‑design & marketing‑website roadmaps · **design‑systems methodology** (Atomic Design, component API, governance) · **design handoff** (Figma Dev Mode, Code Connect, design↔dev) |
 | 📣 **Marketing** | Branding & identity · email marketing · **HTML email development** (Outlook, dark mode, bulletproof) · ad creative · paywall benchmarks (RevenueCat 2026) · growth frameworks (loops/AARRR/PLG) · pricing strategy · analytics & experimentation · value proposition & JTBD · **content & distribution** (topic clusters, community, referral) · **App Store Optimization (ASO)** |
@@ -125,6 +125,7 @@ critique rubric, and iterates until it passes.
 | **`audit_project`** | **Audits a real codebase, not a snippet.** Point it at a directory: it walks your design source, lints every file, and scores the whole project for consistency — cross‑file drift being exactly what a single‑file lint cannot see. Findings ranked worst‑file‑first with file:line, plus an explicit list of what it did not look at. |
 | **`audit_security`** | **Audits a web project or snippet for the defects that actually ship** — missing or weak Content‑Security‑Policy, absent HSTS, unpinned cross‑origin scripts, mixed content, credentials in `localStorage`, secret‑named `NEXT_PUBLIC_`/`VITE_` variables, unsandboxed third‑party iframes, wildcard `postMessage`, raw‑HTML sinks with no sanitiser, production source maps and un‑ignored `.env` files. Header state is inferred from wherever your stack declares it — `next.config`, `vercel.json`, `netlify.toml`, `_headers`, `staticwebapp.config.json`, Nuxt `routeRules`, a Remix `headers` export, SvelteKit `hooks.server.ts` / `kit.csp`, Next and Astro middleware, `new Response(…, { headers })` and `new Headers({…})` on Workers/Deno/Bun, Express `res.set` / `res.setHeader`, and `<meta http-equiv>` — read as text and never evaluated; this makes no network request, and says what it could not see. |
 | **`audit_design_system`** | **Is there actually a system here?** Point it at real CSS/JSX and get a consistency score plus the sprawl behind it: how many distinct colors, sizes, radii, shadows and spacings are in use, which colors are indistinguishable duplicates, what's off the 4pt grid, token adoption — and a consolidation plan. |
+| **`audit_generic_design`** | **Audits for the specific defaults generated interfaces reach for** — the stock Tailwind indigo/violet/purple gradient (as classes, hex, or OKLCH), Inter/Roboto/Open Sans/DM Sans/Plus Jakarta Sans as the only declared typeface on a brand surface, emoji standing in for icons, the `rounded-2xl` + `shadow-lg` + border card recipe repeated across a page, gradient‑filled heading text, an eyebrow label over every heading, the `backdrop-blur` + `white/10` glassmorphism recipe, stock hype‑opener copy, stacked filler adverbs, and a page whose every CTA is drawn from the stock set. Every finding is a fact about the source — a class name, a phrase, a repeated structure — never a judgement about whether the result is good design; a 0–100 score counts distinct signals, not occurrences, and is itemised to rule and file:line. Pair with `design_review_checklist` or `get_design_doc("design-critique-scoring")` for the taste half. |
 | **`audit_ux_copy`** | Objective copy audit — readability (Flesch), sentence length, passive voice, jargon, filler, user‑focus, weak CTAs — with flagged phrases and fixes. |
 | **`list_design_knowledge`** | Browse the full knowledge index by category / platform. |
 | **`knowledge_freshness`** | Reports each doc's age vs a per‑category staleness threshold, so the base can be kept current. |
@@ -138,7 +139,7 @@ with id autocompletion — instead of spending a tool call:
 | URI | What it is |
 |---|---|
 | `saglitzdesign://index` | The whole index: every document by category, with platform and last‑verified date. |
-| `saglitzdesign://doc/{id}` | One knowledge document in full (93 of them). Autocompletes on `id`. |
+| `saglitzdesign://doc/{id}` | One knowledge document in full (94 of them). Autocompletes on `id`. |
 | `saglitzdesign://recipe/{component}` | A component's spec plus its reference implementation in every available stack. |
 
 ### Visual examples
