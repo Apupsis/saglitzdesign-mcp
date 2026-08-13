@@ -115,7 +115,6 @@ Visual, from the source:
 | `ai-default-gradient` — an indigo/violet/purple gradient pair, in Tailwind classes or a `linear-gradient` built from those ramps' hexes | warning |
 | `default-ui-font` — Inter, Roboto, Open Sans, DM Sans or Plus Jakarta as the only declared family, **on a brand surface only** | warning |
 | `emoji-as-icon` — a rocket, bulb, sparkle, lightning, fire or target emoji standing in for an icon in a heading, card title or feature item | warning |
-| `uniform-card-grid` — three or more siblings inside a grid with byte-identical class strings | info |
 | `stock-card-chrome` — the `rounded-2xl` + `shadow-lg`/`xl` + `border` triad repeated across three or more elements | info |
 | `eyebrow-over-every-heading` — a short uppercase/letter-spaced label immediately preceding three or more headings | info |
 | `gradient-text` — `bg-clip-text` with `text-transparent` over a gradient | info |
@@ -156,7 +155,6 @@ Generic score: 62 / 100
   20  ai-default-gradient      indigo→violet, hero + 3 cards
   15  default-ui-font          Inter, sole family on a brand surface
   12  emoji-as-icon            🚀 💡 ✨ across 3 feature headings
-   8  uniform-card-grid        3 siblings, byte-identical class strings
    7  hype-opener              "Unlock the power of"
 ```
 

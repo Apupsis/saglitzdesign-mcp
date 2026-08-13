@@ -129,7 +129,7 @@ already support is left to them."
 - Consumes: `LintFinding`, `scanTags`, `Tag` from `./lint.js`; `maskComments` from `./security.js`.
 - Produces:
   - `export function genericVisualRules(code: string, filename?: string): LintFinding[]`
-  - Rule ids: `ai-default-gradient`, `default-ui-font`, `emoji-as-icon`, `uniform-card-grid`, `stock-card-chrome`, `eyebrow-over-every-heading`, `gradient-text`, `stock-glass-on-dark`.
+  - Rule ids: `ai-default-gradient`, `default-ui-font`, `emoji-as-icon`, `stock-card-chrome`, `eyebrow-over-every-heading`, `gradient-text`, `stock-glass-on-dark`.
   - `export function isBrandSurface(code: string, filename?: string): boolean`
 
 - [ ] **Step 1: Write the failing tests**
@@ -169,10 +169,6 @@ describe("visual rules — fire when they should", () => {
     expect(ids(`<h3>🚀 Lightning fast</h3>`)).toContain("emoji-as-icon");
   });
 
-  it("flags three siblings with byte-identical class strings", () => {
-    const card = `<div class="rounded-2xl border p-6 shadow-lg"><h3>A</h3></div>`;
-    expect(ids(`<div class="grid grid-cols-3">${card}${card}${card}</div>`)).toContain("uniform-card-grid");
-  });
 
   it("flags the stock card chrome triad", () => {
     const card = (n: string) => `<div class="rounded-2xl shadow-lg border p-${n}"><h3>${n}</h3></div>`;
@@ -220,17 +216,7 @@ describe("visual rules — stay quiet when they should", () => {
     expect(ids(`<p>We shipped it 🚀 last Tuesday after a long month.</p>`)).not.toContain("emoji-as-icon");
   });
 
-  it("accepts sibling cards that differ", () => {
-    const a = `<div class="rounded-2xl border p-6 col-span-2"><h3>A</h3></div>`;
-    const b = `<div class="rounded-lg border p-4"><h3>B</h3></div>`;
-    const c = `<div class="rounded-xl border p-8"><h3>C</h3></div>`;
-    expect(ids(`<div class="grid">${a}${b}${c}</div>`)).not.toContain("uniform-card-grid");
-  });
 
-  it("accepts two identical siblings — a pair is not a grid of equals", () => {
-    const card = `<div class="rounded-2xl border p-6 shadow-lg"><h3>A</h3></div>`;
-    expect(ids(`<div class="grid grid-cols-2">${card}${card}</div>`)).not.toContain("uniform-card-grid");
-  });
 
   it("does not fire on markup inside a comment", () => {
     expect(genericVisualRules(`<!-- <div class="from-indigo-500 to-purple-600"> -->`)).toEqual([]);
@@ -444,13 +430,6 @@ export function genericVisualRules(code: string, filename?: string): LintFinding
     }
   }
 
-  const repeated = [...siblings.entries()].find(([, n]) => n >= 3);
-  if (repeated) {
-    push(masked.indexOf(repeated[0]), "info", "uniform-card-grid",
-      `${repeated[1]} siblings carry byte-identical class strings, so none of them is the primary one.`,
-      `Vary size or emphasis to encode importance — a bento grid without hierarchy is a broken grid.`,
-      "visual-craft-standards");
-  }
   if (chromeCount >= 3) {
     push(0, "info", "stock-card-chrome",
       `The rounded-2xl + shadow-lg + border triad repeats on ${chromeCount} elements.`,
@@ -492,7 +471,7 @@ Expected: PASS, all of `tests/generic.test.ts` plus the existing 563.
 git add src/generic.ts src/security.ts tests/generic.test.ts
 git commit -m "feat: detect the visual defaults generated interfaces reach for
 
-Eight rules over markup and styles: the stock indigo/violet gradient, a
+Seven rules over markup and styles: the stock indigo/violet gradient, a
 default UI font left as the only family on a brand surface, emoji
 standing in for icons, sibling cards with byte-identical class strings,
 the rounded-2xl/shadow-lg/border triad, an eyebrow over every heading,
@@ -830,6 +809,6 @@ git commit -m "docs: v0.21.0 — the generic-design detector"
 
 **Spec coverage.** Every section of the spec maps to a task: the knowledge document to Task 1; the eight visual rules and the brand-surface test to Task 2; the three copy rules to Task 3; the itemised score, the report and registration to Task 4; the distinctive-page matrix to Task 5; the counts and changelog to Task 6.
 
-**Known soft spots, both stated rather than hidden.** `isBrandSurface` is an inference and will be wrong sometimes; it resolves ambiguity toward silence and Task 5's dashboard fixture pins the direction that matters. `uniform-card-grid` compares class strings byte-for-byte, so a formatter that reorders classes defeats it — that is a miss, not a false positive, which is the right side of this module's asymmetry.
+**Known soft spots, both stated rather than hidden.** `isBrandSurface` is an inference and will be wrong sometimes; it resolves ambiguity toward silence and Task 5's dashboard fixture pins the direction that matters. `stock-card-chrome` still fires on a design-system documentation page that shows the card recipe at three sizes — accepted, with the rule's fix text acknowledging a documented variant matrix.
 
 **Type consistency.** `LintFinding` is used unchanged. `genericVisualRules(code, filename?)` and `genericCopyRules(code)` keep their signatures from Task 2 onward. `RULE_WEIGHTS` keys must exactly match the rule ids emitted by both rule functions — Task 4 should assert that in a test rather than trusting it.
