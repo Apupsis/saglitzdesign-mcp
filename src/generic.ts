@@ -22,8 +22,8 @@
 // test against its own module's ubiquitous, deliberate patterns doesn't earn
 // its place; see the task report for the two rejected alternatives.
 
-import { scanTags, type LintFinding, type Tag } from "./lint.js";
-import { maskComments } from "./security.js";
+import { type LintFinding, type Tag } from "./lint.js";
+import { scanTags, maskComments, elementSpan, flattenTags } from "./scan.js";
 import { scanProject, MAX_FILES } from "./project.js";
 
 const lineOf = (src: string, index: number): number =>
@@ -552,23 +552,8 @@ function blankSkippedContent(masked: string, tags: Tag[]): string {
   return chars.join("");
 }
 
-/**
- * Blanks every tag's own markup to spaces, length-preserving, leaving only
- * visible text at its original offsets — an attribute like `data-cta="Get
- * Started"` or a class named `learn-more` never survives into this string,
- * so copy rules can only ever match what a reader would actually see.
- */
-function flattenTags(src: string): string {
-  return src.replace(/<[^>]*>/g, (m) => m.replace(/[^\n]/g, " "));
-}
-
-/** `[start, end)` of one element's content, `end` exclusive of its own closing tag. */
-function elementSpan(masked: string, tag: Tag): [number, number] | null {
-  if (tag.selfClosing) return null;
-  const name = tag.name.toLowerCase();
-  const closeIdx = masked.toLowerCase().indexOf(`</${name}`, tag.end);
-  return [tag.end, closeIdx === -1 ? masked.length : closeIdx];
-}
+// `flattenTags` and `elementSpan` moved to scan.ts — imported above, shared
+// now with security.ts and (soon) the SEO/performance auditors.
 
 /** Index just past an element's own closing tag's `>` — `contentEnd` is `elementSpan`'s `end`. */
 function closingTagEnd(masked: string, contentEnd: number): number {
