@@ -868,6 +868,68 @@ describe("one correctly-hardened project per framework produces no findings", ()
   });
 });
 
+// A string that merely *sits* where a policy would is the one false positive
+// that costs more than it looks: with no real CSP in the project, the
+// csp-missing error is replaced by four directive warnings pointing at the
+// decoy, so the absence is hidden rather than embellished.
+describe("a decoy shaped like a policy must not shadow a real absence", () => {
+  const DECOY = { path: "aaa.json", source: JSON.stringify({
+    "Content-Security-Policy": "controls which resources the page may load",
+  }, null, 2) };
+
+  it("still reports csp-missing when the only match is a docs-map decoy", () => {
+    const found = cfgIds([DECOY]);
+    expect(found).toContain("csp-missing");
+    // …and none of the directive rules, which would have anchored themselves
+    // to the decoy's line and read as a graded policy.
+    expect(found).not.toContain("csp-missing-object-src");
+    expect(found).not.toContain("csp-missing-base-uri");
+    expect(found).not.toContain("csp-missing-frame-ancestors");
+    expect(found).not.toContain("csp-missing-form-action");
+    expect(extractHeaders([DECOY]).has("content-security-policy")).toBe(false);
+  });
+
+  // A real config usually wins on first-hit — but only usually. `aaa.json`
+  // walks before `app/root.tsx`, so a Remix project loses that race.
+  it("grades the real policy when a decoy walks before the real config", () => {
+    const report = runProject({
+      "aaa.json": DECOY.source,
+      "app/root.tsx": `export const headers = () => ({
+  "Content-Security-Policy": "${HARD_CSP}",
+  "Strict-Transport-Security": "${HARD_HSTS}",
+  "X-Content-Type-Options": "nosniff",
+  "Permissions-Policy": "${HARD_PP}",
+});
+`,
+    });
+    expect(report).toContain("**0 error · 0 warning · 0 info**");
+    expect(report).toContain("Read header configuration from: `app/root.tsx`.");
+  });
+
+  // The guard is "names a CSP directive", not "looks like the policy we
+  // recommend" — a one-directive policy is unusual, and valid.
+  it("does not reject a valid policy for being unusual", () => {
+    for (const policy of [
+      "sandbox allow-forms allow-same-origin",
+      "upgrade-insecure-requests",
+      "trusted-types default dompurify",
+      "report-to csp-endpoint",
+      "block-all-mixed-content",
+      "SCRIPT-SRC 'self'",
+    ]) {
+      const hit = extractHeaders([{ path: "_headers", source: `/*\n  Content-Security-Policy: ${policy}\n` }])
+        .get("content-security-policy");
+      expect(hit, policy).toBeDefined();
+      expect(hit!.value.trim()).toBe(policy);
+    }
+  });
+
+  it("leaves a runtime-assembled value alone — there is nothing to parse", () => {
+    expect(cfgIds([{ path: "middleware.ts", source: `res.headers.set('Content-Security-Policy', cspValue)\n` }]))
+      .toContain("csp-undeterminable");
+  });
+});
+
 describe("the fixture matrix's guard — widening what counts as a declaration must not widen it to references", () => {
   // isHeaderDeclarationContext was widened (C1) to accept the quoted
   // object-literal property that most of the ecosystem uses. That is the same

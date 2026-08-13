@@ -885,6 +885,13 @@ export function extractHeadersFrom(files: MaskedFile[]): Map<string, HeaderHit> 
         if (HEADER_NAME_SET.has(value.trim().toLowerCase())) continue;
         if (!undeterminable && /\$\{|\+\s*[A-Za-z_$]/.test(value)) undeterminable = true;
 
+        // A third guard, against a shape the first two cannot catch: a value
+        // that is a perfectly well-formed declaration of something that is
+        // not a policy. See `declaresCspDirective` — a decoy shadows a real
+        // absence, which is worse than inventing a finding. An unreadable
+        // value is exempt, because there is nothing to parse.
+        if (/^content-security-policy/i.test(header) && !undeterminable && !declaresCspDirective(value)) continue;
+
         record(header.toLowerCase(), { value, file: file.path, line, undeterminable });
       }
     }
@@ -922,6 +929,53 @@ function matchesGitignorePattern(pattern: string, filePath: string): boolean {
   const base = path.split("/").pop() ?? path;
   return toRegExp(p).test(base);
 }
+
+/**
+ * Every directive name in the CSP reference — fetch, document, navigation,
+ * reporting, "other", and the two deprecated ones (MDN's
+ * Content-Security-Policy page, verified 2026-08-13). Used only to answer
+ * "is this string a policy at all", never to grade one, so a name being
+ * deprecated or experimental is irrelevant here: a policy that sets it is
+ * still a policy.
+ */
+const CSP_DIRECTIVES = new Set([
+  // fetch directives
+  "child-src", "connect-src", "default-src", "fenced-frame-src", "font-src", "frame-src",
+  "img-src", "manifest-src", "media-src", "object-src", "prefetch-src", "script-src",
+  "script-src-elem", "script-src-attr", "style-src", "style-src-elem", "style-src-attr",
+  "worker-src",
+  // document directives
+  "base-uri", "sandbox",
+  // navigation directives
+  "form-action", "frame-ancestors",
+  // reporting directives
+  "report-to", "report-uri",
+  // other directives
+  "require-trusted-types-for", "trusted-types", "upgrade-insecure-requests",
+  // deprecated
+  "block-all-mixed-content",
+]);
+
+/**
+ * True when a candidate value names at least one CSP directive — i.e. when it
+ * is a policy rather than a string that merely sits where one would.
+ *
+ * Recognising the object-literal shape `"Content-Security-Policy": "…"` as a
+ * declaration means recognising anything shaped like it, and a docs map, an
+ * i18n bundle or a test fixture can carry exactly that shape. The damage is
+ * not the invented finding: with no real policy in the project, the
+ * `csp-missing` **error** is replaced by four directive warnings pointing at
+ * the decoy, so a real absence is hidden rather than merely embellished —
+ * the worse of the two directions.
+ *
+ * A real policy always names a directive; `"controls which resources the page
+ * may load"` parses to a directive called `controls`. A policy whose only
+ * directive is newer than this list is rejected too, and surfaces as a
+ * visible, quickly-disproved `csp-missing` rather than a silent one — the
+ * same trade every other guard in this module makes.
+ */
+const declaresCspDirective = (value: string): boolean =>
+  [...parseCsp(value).keys()].some((d) => CSP_DIRECTIVES.has(d));
 
 /** Split a policy into directive → source list. */
 export function parseCsp(value: string): Map<string, string[]> {
