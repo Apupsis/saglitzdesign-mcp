@@ -43,7 +43,7 @@ Line by line:
 | `require-trusted-types-for 'script'` | See [Trusted Types](#trusted-types). Add it in report-only first. |
 | `report-uri` + `report-to` | Send both. Browsers that support `report-to` ignore `report-uri`; browsers that don't still report. |
 
-`default-src 'self'` is a reasonable extra line, but it is **not** the security boundary — `script-src`, `object-src` and `base-uri` are. A policy of `default-src 'self'` alone with no `object-src`/`base-uri` is the single most common "we have a CSP" that provides no XSS protection.
+`default-src 'self'` is a reasonable extra line, but it is **not** the *XSS* boundary — `script-src`, `object-src` and `base-uri` are. A policy of `default-src 'self'` alone with no `object-src`/`base-uri` is the single most common "we have a CSP" that provides no XSS protection. For **exfiltration**, though, `default-src` is load-bearing rather than optional, and the policy above sets no `img-src` at all — which is the gap a page rendering model output cannot afford. See [[ai-feature-security]].
 
 ## Why host allowlists fail
 
