@@ -525,7 +525,7 @@ function isSelfContainedDocument(masked: string, path: string): boolean {
   if (FRAMEWORK_FILE.test(path)) return false;
   if (!/<head[\s>]/i.test(masked)) return false;
   if (TEMPLATE_PLACEHOLDER.test(masked)) return false;
-  return !isEmailTemplate(masked);
+  return !isEmailTemplate(masked, path);
 }
 
 /**
@@ -541,11 +541,35 @@ function isSelfContainedDocument(masked: string, path: string): boolean {
  * and no `<nav>`. A web page would have to hit all three to be mistaken for
  * one.
  */
-function isEmailTemplate(masked: string): boolean {
+function isEmailTemplate(masked: string, path: string): boolean {
   const layoutTable = /<table[^>]*(?:role\s*=\s*["']presentation["']|cellpadding|cellspacing)/i.test(masked);
   if (!layoutTable) return false;
-  return !/<link[^>]+rel\s*=\s*["']?stylesheet/i.test(masked) && !/<nav[\s>]/i.test(masked);
+  if (/<link[^>]+rel\s*=\s*["']?stylesheet/i.test(masked) || /<nav[\s>]/i.test(masked)) return false;
+
+  // A layout table is not enough on its own, and this is where the first
+  // version of this guard went wrong: a single-page lander built on
+  // `<table role="presentation">` with an inline `<style>` and no nav — a
+  // deliberate, common CRO pattern — matched every signal and lost two real
+  // findings. So the table must be joined by something a web page does not
+  // have. A path is a fact; a table is a habit.
+  if (EMAIL_PATH.test(path)) return true;
+
+  // Markup that exists only because Outlook does: the VML/Office namespaces,
+  // `mso-` style properties, and the `[if mso]` conditional comment. (The
+  // conditional is matched against `path`-independent source: `maskComments`
+  // blanks comments, so the namespaces and `mso-` properties are what survive
+  // to be matched here.)
+  if (/xmlns:[vo]\s*=|mso-[a-z-]+\s*:/i.test(masked)) return true;
+
+  // A table pinned to a pixel width with no viewport meta anywhere: the
+  // fixed-width, non-responsive shape email clients require and no landing
+  // page has shipped in a decade.
+  return /<table[^>]+width\s*=\s*["']?\d{3,4}\b/i.test(masked)
+    && !/<meta[^>]+name\s*=\s*["']?viewport/i.test(masked);
 }
+
+/** `emails/`, `mail/`, `mailers/`, or an `.eml` / `.mjml` file. */
+const EMAIL_PATH = /(?:^|\/)(?:emails?|mail|mailers?|notifications?\/emails?)\/|\.(?:eml|mjml)$/i;
 
 /**
  * The mount point of a client-rendered application: a root element with no
@@ -585,6 +609,37 @@ const hasBundleScript = (tags: Tag[]): boolean =>
   tags.some((t) => t.name.toLowerCase() === "script" && (attrValue(t, "src").value ?? "").length > 0);
 
 /**
+ * A script that is plausibly *this application's own bundle*, as opposed to a
+ * third-party tag.
+ *
+ * The distinction is load-bearing and it is a fact, not a guess. An analytics,
+ * chat-widget or ads script is served cross-origin from a vendor's host and
+ * builds nothing; an application bundle is same-origin and sits at a build
+ * output path or carries a build filename. Treating "any `<script src>`" as
+ * evidence of client rendering meant an ordinary thin page — an "under
+ * construction" notice carrying one analytics tag — was read as a shell, and
+ * its missing title, description and canonical went unreported. Silence on a
+ * genuine shell costs one finding; silence on every thin page costs three
+ * rules.
+ */
+// Build output directories. `js/` is deliberately absent: plenty of sites keep
+// every script in `/js/`, including `/js/analytics.js`, and accepting that
+// directory as a build output reinstates exactly the miss this rule closes.
+const BUNDLE_PATH = /(?:^|\/)(?:assets|_next|_nuxt|static|build|dist|_app|chunks)\//i;
+const BUNDLE_NAME = /(?:^|\/)(?:bundle|main|index|app|runtime|polyfills|vendor|entry|client)[.\-_][^/]*$|[.\-][0-9a-f]{6,}\.m?js$/i;
+
+const hasOwnBundle = (tags: Tag[]): boolean =>
+  tags.some((t) => {
+    if (t.name.toLowerCase() !== "script") return false;
+    const src = attrValue(t, "src").value ?? "";
+    if (!src || isCrossOrigin(src)) return false;
+    return BUNDLE_PATH.test(src) || BUNDLE_NAME.test(src) || (attrValue(t, "type").value ?? "") === "module";
+  });
+
+/** `https://…` or `//…` — served by someone else, and no evidence about this page. */
+const isCrossOrigin = (url: string): boolean => /^[a-z][a-z0-9+.-]*:\/\//i.test(url) || url.startsWith("//");
+
+/**
  * Does this document leave its content to a script, whether or not the mount
  * point is one we recognise?
  *
@@ -601,11 +656,14 @@ function looksClientRendered(masked: string, tags: Tag[]): boolean {
   if (!/<body[\s>]|<html[\s>]/i.test(masked)) return false;
   if (tags.some((t) => /^h[1-6]$/i.test(t.name))) return false;
   if (visibleText(masked).length >= 200) return false;
-  if (hasBundleScript(tags)) return true;
-  // Angular's own `src/index.html` ships `<app-root></app-root>` and no script
-  // tag at all — the CLI injects the bundle at build time — so a bundle cannot
-  // be required here without going blind on the framework's default.
-  return tags.some((t) => ROOT_TAG.test(t.name) || ROOT_ID.test(attrValue(t, "id").value ?? ""));
+  // Two admissible kinds of evidence, and "there is a script tag" is not one
+  // of them. Either the page names a mount point a framework fills — Angular's
+  // own `src/index.html` ships `<app-root></app-root>` and no script at all,
+  // because the CLI injects the bundle — or it loads its *own* bundle. A
+  // third-party analytics tag is neither, and accepting it silenced the
+  // title, description and canonical rules on every thin page that carries one.
+  return tags.some((t) => ROOT_TAG.test(t.name) || ROOT_ID.test(attrValue(t, "id").value ?? ""))
+    || hasOwnBundle(tags);
 }
 
 /**
@@ -643,6 +701,13 @@ function conditionallyRendered(masked: string, tag: Tag): boolean {
  * names. Only the ones whose schema.org type name the document states
  * unambiguously are here — a guess at which type "Estimated Salary" maps to
  * would be a claim the document does not make.
+ *
+ * Which is which, so the next reader does not have to check: the document
+ * writes `HowTo` and `FAQPage` as literal identifiers. The other four are
+ * mapped from the *feature* names in its prose — "Claim Review", "Special
+ * Announcement", "Vehicle Listing" and "Course Info" — each of which has one
+ * and only one schema.org type behind it. "Estimated Salary" and "Learning
+ * Video" do not, and are deliberately absent.
  */
 const DEPRECATED_RICH_RESULT = new Set([
   "HowTo", "FAQPage", "ClaimReview", "SpecialAnnouncement", "VehicleListing", "Course",

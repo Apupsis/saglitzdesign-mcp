@@ -509,6 +509,35 @@ export default function About() {
     });
   });
 
+  // Widening the shell guard to "any <script src>" silenced the title,
+  // description and canonical rules on every thin page carrying an analytics,
+  // chat or ads tag — a much larger class than the shells it was widened for.
+  // A third-party tag is served by someone else and is no evidence about how
+  // this page renders.
+  describe("a thin page is not a shell just because it loads a script", () => {
+    const thin = (script: string) => `<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"></head>
+<body>
+  <p>Under construction.</p>
+  ${script}
+</body>
+</html>`;
+
+    it.each([
+      ["a cross-origin analytics tag", `<script src="https://cdn.example.com/analytics.js"></script>`],
+      ["a tag manager", `<script src="https://www.googletagmanager.com/gtag/js?id=G-X"></script>`],
+      ["a same-origin analytics file", `<script src="/js/analytics.js"></script>`],
+      ["no script at all", ``],
+    ])("still grades a page carrying %s", (_name, script) => {
+      expect(ids(thin(script))).toEqual(["canonical-missing", "meta-description-missing", "title-missing"]);
+    });
+
+    it("still reads the page's own bundle as a shell", () => {
+      expect(seoRules(thin(`<script src="/assets/index-4f2c.js"></script>`), "index.html")).toEqual([]);
+    });
+  });
+
   // `attrValue` suppressed `${…}` and `{…}` but not the server-template forms,
   // so an ERB layout was told to "Write the full URL:
   // https://example.com/<%= canonical_url %>".
@@ -538,17 +567,64 @@ export default function About() {
     });
   });
 
-  it("says nothing about an HTML email, which correctly has no canonical", () => {
-    const code = `<!doctype html>
+  // An email correctly has no title, description or canonical — there is no URL
+  // and no crawler. But a layout table is a habit, not a fact: the first
+  // version of this exemption asked only for a table, no stylesheet link and
+  // no nav, and a single-page lander built that way — a deliberate CRO pattern
+  // — lost two real findings. The table now has to be joined by something a
+  // web page does not have.
+  describe("emails, and the landing pages that look like them", () => {
+    const emailBody = `
+  <table role="presentation" cellpadding="0" cellspacing="0" width="600">
+    <tr><td><h1>Your order</h1><p>Thanks — it ships tomorrow morning.</p></td></tr>
+  </table>`;
+
+    it("says nothing about an email under emails/", () => {
+      const code = `<!doctype html>
+<html>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><style>.wrap{max-width:600px}</style></head>
+<body>${emailBody}</body>
+</html>`;
+      expect(seoRules(code, "emails/order-confirmation.html")).toEqual([]);
+    });
+
+    it("says nothing about a fixed-width table with no viewport, wherever it lives", () => {
+      const code = `<!doctype html>
 <html>
 <head><meta charset="utf-8"><style>.wrap{max-width:600px}</style></head>
+<body>${emailBody}</body>
+</html>`;
+      expect(seoRules(code, "templates/order.html")).toEqual([]);
+    });
+
+    it("says nothing about markup that exists only because Outlook does", () => {
+      const code = `<!doctype html>
+<html xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><style>.x{mso-line-height-rule:exactly}</style></head>
+<body><table role="presentation" width="100%"><tr><td><h1>Hi</h1><p>Body copy.</p></td></tr></table></body>
+</html>`;
+      expect(seoRules(code, "views/welcome.html")).toEqual([]);
+    });
+
+    it("still grades a landing page that uses a table for layout", () => {
+      const code = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Get the 2026 redesign pricing guide from Saglitz</title>
+  <style>.wrap{max-width:640px;margin:0 auto}</style>
+</head>
 <body>
-  <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
-    <tr><td><h1>Your order</h1><p>Thanks — it ships tomorrow morning.</p></td></tr>
-  </table>
+  <table role="presentation" width="100%"><tr><td>
+    <h1>Redesign pricing, itemised</h1>
+    <p>Twelve recent studio projects, with the line items and the four-week delivery timeline that produced them.</p>
+    <a href="/guide.pdf">Download the guide</a>
+  </td></tr></table>
 </body>
 </html>`;
-    expect(seoRules(code, "emails/order-confirmation.html")).toEqual([]);
+      expect(ids(code, "landing.html")).toEqual(["canonical-missing", "meta-description-missing"]);
+    });
   });
 
   it("does not count an h1 inside an inert <template>", () => {
