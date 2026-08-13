@@ -140,6 +140,20 @@ describe("source rules — stay quiet when they should", () => {
     expect(ids(`localStorage.setItem("theme", "dark")`)).not.toContain("token-in-localstorage");
   });
 
+  // A numbered credential key — a second environment, a second account, a
+  // migration — was silently exempt: "token2" is one segment, and no whole
+  // segment equalled TOKEN.
+  it("flags a numbered credential key", () => {
+    expect(ids(`localStorage.setItem("token2", v)`)).toContain("token-in-localstorage");
+    expect(ids(`localStorage.setItem("jwt1", v)`)).toContain("token-in-localstorage");
+    expect(ids(`localStorage.setItem("session42", v)`)).toContain("token-in-localstorage");
+    expect(ids(`localStorage.setItem("token2fa", v)`)).toContain("token-in-localstorage");
+    // …and the whole-segment guard survives the extra split point.
+    expect(ids(`localStorage.setItem("tokenizer2", v)`)).not.toContain("token-in-localstorage");
+    expect(ids(`localStorage.setItem("draft2", v)`)).not.toContain("token-in-localstorage");
+    expect(ids(`localStorage.setItem("authorized2", v)`)).not.toContain("token-in-localstorage");
+  });
+
   it("accepts localStorage keys whose name merely contains a credential word as a substring", () => {
     expect(ids(`localStorage.setItem("tokenizer-settings", val)`)).not.toContain("token-in-localstorage");
     expect(ids(`localStorage.setItem("authorized-theme", val)`)).not.toContain("token-in-localstorage");

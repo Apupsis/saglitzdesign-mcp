@@ -131,16 +131,28 @@ function hasSanitiserImport(code: string): boolean {
 }
 
 /**
- * Identifier segments, split on `_`/`-` and lower→upper case transitions and
- * upper-cased, so "authToken", "auth_token" and "AUTH_TOKEN" all normalise to
- * ["AUTH", "TOKEN"] while "tokenizer" stays the single segment "TOKENIZER".
- * Matching whole segments (rather than a bare substring test) is what keeps
- * "authToken" flagged and "authorized" / "tokenizer-settings" quiet.
+ * Identifier segments, split on `_`/`-`, on lower→upper case transitions, and
+ * on letter→digit transitions, then upper-cased — so "authToken",
+ * "auth_token" and "AUTH_TOKEN" all normalise to ["AUTH", "TOKEN"] while
+ * "tokenizer" stays the single segment "TOKENIZER". Matching whole segments
+ * (rather than a bare substring test) is what keeps "authToken" flagged and
+ * "authorized" / "tokenizer-settings" quiet.
+ *
+ * The letter→digit split is what makes `localStorage.setItem("token2", …)`
+ * fire: without it "token2" is one segment, no whole segment equals TOKEN,
+ * and a numbered credential key — the shape a second environment, a second
+ * account or a migration produces — was silently exempt. Note the cost,
+ * which is real: "auth0Domain" now splits to ["AUTH", "0", "DOMAIN"] and
+ * fires. That is the same trade the segment matcher already makes elsewhere,
+ * and it lands on names where a credential word is a word rather than a
+ * substring; "tokenizer" and "authorized" are untouched, because no digit
+ * boundary exists in them.
  */
 function segmentsOf(id: string): string[] {
   return id
     .replace(/[_-]+/g, " ")
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/([A-Za-z])(\d)/g, "$1 $2")
     .trim()
     .split(/\s+/)
     .filter(Boolean)
