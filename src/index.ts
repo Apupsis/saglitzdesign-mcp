@@ -32,6 +32,7 @@ import { renderMarkdown, renderHtml } from "./report.js";
 import { importTokensReport } from "./importtokens.js";
 import { projectAuditReport } from "./project.js";
 import { securityReport, HEADER_SOURCES_SENTENCE } from "./security.js";
+import { genericReport } from "./generic.js";
 import { createDesignSystem, type DSPlatform } from "./designsystem.js";
 import { normalizeHex } from "./tokens.js";
 
@@ -844,6 +845,38 @@ tool(
       return text(securityReport({ root: abs }));
     }
     return text(securityReport({ source: code, filename }));
+  },
+);
+
+// ── Tool 31: audit generic design ────────────────────────────────────────────
+tool(
+  "audit_generic_design",
+  "Audits a web project or snippet for the specific defaults generated interfaces reach for: the stock Tailwind indigo/violet/purple gradient (as classes, hex, or OKLCH), Inter/Roboto/Open Sans/DM Sans/Plus Jakarta Sans as the only declared typeface on a brand surface, emoji standing in for icons, the rounded-2xl + shadow-lg + border card recipe repeated across a page, gradient-filled heading text, an eyebrow label over every heading, the backdrop-blur + white/10 glassmorphism recipe, stock hype-opener copy ('unlock the power of', 'say goodbye to', …), stacked filler adverbs ('seamlessly', 'effortlessly', …), and a page whose every call to action is drawn from the stock set ('Get Started', 'Learn More'). "
+    + "Every finding is a fact about the source text — a class name, a phrase, a repeated structure — never a judgement about whether the result is good design; it reports facts, not taste, so pair it with design_review_checklist or get_design_doc(\"design-critique-scoring\") for actual critique. "
+    + "Returns a 0-100 score built from distinct signals — each rule counts once no matter how many times it fires, so a long page never scores higher purely for its length — with every point itemised to the rule and file:line that earned it, plus what this audit structurally cannot see. Makes no network request.",
+  {
+    path: z.string().optional().describe("Directory to audit. Absolute paths are strongly preferred."),
+    code: z.string().optional().describe("A single snippet to audit instead of a directory."),
+    filename: z.string().optional().describe("Filename for the snippet, e.g. 'page.html' or 'Page.tsx'. Some rules — the typeface check in particular — use it to tell a landing page from a dashboard."),
+  },
+  async ({ path, code, filename }) => {
+    if (!path && !code) {
+      return text("Pass `path` for a project audit, or `code` for a single snippet.");
+    }
+    if (path) {
+      const abs = isAbsolute(path) ? path : resolve(process.cwd(), path);
+      let stat;
+      try {
+        stat = statSync(abs);
+      } catch {
+        return text(`There is no directory at \`${abs}\`. Pass an absolute path to the folder you want audited.`);
+      }
+      if (!stat.isDirectory()) {
+        return text(`\`${abs}\` is a file, not a directory. Pass its parent folder, or use \`code\` for a single snippet.`);
+      }
+      return text(genericReport({ root: abs }));
+    }
+    return text(genericReport({ source: code, filename }));
   },
 );
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { genericVisualRules, genericCopyRules } from "../dist/generic.js";
+import { genericVisualRules, genericCopyRules, genericScore, genericReport, RULE_WEIGHTS } from "../dist/generic.js";
 
 const ids = (code: string, filename?: string) =>
   genericVisualRules(code, filename).map((f) => f.rule).sort();
@@ -357,5 +357,72 @@ describe("copy rules — say goodbye to: kept as a fixed collocation, not narrow
 
   it("also fires on a deprecation note using the same stock phrase — accepted trade-off, see report", () => {
     expect(copyIds(`<p>Say goodbye to the legacy v1 API.</p>`)).toContain("hype-opener");
+  });
+});
+
+describe("the score", () => {
+  it("keys and rule ids agree in both directions", () => {
+    // A weight for a cut rule reads as coverage; a rule with no weight reads as
+    // clean. uniform-card-grid was cut in Task 2 — this is what catches the
+    // next one. The two inputs below are built to fire every one of the ten
+    // rules at least once, so the check runs both directions: every emitted id
+    // has a weight (a stray rule wouldn't silently score nothing), and every
+    // weighted id is actually reachable (a stale weight wouldn't silently read
+    // as coverage).
+    const visualCode = `
+      <div class="from-indigo-500 to-purple-600 bg-clip-text text-transparent backdrop-blur bg-white/10 border-white/10 rounded-2xl shadow-lg border"><h3>🚀 Fast</h3></div>
+      <div class="rounded-2xl shadow-lg border">A</div>
+      <div class="rounded-2xl shadow-lg border">B</div>
+      <span class="text-xs uppercase tracking-wide">Eyebrow</span><h2>One</h2>
+      <span class="text-xs uppercase tracking-wide">Eyebrow</span><h2>Two</h2>
+      <span class="text-xs uppercase tracking-wide">Eyebrow</span><h2>Three</h2>
+      <h1>Ship faster</h1><a href="/signup">Get started</a><style>body{font-family:Inter,sans-serif}</style>
+    `;
+    const copyCode = `<h1>Unlock the power of seamlessly modern tooling</h1><a>Get Started</a><a>Learn More</a><p>Seamlessly integrate your effortlessly modern workflow.</p>`;
+
+    const emitted = new Set([
+      ...genericVisualRules(visualCode),
+      ...genericCopyRules(copyCode),
+    ].map((f) => f.rule));
+
+    for (const id of emitted) expect(Object.keys(RULE_WEIGHTS)).toContain(id);
+    for (const id of Object.keys(RULE_WEIGHTS)) expect([...emitted], id).toContain(id);
+  });
+
+  it("counts a rule once however many times it fires", () => {
+    const card = `<div class="rounded-2xl shadow-lg border"><h3>🚀 Fast</h3></div>`;
+    const one = genericScore(genericVisualRules(card));
+    const many = genericScore(genericVisualRules(card.repeat(5)));
+    const emojiOne = one.items.find((i) => i.rule === "emoji-as-icon")?.weight ?? 0;
+    const emojiMany = many.items.find((i) => i.rule === "emoji-as-icon")?.weight ?? 0;
+    expect(emojiMany).toBe(emojiOne);
+  });
+
+  it("itemises every point it awards", () => {
+    const { total, items } = genericScore(genericVisualRules(`<div class="from-indigo-500 to-purple-600">`));
+    expect(items.length).toBeGreaterThan(0);
+    expect(total).toBe(items.reduce((n, i) => n + i.weight, 0));
+  });
+
+  it("scores a distinctive page at zero", () => {
+    const code = `<h1 style="font-family:'Redaction 35'">Deploy a Postgres branch in 400ms</h1>`;
+    expect(genericScore(genericVisualRules(code)).total).toBe(0);
+  });
+
+  it("caps at 100", () => {
+    const everything = `<div class="from-indigo-500 to-purple-600 bg-clip-text text-transparent backdrop-blur bg-white/10 border-white/10 rounded-2xl shadow-lg border"><h3>🚀 Fast</h3></div>`;
+    expect(genericScore(genericVisualRules(everything.repeat(4))).total).toBeLessThanOrEqual(100);
+  });
+});
+
+describe("the report", () => {
+  it("always states what it could not see", () => {
+    expect(genericReport({ source: `<p>Anything</p>` })).toMatch(/not visible to this audit/i);
+  });
+
+  it("prints the score itemised, not as a bare number", () => {
+    const out = genericReport({ source: `<div class="from-indigo-500 to-purple-600">` });
+    expect(out).toMatch(/ai-default-gradient/);
+    expect(out).toMatch(/\d+\s*\/\s*100/);
   });
 });

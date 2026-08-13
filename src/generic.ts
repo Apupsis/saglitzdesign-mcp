@@ -24,6 +24,7 @@
 
 import { scanTags, type LintFinding, type Tag } from "./lint.js";
 import { maskComments } from "./security.js";
+import { scanProject, MAX_FILES } from "./project.js";
 
 const lineOf = (src: string, index: number): number =>
   src.slice(0, index).split("\n").length;
@@ -597,4 +598,159 @@ export function genericCopyRules(code: string, filename?: string): LintFinding[]
       return true;
     })
     .sort((a, b) => a.line - b.line);
+}
+
+// ── score ────────────────────────────────────────────────────────────────────
+//
+// `uniform-card-grid` was cut in Task 2 and is deliberately absent. It fired on
+// any three elements sharing a class string — nav links, footer buttons,
+// dashboard KPI tiles, pricing tiers — and a grid/flex-parent gate would not
+// have saved it, because those tiles genuinely do sit in a grid. Separating
+// "cards that need hierarchy" from "components that should be consistent" is a
+// judgement about what the elements mean, not a fact about the source, so it
+// falls outside this module's governing rule. Ten rules, not eleven.
+export const RULE_WEIGHTS: Record<string, number> = {
+  "ai-default-gradient": 20,
+  "default-ui-font": 15,
+  "emoji-as-icon": 12,
+  "hype-opener": 10,
+  "stock-card-chrome": 8,
+  "gradient-text": 7,
+  "eyebrow-over-every-heading": 6,
+  "stock-glass-on-dark": 6,
+  "filler-adverb": 5,
+  "generic-cta": 3,
+};
+
+// Every key here must be a rule id some rule function above can emit, and
+// every rule id emitted above must be a key here — tested in both directions
+// in generic.test.ts. A weight for a rule that no longer exists scores
+// nothing and reads as coverage; a rule with no weight scores zero and reads
+// as clean. Both pass a naive suite that only checks one direction.
+
+/**
+ * Scores a page's findings by *distinct signal*, not by occurrence: a page
+ * with forty cards sharing the stock chrome recipe is not more generic than
+ * one with three, and weighting each occurrence would let page length —
+ * nothing to do with genericness — drive the number. Each rule id present in
+ * `findings` contributes its `RULE_WEIGHTS` entry exactly once; `count`
+ * records how many times it actually fired, for display, but never multiplies
+ * the score.
+ *
+ * `total` is the sum of every awarded weight. It is capped at 100 as a
+ * safety bound for future rules — today's ten weights sum to 92, so the cap
+ * never actually engages, and `total` always equals the sum of `items`'
+ * weights (see the "itemises every point it awards" test, which depends on
+ * that equality holding).
+ */
+export function genericScore(
+  findings: LintFinding[],
+): { total: number; items: Array<{ rule: string; weight: number; count: number }> } {
+  const counts = new Map<string, number>();
+  for (const f of findings) {
+    // A rule id with no entry in RULE_WEIGHTS scores nothing rather than
+    // throwing — the two-way test is what keeps that silent gap from
+    // actually happening, not a runtime guess about what it should be worth.
+    if (!(f.rule in RULE_WEIGHTS)) continue;
+    counts.set(f.rule, (counts.get(f.rule) ?? 0) + 1);
+  }
+
+  const items = [...counts.entries()]
+    .map(([rule, count]) => ({ rule, weight: RULE_WEIGHTS[rule]!, count }))
+    .sort((a, b) => b.weight - a.weight || a.rule.localeCompare(b.rule));
+
+  const total = Math.min(100, items.reduce((n, i) => n + i.weight, 0));
+  return { total, items };
+}
+
+// ── report ───────────────────────────────────────────────────────────────────
+
+const GENERIC_NOT_VISIBLE = `## Not visible to this audit
+
+Every rule above matches a fact about the source — a class name, a phrase, a
+repeated structure. It cannot see, and does not attempt to judge:
+
+- **Whether a default was chosen deliberately.** A brand whose colour
+  genuinely is indigo will be flagged; the finding names a fact, not a
+  mistake. Confirm the choice before treating a flag as a defect.
+- **Anything about rendered output.** Spacing rhythm, optical alignment, how
+  the page actually feels — none of that is visible from source text.
+- **Whether the writing is good.** This detects stock phrases, not weak ones;
+  a hand-written sentence that happens to avoid the phrase list is not
+  praised for it, and a good sentence that happens to use one is still
+  flagged.
+- **Judgement of any kind.** Whether the result is *good design* is not this
+  tool's question — \`design_review_checklist\` and \`get_design_doc("design-critique-scoring")\`
+  own that, with a human looking at the render.
+
+A clean result here means the source carries none of these specific,
+recurring defaults — not that the design is good.`;
+
+/**
+ * Reports the generic-default findings for one snippet or a whole project,
+ * mirroring `securityReport`'s shape: what was scanned, the score itemised
+ * (never a bare number — see `genericScore`), findings grouped by severity
+ * with `file:line`, then what this audit structurally cannot see.
+ */
+export function genericReport(input: { source?: string; filename?: string; root?: string }): string {
+  const lines: string[] = ["# Generic-design audit", ""];
+  let findings: LintFinding[] = [];
+  let scanned: string;
+
+  if (input.root) {
+    const scan = scanProject(input.root);
+    for (const f of scan.files) {
+      findings.push(
+        ...[...genericVisualRules(f.source, f.path), ...genericCopyRules(f.source, f.path)]
+          .map((x) => ({ ...x, message: `${f.path}: ${x.message}` })),
+      );
+    }
+    scanned = `Scanned ${scan.files.length} files under \`${input.root}\`.`;
+    if (scan.hitFileCap) scanned += ` Stopped at the ${MAX_FILES}-file cap — results are partial.`;
+    if (scan.hitByteCap) scanned += ` Stopped at the total-bytes cap — results are partial.`;
+    if (scan.skippedLarge.length) scanned += ` Skipped ${scan.skippedLarge.length} oversized file(s).`;
+  } else {
+    const code = input.source ?? "";
+    findings = [...genericVisualRules(code, input.filename), ...genericCopyRules(code, input.filename)];
+    scanned = "Scanned one snippet.";
+  }
+
+  const { total, items } = genericScore(findings);
+
+  lines.push(scanned, "");
+  lines.push(`**Score: ${total} / 100** — the count of distinct AI-default signals found; each rule counts once no matter how many times it repeats.`, "");
+  if (items.length) {
+    for (const item of items) {
+      lines.push(`- **${item.rule}** +${item.weight}${item.count > 1 ? ` (seen ${item.count}×, scored once)` : ""}`);
+    }
+  } else {
+    lines.push("No AI-default signals found in what was read.");
+  }
+  lines.push("");
+
+  const errors = findings.filter((f) => f.severity === "error");
+  const warnings = findings.filter((f) => f.severity === "warning");
+  const info = findings.filter((f) => f.severity === "info");
+
+  if (!findings.length) {
+    lines.push("No findings in what was read.", "");
+  } else {
+    for (const group of [
+      { title: "Errors", items: errors },
+      { title: "Warnings", items: warnings },
+      { title: "Notes", items: info },
+    ]) {
+      if (!group.items.length) continue;
+      lines.push(`## ${group.title}`, "");
+      for (const f of group.items) {
+        lines.push(`- **${f.rule}** (line ${f.line}) — ${f.message}`);
+        lines.push(`  - Fix: ${f.fix}`);
+        if (f.doc) lines.push(`  - Read: \`get_design_doc("${f.doc}")\``);
+      }
+      lines.push("");
+    }
+  }
+
+  lines.push(GENERIC_NOT_VISIBLE);
+  return lines.join("\n");
 }
