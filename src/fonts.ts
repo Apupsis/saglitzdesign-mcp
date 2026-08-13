@@ -26,7 +26,13 @@ export const PAIRINGS: FontPairing[] = [
     body: { family: "Inter", stack: `Inter, ${SYSTEM_SANS}`, weights: "400, 500", source: "Google Fonts" },
     mono: { family: "JetBrains Mono", stack: `'JetBrains Mono', ${SYSTEM_MONO}` },
     why: "One superfamily with a huge weight range and tuned optical sizing. Nearly invisible in the right way — the default that never fights the product. Tighten heading tracking (-0.02em); keep body at 0.",
-    pairing_rules: "Weight contrast carries hierarchy (700 heads / 400 body). Cap line length 60–75ch. Numbers: enable tabular-nums in tables.",
+    // The last clause is not advice this pairing invented; it is what
+    // `audit_generic_design`'s `default-ui-font` rule will say about the stack
+    // above the moment it is used on a landing or marketing route. Shipping
+    // the recommendation without it means an agent can follow this server's
+    // own advice, audit the result with this server's own auditor, and be
+    // told the advice was wrong. Say it here instead.
+    pairing_rules: "Weight contrast carries hierarchy (700 heads / 400 body). Cap line length 60–75ch. Numbers: enable tabular-nums in tables. On a brand surface — a landing or marketing page — Inter alone is the default, not a choice: pair it with a display face that carries the brand, or pick a pairing that already has one. This stack is for product and app UI.",
   },
   {
     id: "geist-geist",
@@ -119,7 +125,12 @@ export const PAIRINGS: FontPairing[] = [
     body: { family: "system-ui", stack: SYSTEM_SANS, weights: "400", source: "OS-native (no download)" },
     mono: { family: "ui-monospace", stack: SYSTEM_MONO },
     why: "Zero network cost, instant render, and the exact type users already read all day (SF on Apple, Roboto on Android). The right default for native-feeling apps and performance-critical sites.",
-    pairing_rules: "Respect Dynamic Type / font scaling — use relative units. San Francisco has optical sizes (Text vs Display) applied automatically. No FOUT/CLS.",
+    // Same cross-tool clause as `inter-inter`, for the same reason: this stack
+    // ends in Roboto, so `audit_generic_design` reads it as a default UI font
+    // on a marketing route. It is right to — a brand page set entirely in the
+    // system stack has made no typographic decision — and this pairing should
+    // say so rather than leave the auditor to.
+    pairing_rules: "Respect Dynamic Type / font scaling — use relative units. San Francisco has optical sizes (Text vs Display) applied automatically. No FOUT/CLS. On a brand surface — a landing or marketing page — this stack is the default UI font and nothing more: give the headline a display face, or pick a pairing that already has one.",
   },
   {
     id: "instrument-inter",

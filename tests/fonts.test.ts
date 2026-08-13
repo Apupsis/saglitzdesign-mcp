@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { suggestFontPairing, PAIRINGS } from "../dist/fonts.js";
+import { genericVisualRules } from "../dist/generic.js";
 
 describe("suggestFontPairing", () => {
   it("maps common intents to sensible pairings", () => {
@@ -24,5 +25,47 @@ describe("suggestFontPairing", () => {
   });
   it("has unique ids", () => {
     expect(new Set(PAIRINGS.map((p) => p.id)).size).toBe(PAIRINGS.length);
+  });
+});
+
+// `suggest_font_pairing` and `audit_generic_design` ship in the same server,
+// so an agent can take a stack from here, build a landing page with it, run
+// the auditor over the result, and be told the recommendation was a default.
+// That contradiction is this server's own doing, and the fix is not to soften
+// the auditor — `typography-craft` is on its side — but to make the pairing
+// say what the auditor will say, before it is used.
+//
+// Heading + body, no mono: a page's type is those two. (Adding the optional
+// mono stack would hide the contradiction, because a mono face is a family
+// the auditor counts, which is exactly why the check must not include it.)
+describe("pairings agree with what audit_generic_design will say about them", () => {
+  const brandPage = (p: (typeof PAIRINGS)[number]) =>
+    `<h1>Ship faster</h1><a href="/signup">Get started</a>` +
+    `<style>h1{font-family:${p.heading.stack}}body{font-family:${p.body.stack}}</style>`;
+
+  const flagged = (p: (typeof PAIRINGS)[number]) =>
+    genericVisualRules(brandPage(p), "app/(marketing)/page.tsx").some((f) => f.rule === "default-ui-font");
+
+  it("every pairing the auditor calls a default warns about brand surfaces itself", () => {
+    const silent = PAIRINGS.filter((p) => flagged(p) && !/brand surface/i.test(p.pairing_rules)).map((p) => p.id);
+    expect(silent).toEqual([]);
+  });
+
+  // Without this the check above passes just as well if the auditor never
+  // flags anything — these two are the pairings it actually has something to
+  // say about, and they are the reason the clause exists.
+  it("and the check is not vacuous: inter-inter and sf-system are both flagged", () => {
+    const ids = PAIRINGS.filter(flagged).map((p) => p.id);
+    expect(ids).toContain("inter-inter");
+    expect(ids).toContain("sf-system");
+  });
+
+  // The other direction: a pairing that genuinely puts a display face beside
+  // the neutral one is silent, so the clause is a statement about these
+  // stacks and not a blanket disclaimer every pairing would need.
+  it("stays silent on the pairings that already carry a display face", () => {
+    for (const id of ["cal-inter", "instrument-inter", "clash-satoshi", "playfair-inter"]) {
+      expect(flagged(PAIRINGS.find((p) => p.id === id)!), id).toBe(false);
+    }
   });
 });
