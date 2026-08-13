@@ -396,6 +396,28 @@ export default function About() {
     expect(ids(code, "index.html")).not.toContain("alt-missing");
   });
 
+  // `ATTR_START` lets an attribute name begin after a quote, so a word inside
+  // *another attribute's value* satisfied the test for a bare `alt` — a real
+  // finding swallowed because the page happened to contain the word. A sibling
+  // task hit the identical defect in perf.ts.
+  it.each([
+    ["a title that contains the word alt", `<img src="/a.jpg" title="alt text here">`],
+    ["an aria-label that contains it", `<img src="/a.jpg" aria-label="alt view">`],
+    ["nothing at all", `<img src="/a.jpg">`],
+  ])("flags an image with no alt attribute when it has %s", (_name, img) => {
+    expect(ids(GOOD_HTML.replace(/<img[^>]*>/, img), "index.html")).toContain("alt-missing");
+  });
+
+  it("does not read an attribute named inside another attribute's value", () => {
+    // Without the fix this link's href reads as "/wrong" and the canonical is
+    // reported relative.
+    const code = GOOD_HTML.replace(
+      '<link rel="canonical" href="https://saglitz.com/pricing/">',
+      '<link rel="canonical" title="see href=/wrong" href="https://saglitz.com/pricing/">',
+    );
+    expect(seoRules(code, "index.html")).toEqual([]);
+  });
+
   it("accepts an image whose alt arrives through a spread", () => {
     const code = `<article><img src="/a.jpg" {...imageProps} /></article>`;
     expect(ids(code, "components/Figure.jsx")).not.toContain("alt-missing");
@@ -529,12 +551,27 @@ export default function About() {
       ["a tag manager", `<script src="https://www.googletagmanager.com/gtag/js?id=G-X"></script>`],
       ["a same-origin analytics file", `<script src="/js/analytics.js"></script>`],
       ["no script at all", ``],
+      // A build *filename* proves nothing on its own: `/js/main.js` is what a
+      // hand-written site calls its one script. Excluding `js/` from the build
+      // directories did not help while the filename check ignored the
+      // directory — the same bug one level down.
+      ["a hand-written /js/main.js", `<script src="/js/main.js"></script>`],
+      ["a hand-written /js/index.js", `<script src="/js/index.js"></script>`],
+      ["a hand-written /js/app.js", `<script src="/js/app.js"></script>`],
+      ["a hand-written /js/app.bundle.js", `<script src="/js/app.bundle.js"></script>`],
+      // `type="module"` is an ES module, not evidence of a bundled app.
+      ["a hand-authored ES module", `<script type="module" src="/toggle-menu.js"></script>`],
     ])("still grades a page carrying %s", (_name, script) => {
       expect(ids(thin(script))).toEqual(["canonical-missing", "meta-description-missing", "title-missing"]);
     });
 
-    it("still reads the page's own bundle as a shell", () => {
-      expect(seoRules(thin(`<script src="/assets/index-4f2c.js"></script>`), "index.html")).toEqual([]);
+    it.each([
+      ["a Vite build output", `<script src="/assets/index-4f2c.js"></script>`],
+      ["a CRA hashed bundle", `<script src="/static/js/main.a1b2c3d4.js"></script>`],
+      ["a minified build file", `<script src="/js/app.min.js"></script>`],
+      ["a Next.js chunk", `<script src="/_next/static/chunks/main-app.js"></script>`],
+    ])("still reads %s as the page's own bundle", (_name, script) => {
+      expect(seoRules(thin(script), "index.html")).toEqual([]);
     });
   });
 
@@ -588,13 +625,53 @@ export default function About() {
       expect(seoRules(code, "emails/order-confirmation.html")).toEqual([]);
     });
 
-    it("says nothing about a fixed-width table with no viewport, wherever it lives", () => {
+    // A pixel-width table with no viewport meta was a third exemption signal
+    // and has been removed: a genuine landing page with a `width="640"` layout
+    // table and no viewport tag was exempted by it, losing two real findings.
+    // The cost is disclosed and accepted — an email outside a mail path and
+    // without Outlook markup is now graded as a page, which is the cheaper of
+    // the two errors.
+    it("still grades a fixed-width table page that gives no other email signal", () => {
       const code = `<!doctype html>
-<html>
-<head><meta charset="utf-8"><style>.wrap{max-width:600px}</style></head>
-<body>${emailBody}</body>
+<html lang="en">
+<head><meta charset="utf-8"><title>Website redesign pricing for UK startups | Saglitz</title><style>.w{margin:0 auto}</style></head>
+<body>
+  <table role="presentation" width="640"><tr><td>
+    <h1>Redesign pricing</h1>
+    <p>Twelve recent projects, with the line items and the four-week delivery timeline that produced them.</p>
+  </td></tr></table>
+</body>
 </html>`;
-      expect(seoRules(code, "templates/order.html")).toEqual([]);
+      expect(ids(code, "templates/pricing.html")).toEqual(["canonical-missing", "meta-description-missing"]);
+      // The same file under a mail path is still an email.
+      expect(seoRules(code, "emails/pricing.html")).toEqual([]);
+    });
+
+    // scan.ts masks `/* */` only in JS-like files, so in a plain `.html` a dead
+    // declaration inside a `<style>` comment, or a `<pre><code>` sample about
+    // Outlook, both reached the check as if they were live email markup. The
+    // narrowing happens here: `maskComments` is shared by three modules and is
+    // not this one's to change.
+    it("does not read a commented-out mso declaration as email markup", () => {
+      const code = `<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Redesign pricing for UK startups | Saglitz</title>
+<style>/* mso-line-height-rule: exactly; legacy, removed */ .w{margin:0 auto}</style></head>
+<body><table role="presentation" width="100%"><tr><td><h1>Pricing</h1><p>Real prose on a real page.</p></td></tr></table></body>
+</html>`;
+      expect(ids(code, "landing.html")).toEqual(["canonical-missing", "meta-description-missing"]);
+    });
+
+    it("does not read a code sample about Outlook as email markup", () => {
+      const code = `<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Email CSS support across Outlook clients | Saglitz</title></head>
+<body><table role="presentation"><tr><td>
+  <h1>Outlook CSS</h1>
+  <pre><code>mso-line-height-rule: exactly;</code></pre>
+</td></tr></table></body>
+</html>`;
+      expect(ids(code, "docs/email-css.html")).toEqual(["canonical-missing", "meta-description-missing"]);
     });
 
     it("says nothing about markup that exists only because Outlook does", () => {

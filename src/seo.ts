@@ -69,11 +69,35 @@ const lineOf = (src: string, index: number): number =>
 // attribute chunk or after whitespace / the previous value's closing quote.
 const ATTR_START = `(?:^|[\\s"'])`;
 
-const hasAttr = (tag: Tag, name: string): boolean =>
-  new RegExp(`${ATTR_START}${name}(?=[\\s=/>]|$)`, "i").test(tag.attrs);
+/**
+ * Attribute *values* blanked to spaces, names and `=` left in place.
+ *
+ * `ATTR_START` allows a name to begin after a quote, which is how it survives
+ * `class="x"alt=""` — and also how `title="alt text here"` came to satisfy a
+ * test for a bare `alt` attribute, silencing a real `alt-missing` on an image
+ * that has no alt at all. A word inside someone else's value is not an
+ * attribute. The replacement is length-preserving, so an offset taken from the
+ * bare string still reads the right characters out of the real one.
+ *
+ * Found by a sibling task, which hit the identical defect in `src/perf.ts`.
+ * One deliberate difference from the version proven there: the `=` survives,
+ * because this module locates `name=` in the bare string and then reads the
+ * value from the real one at that offset. An `=` *inside* a value is still
+ * blanked, which is the case that matters — `title="see href=x"` must not
+ * look like an href declaration.
+ */
+const bareAttrs = (attrs: string): string =>
+  attrs.replace(/=(\s*)("[^"]*"|'[^']*'|\{[^}]*\})/g, (m) => `=${m.slice(1).replace(/\S/g, " ")}`);
 
-/** `{...props}` — the attribute may well be forwarded; don't guess. */
-const hasSpread = (tag: Tag): boolean => /\{\s*\.\.\./.test(tag.attrs);
+const hasAttr = (tag: Tag, name: string): boolean =>
+  new RegExp(`${ATTR_START}${name}(?=[\\s=/>]|$)`, "i").test(bareAttrs(tag.attrs));
+
+/**
+ * `{...props}` — the attribute may well be forwarded; don't guess. Read from
+ * the bare string for the same reason as `hasAttr`: a spread written inside a
+ * string value is text, not a forwarded attribute.
+ */
+const hasSpread = (tag: Tag): boolean => /\{\s*\.\.\./.test(bareAttrs(tag.attrs));
 
 /**
  * An attribute's value, and whether it is *readable*. `content={description}`
@@ -99,10 +123,19 @@ interface AttrValue { present: boolean; value?: string }
 const UNREADABLE_VALUE = /\$\{|\{[^}]*\}|<%|%>|<\?/;
 
 const attrValue = (tag: Tag, name: string): AttrValue => {
-  const re = new RegExp(`${ATTR_START}${name}\\s*=\\s*("([^"]*)"|'([^']*)'|\\{[^}]*\\})`, "i");
-  const m = re.exec(tag.attrs);
+  // The name is located in the *bare* string, so a name mentioned inside
+  // another attribute's value can never be mistaken for a real attribute — the
+  // same defect `hasAttr` had, and `perf.ts` had, in the reading direction:
+  // `<link rel="canonical" title="see href=x">` would otherwise hand back
+  // "x" as this link's href. The value is then read out of the real string at
+  // the offset the bare match gives, which lines up because blanking preserves
+  // length.
+  const m = new RegExp(`${ATTR_START}${name}\\s*=`, "i").exec(bareAttrs(tag.attrs));
   if (!m) return { present: hasAttr(tag, name) };
-  const raw = m[2] ?? m[3];
+  const rest = tag.attrs.slice(m.index + m[0].length).replace(/^\s+/, "");
+  const v = /^("([^"]*)"|'([^']*)'|\{[^}]*\})/.exec(rest);
+  if (!v) return { present: true };                            // unquoted or empty
+  const raw = v[2] ?? v[3];
   if (raw === undefined) return { present: true };             // a JSX expression
   if (UNREADABLE_VALUE.test(raw)) return { present: true };    // produced, not written
   return { present: true, value: raw };
@@ -554,18 +587,30 @@ function isEmailTemplate(masked: string, path: string): boolean {
   // have. A path is a fact; a table is a habit.
   if (EMAIL_PATH.test(path)) return true;
 
-  // Markup that exists only because Outlook does: the VML/Office namespaces,
-  // `mso-` style properties, and the `[if mso]` conditional comment. (The
-  // conditional is matched against `path`-independent source: `maskComments`
-  // blanks comments, so the namespaces and `mso-` properties are what survive
-  // to be matched here.)
-  if (/xmlns:[vo]\s*=|mso-[a-z-]+\s*:/i.test(masked)) return true;
-
-  // A table pinned to a pixel width with no viewport meta anywhere: the
-  // fixed-width, non-responsive shape email clients require and no landing
-  // page has shipped in a decade.
-  return /<table[^>]+width\s*=\s*["']?\d{3,4}\b/i.test(masked)
-    && !/<meta[^>]+name\s*=\s*["']?viewport/i.test(masked);
+  // Markup that exists only because Outlook does: the VML/Office namespaces
+  // and `mso-` style declarations.
+  //
+  // Matched against a copy with CSS comments and code samples removed, and
+  // *not* against `masked` alone. The comment that used to sit here claimed
+  // `maskComments` had already blanked them; it has not — scan.ts masks
+  // `/* */` only in JS-like files, so in a plain `.html` a dead
+  // `/* mso-line-height-rule: exactly */` inside a `<style>` block, or a
+  // `<pre><code>` sample explaining Outlook properties, both read as live
+  // email markup and exempted a real page. `maskComments` is a shared
+  // primitive and is not this module's to change, so the narrowing happens
+  // here, where the claim is made.
+  //
+  // A pixel-width table with no viewport meta was a third signal here and has
+  // been removed outright: `templates/pricing.html` — a genuine landing page
+  // with a `width="640"` layout table and no viewport tag — was exempted by
+  // it, and losing real findings on real pages is the more expensive half of
+  // this trade. A real email outside a mail path and without Outlook markup is
+  // now graded as a page; that miss is disclosed and accepted.
+  const withoutSamples = masked
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/<pre[\s\S]*?<\/pre\s*>/gi, " ")
+    .replace(/<code[\s\S]*?<\/code\s*>/gi, " ");
+  return /xmlns:[vo]\s*=|mso-[a-z-]+\s*:/i.test(withoutSamples);
 }
 
 /** `emails/`, `mail/`, `mailers/`, or an `.eml` / `.mjml` file. */
@@ -626,14 +671,30 @@ const hasBundleScript = (tags: Tag[]): boolean =>
 // every script in `/js/`, including `/js/analytics.js`, and accepting that
 // directory as a build output reinstates exactly the miss this rule closes.
 const BUNDLE_PATH = /(?:^|\/)(?:assets|_next|_nuxt|static|build|dist|_app|chunks)\//i;
-const BUNDLE_NAME = /(?:^|\/)(?:bundle|main|index|app|runtime|polyfills|vendor|entry|client)[.\-_][^/]*$|[.\-][0-9a-f]{6,}\.m?js$/i;
+
+/** A content hash in the filename — nobody types `index-4f2c1a.js` by hand. */
+const BUNDLE_HASH = /[.\-_][0-9a-f]{6,}\.m?js$/i;
+
+/**
+ * A build filename, which on its own proves nothing. `/js/main.js`,
+ * `/js/index.js` and `/js/app.js` are what a hand-written site calls its one
+ * script, and reading them as bundler output silenced those pages just as
+ * surely as accepting `js/` as a build directory did — the same bug one level
+ * down. It counts only when corroborated by a minification or chunk marker.
+ */
+const BUNDLE_NAME = /(?:^|\/)(?:bundle|main|index|app|runtime|polyfills|vendor|entry|client)[.\-_][^/]*$/i;
+const BUILD_MARKER = /\.min\.m?js$|[.\-_]chunk[.\-_]|chunk[.\-_][^/]*\.m?js$/i;
 
 const hasOwnBundle = (tags: Tag[]): boolean =>
   tags.some((t) => {
     if (t.name.toLowerCase() !== "script") return false;
     const src = attrValue(t, "src").value ?? "";
     if (!src || isCrossOrigin(src)) return false;
-    return BUNDLE_PATH.test(src) || BUNDLE_NAME.test(src) || (attrValue(t, "type").value ?? "") === "module";
+    // `type="module"` is deliberately not a signal. A hand-authored
+    // `<script type="module" src="/toggle-menu.js">` is an ES module and
+    // nothing more; modules are *correlated with* bundled apps, and treating
+    // the correlation as the evidence silenced small, correct pages.
+    return BUNDLE_PATH.test(src) || BUNDLE_HASH.test(src) || (BUNDLE_NAME.test(src) && BUILD_MARKER.test(src));
   });
 
 /** `https://…` or `//…` — served by someone else, and no evidence about this page. */
