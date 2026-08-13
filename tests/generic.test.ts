@@ -48,6 +48,13 @@ describe("visual rules — fire when they should", () => {
     expect(ids(`<h3>🚀 Lightning fast</h3>`)).toContain("emoji-as-icon");
   });
 
+  // The mirror of the changelog misses below: truncating the heading body at
+  // its first child element put a wrapped emoji outside the text that was
+  // read, so a real instance of the pattern went silent.
+  it("flags an emoji standing in for an icon even when it is wrapped in a span", () => {
+    expect(ids(`<h2><span>🚀</span> Fast</h2>`)).toContain("emoji-as-icon");
+  });
+
   it("flags the stock card chrome triad", () => {
     const card = (n: string) => `<div class="rounded-2xl shadow-lg border p-${n}"><h3>${n}</h3></div>`;
     expect(ids(`${card("4")}${card("6")}${card("8")}`)).toContain("stock-card-chrome");
@@ -150,6 +157,22 @@ describe("visual rules — stay quiet when they should", () => {
 
   it("accepts an emoji in a changelog heading with no version number at all", () => {
     expect(ids(`<h2>✨ New in this release</h2>`)).not.toContain("emoji-as-icon");
+  });
+
+  // The heading body was truncated at its first child element, which split the
+  // changelog exception down the middle: the emoji survived and the version
+  // string that excuses it did not. A linked or `<code>`-wrapped version is
+  // the normal shape of a changelog heading.
+  it("accepts a changelog heading whose version string is wrapped in <code>", () => {
+    expect(ids(`<h2>🚀 <code>v2.4.0</code> — Faster builds</h2>`)).not.toContain("emoji-as-icon");
+  });
+
+  it("accepts a changelog heading whose stock phrase is inside a permalink anchor", () => {
+    expect(ids(`<h2>✨ <a href="#v240">What's new</a></h2>`)).not.toContain("emoji-as-icon");
+  });
+
+  it("accepts a changelog heading with a bolded version and a trailing tag", () => {
+    expect(ids(`<h3>⚡ <strong>v1.2</strong> <span class="tag">beta</span></h3>`)).not.toContain("emoji-as-icon");
   });
 
   it("accepts a deliberate teal-to-lime gradient with unrelated indigo/purple colours elsewhere in the file", () => {

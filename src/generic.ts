@@ -261,7 +261,21 @@ export function genericVisualRules(code: string, filename?: string): LintFinding
     const name = tag.name.toLowerCase();
 
     if (/^h[1-6]$/.test(name)) {
-      const body = masked.slice(tag.end, masked.indexOf("<", tag.end + 1));
+      // The heading's whole visible string, read the way the copy rules read
+      // one: `elementSpan` for the content, `flattenTags` to drop nested
+      // markup without moving anything.
+      //
+      // Truncating at the first child element instead — which is what
+      // `masked.indexOf("<", …)` did — split the changelog exception down the
+      // middle, keeping the emoji and losing the version string that excuses
+      // it. `<h2>🚀 v2.4.0 — Faster builds</h2>` was silent, and
+      // `<h2>🚀 <code>v2.4.0</code> — Faster builds</h2>` fired, though a
+      // linked or code-wrapped version is the normal shape of a changelog
+      // heading. It cut the other way too: `<h2><span>🚀</span> Fast</h2>` put
+      // the emoji outside the truncated body and went silent on a real
+      // instance of the pattern.
+      const span = elementSpan(masked, tag);
+      const body = span ? flattenTags(masked.slice(span[0], span[1])) : "";
       if (ICON_EMOJI.test(body) && !CHANGELOG_HEADING.test(body)) {
         push(tag.index, "warning", "emoji-as-icon",
           `An emoji is standing in for an icon in a heading.`,
