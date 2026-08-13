@@ -4,7 +4,7 @@ title: "The AI-Default Aesthetic — What the Systems Ship"
 category: craft
 platform: web
 tags: [craft, ai, defaults, tailwind, shadcn, typography, color, icons]
-sources: ["https://tailwindcss.com/docs/colors", "https://ui.shadcn.com/docs/theming", "https://ui.shadcn.com/docs/installation", "https://rsms.me/inter/", "https://lucide.dev/", "https://heroicons.com/", "https://fonts.google.com/specimen/Inter", "https://tailwindcss.com/docs/box-shadow", "https://tailwindcss.com/docs/border-radius"]
+sources: ["https://tailwindcss.com/docs/colors", "https://ui.shadcn.com/docs/theming", "https://ui.shadcn.com/docs/installation", "https://rsms.me/inter/", "https://lucide.dev/", "https://heroicons.com/", "https://fonts.google.com/specimen/Inter", "https://tailwindcss.com/docs/box-shadow", "https://tailwindcss.com/docs/border-radius", "https://tailwindcss.com/docs/background-image"]
 updated: 2026-08-13
 ---
 
@@ -55,7 +55,7 @@ Two things follow from those numbers. `purple-500` and `violet-500` are the seco
 
 A pair under ~30° apart in OKLCH hue with under ~5 points of lightness change is one colour rendered twice, not a colour relationship. If the gradient is doing work, the endpoints can say what the work is; if they cannot, a flat fill is the honest version. See [[color-systems]] for building the ramp you actually want and [[modern-css-design-primitives]] for `color-mix()` and `oklch()` in the browser.
 
-**One version tell worth knowing:** Tailwind v4 spells the direction utility `bg-linear-to-r`. `bg-gradient-to-r` is the v3 spelling. Code that writes `bg-gradient-to-br` in a v4 project is reproducing v3-era material, not reading the installed docs — the same signal as v3's hex palette (`#6366f1` was v3's `indigo-500`; v4's is `oklch(58.5% 0.233 277.117)`) appearing in a project whose theme file is authored in OKLCH.
+**Two version tells, both checkable against the installed docs.** Tailwind's current background-image utilities are spelled `bg-linear-to-t` … `bg-linear-to-tl`; `bg-gradient-to-*` is not among them. And the palette carries 286 values across its 26 ramps, none of which is `#6366f1` — the current `indigo-500` is `oklch(58.5% 0.233 277.117)`, nearest hex `#615fff`. Either string in a project running the current release is material older than the docs sitting beside it.
 
 ## The typeface
 
@@ -87,7 +87,7 @@ That is the fifth of seven steps (`2xs`, `xs`, `sm`, `md`, `lg`, `xl`, `2xl`) �
 
 ## The icons
 
-Both stock sets are single-weight stroke families, which is why they are interchangeable at a glance:
+Both stock sets ship a single default stroke weight for their primary cut, which is why they are interchangeable at a glance:
 
 - **Lucide** (`lucide.dev`, v1.31.0) — "Beautiful & consistent icons", "Made by the community", **1768 icons**, ISC licence. The customiser on the homepage opens at **24px size, 2px stroke** — the shape shipped unless someone changes it.
 - **Heroicons** (`heroicons.com`, v2.1.5) — "Beautiful hand-crafted SVG icons, by the makers of Tailwind CSS", **316 icons**, MIT licence, four cuts: Outline (**24×24, 1.5px stroke**), Solid, Mini, Micro.
