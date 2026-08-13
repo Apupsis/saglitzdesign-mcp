@@ -140,6 +140,20 @@ describe("source rules — stay quiet when they should", () => {
     expect(ids(`localStorage.setItem("theme", "dark")`)).not.toContain("token-in-localstorage");
   });
 
+  // A numbered credential key — a second environment, a second account, a
+  // migration — was silently exempt: "token2" is one segment, and no whole
+  // segment equalled TOKEN.
+  it("flags a numbered credential key", () => {
+    expect(ids(`localStorage.setItem("token2", v)`)).toContain("token-in-localstorage");
+    expect(ids(`localStorage.setItem("jwt1", v)`)).toContain("token-in-localstorage");
+    expect(ids(`localStorage.setItem("session42", v)`)).toContain("token-in-localstorage");
+    expect(ids(`localStorage.setItem("token2fa", v)`)).toContain("token-in-localstorage");
+    // …and the whole-segment guard survives the extra split point.
+    expect(ids(`localStorage.setItem("tokenizer2", v)`)).not.toContain("token-in-localstorage");
+    expect(ids(`localStorage.setItem("draft2", v)`)).not.toContain("token-in-localstorage");
+    expect(ids(`localStorage.setItem("authorized2", v)`)).not.toContain("token-in-localstorage");
+  });
+
   it("accepts localStorage keys whose name merely contains a credential word as a substring", () => {
     expect(ids(`localStorage.setItem("tokenizer-settings", val)`)).not.toContain("token-in-localstorage");
     expect(ids(`localStorage.setItem("authorized-theme", val)`)).not.toContain("token-in-localstorage");
@@ -839,6 +853,20 @@ describe("one correctly-hardened project per framework produces no findings", ()
     expect(runProject(files)).toMatch(/Read header configuration from: `/);
   });
 
+  // Every value in these fixtures is a readable literal, so no "I found this
+  // and could not read it" note may appear on any of them. The zero-findings
+  // assertion above already proves this; it is stated separately because the
+  // undeterminable family is new and this is the surface it must never touch.
+  const UNDETERMINABLE_RULES = [
+    "csp-undeterminable", "hsts-undeterminable", "x-content-type-options-undeterminable",
+    "referrer-policy-undeterminable", "permissions-policy-undeterminable",
+  ];
+
+  it.each(HARDENED)("%s — no undeterminable note", (_name, files) => {
+    const report = runProject(files);
+    for (const rule of UNDETERMINABLE_RULES) expect(report, rule).not.toContain(rule);
+  });
+
   // The one shape that cannot be finding-free, and should not be: a
   // meta-delivered policy genuinely is weaker than a header — frame-ancestors,
   // report-uri and sandbox are ignored in it (CSP Level 3). What it must not
@@ -865,6 +893,239 @@ describe("one correctly-hardened project per framework produces no findings", ()
     expect(report).toContain("**0 error · 0 warning · 1 info**");
     expect(report).toContain("csp-meta-delivery");
     expect(report).not.toContain("csp-missing");
+    for (const rule of UNDETERMINABLE_RULES) expect(report, rule).not.toContain(rule);
+  });
+});
+
+// A string that merely *sits* where a policy would is the one false positive
+// that costs more than it looks: with no real CSP in the project, the
+// csp-missing error is replaced by four directive warnings pointing at the
+// decoy, so the absence is hidden rather than embellished.
+describe("a decoy shaped like a policy must not shadow a real absence", () => {
+  const DECOY = { path: "aaa.json", source: JSON.stringify({
+    "Content-Security-Policy": "controls which resources the page may load",
+  }, null, 2) };
+
+  it("still reports csp-missing when the only match is a docs-map decoy", () => {
+    const found = cfgIds([DECOY]);
+    expect(found).toContain("csp-missing");
+    // …and none of the directive rules, which would have anchored themselves
+    // to the decoy's line and read as a graded policy.
+    expect(found).not.toContain("csp-missing-object-src");
+    expect(found).not.toContain("csp-missing-base-uri");
+    expect(found).not.toContain("csp-missing-frame-ancestors");
+    expect(found).not.toContain("csp-missing-form-action");
+    expect(extractHeaders([DECOY]).has("content-security-policy")).toBe(false);
+  });
+
+  // A real config usually wins on first-hit — but only usually. `aaa.json`
+  // walks before `app/root.tsx`, so a Remix project loses that race.
+  it("grades the real policy when a decoy walks before the real config", () => {
+    const report = runProject({
+      "aaa.json": DECOY.source,
+      "app/root.tsx": `export const headers = () => ({
+  "Content-Security-Policy": "${HARD_CSP}",
+  "Strict-Transport-Security": "${HARD_HSTS}",
+  "X-Content-Type-Options": "nosniff",
+  "Permissions-Policy": "${HARD_PP}",
+});
+`,
+    });
+    expect(report).toContain("**0 error · 0 warning · 0 info**");
+    expect(report).toContain("Read header configuration from: `app/root.tsx`.");
+  });
+
+  // The guard is "names a CSP directive", not "looks like the policy we
+  // recommend" — a one-directive policy is unusual, and valid.
+  it("does not reject a valid policy for being unusual", () => {
+    for (const policy of [
+      "sandbox allow-forms allow-same-origin",
+      "upgrade-insecure-requests",
+      "trusted-types default dompurify",
+      "report-to csp-endpoint",
+      "block-all-mixed-content",
+      "SCRIPT-SRC 'self'",
+    ]) {
+      const hit = extractHeaders([{ path: "_headers", source: `/*\n  Content-Security-Policy: ${policy}\n` }])
+        .get("content-security-policy");
+      expect(hit, policy).toBeDefined();
+      expect(hit!.value.trim()).toBe(policy);
+    }
+  });
+
+  it("leaves a runtime-assembled value alone — there is nothing to parse", () => {
+    expect(cfgIds([{ path: "middleware.ts", source: `res.headers.set('Content-Security-Policy', cspValue)\n` }]))
+      .toContain("csp-undeterminable");
+  });
+});
+
+// Guarding only CSP would have been worse than guarding nothing: a guard that
+// covers one header reads as a guard that covers headers. Each header the
+// extractor reads has its own checkable grammar, and a value that satisfies
+// none of it is prose.
+describe("the decoy guard covers every header the extractor reads", () => {
+  interface HeaderCase {
+    header: string;
+    /** A docs-map / i18n-bundle string sitting exactly where a value would. */
+    prose: string;
+    real: string;
+    /** Legal values a stricter check might wrongly reject. */
+    unusual: string[];
+    /** The absence finding a decoy must not be able to suppress. */
+    missing: string | null;
+  }
+
+  const HEADER_CASES: HeaderCase[] = [
+    {
+      header: "Content-Security-Policy",
+      prose: "controls which resources the page may load",
+      real: HARD_CSP,
+      unusual: ["sandbox allow-forms", "upgrade-insecure-requests"],
+      missing: "csp-missing",
+    },
+    {
+      header: "Strict-Transport-Security",
+      prose: "tells the browser to use HTTPS only",
+      real: HARD_HSTS,
+      // max-age=0 is legal and meaningful — it clears a previously-sent
+      // policy — so it is a declaration, not a decoy.
+      unusual: ["max-age=0", "max-age=31536000", "max-age=63072000; preload"],
+      missing: "hsts-missing",
+    },
+    {
+      header: "X-Content-Type-Options",
+      prose: "stops the browser MIME-sniffing a response into a script",
+      real: "nosniff",
+      unusual: ["NOSNIFF", "nosniff;"],
+      missing: "x-content-type-options-missing",
+    },
+    {
+      // There is deliberately no referrer-policy-missing rule, so the damage a
+      // decoy does here is quieter: it occupies the slot, and gets graded.
+      header: "Referrer-Policy",
+      prose: "controls how much referrer information is sent with requests",
+      real: "strict-origin-when-cross-origin",
+      unusual: ["no-referrer, strict-origin-when-cross-origin", "same-origin", "unsafe-url"],
+      missing: null,
+    },
+    {
+      header: "Permissions-Policy",
+      prose: "controls which browser features the page may use",
+      real: HARD_PP,
+      unusual: [`geolocation=(self "https://maps.example.com"), fullscreen=*`, "camera=self", "interest-cohort=()"],
+      missing: "permissions-policy-missing",
+    },
+  ];
+
+  const decoyOf = (c: HeaderCase) =>
+    ({ path: "aaa.json", source: JSON.stringify({ [c.header]: c.prose }, null, 2) });
+  const headersFileOf = (path: string, header: string, value: string) =>
+    ({ path, source: `/*\n  ${header}: ${value}\n` });
+
+  it.each(HEADER_CASES.map((c) => [c.header, c] as const))(
+    "%s — a prose decoy is not read as a declaration", (_h, c) => {
+      expect(extractHeaders([decoyOf(c)]).has(c.header.toLowerCase())).toBe(false);
+      if (c.missing) expect(cfgIds([decoyOf(c)])).toContain(c.missing);
+    });
+
+  it.each(HEADER_CASES.map((c) => [c.header, c] as const))(
+    "%s — a real declaration is graded even when a decoy walks first", (_h, c) => {
+      const real = headersFileOf("zz/_headers", c.header, c.real);
+      const hit = extractHeaders([decoyOf(c), real]).get(c.header.toLowerCase());
+      expect(hit).toBeDefined();
+      expect(hit!.value.trim()).toBe(c.real);
+      expect(hit!.file).toBe("zz/_headers");
+      if (c.missing) expect(cfgIds([decoyOf(c), real])).not.toContain(c.missing);
+    });
+
+  it.each(HEADER_CASES.map((c) => [c.header, c] as const))(
+    "%s — a legal but unusual value is still a declaration", (_h, c) => {
+      for (const value of c.unusual) {
+        const hit = extractHeaders([headersFileOf("_headers", c.header, value)]).get(c.header.toLowerCase());
+        expect(hit, `${c.header}: ${value}`).toBeDefined();
+        expect(hit!.value.trim()).toBe(value);
+      }
+    });
+
+  // The same asymmetry the CSP guard uses: a value assembled at runtime is
+  // exempt, because that path already reports honestly instead of claiming
+  // absence.
+  it("never rejects a value it could not read in the first place", () => {
+    const found = cfgIds([{ path: "middleware.ts", source:
+      `res.headers.set('Strict-Transport-Security', hstsValue)\n`
+      + `res.headers.set('X-Content-Type-Options', xctoValue)\n`
+      + `res.headers.set('Referrer-Policy', refValue)\n`
+      + `res.headers.set('Permissions-Policy', ppValue)\n` }]);
+    expect(found).not.toContain("hsts-missing");
+    expect(found).not.toContain("x-content-type-options-missing");
+    expect(found).not.toContain("permissions-policy-missing");
+  });
+
+  // The precise regression the coordinator named: before this, a decoy
+  // replaced the hsts-missing *warning* with an hsts-no-subdomains *note*.
+  it("does not let an HSTS decoy demote a missing header to a note", () => {
+    const found = cfgIds([decoyOf(HEADER_CASES[1])]);
+    expect(found).toContain("hsts-missing");
+    expect(found).not.toContain("hsts-no-subdomains");
+    expect(found).not.toContain("hsts-short-max-age");
+  });
+});
+
+// Not grading a value assembled at runtime is right — you cannot prove what
+// you did not read. Going *silent* about it is not. Four of the five headers
+// had no equivalent of csp-undeterminable, so an undeterminable hit suppressed
+// the *-missing finding and emitted nothing at all, leaving a reader unable to
+// tell "nothing found" from "found and unparseable" — a dropped signal, not a
+// withheld claim.
+describe("an unreadable header is reported as unread, not as nothing", () => {
+  const UNDETERMINABLE: Array<[string, string, string, string | null]> = [
+    // header, the setter line, the undeterminable rule, the absence rule it replaces
+    ["Content-Security-Policy", "cspValue", "csp-undeterminable", "csp-missing"],
+    ["Strict-Transport-Security", "hstsValue", "hsts-undeterminable", "hsts-missing"],
+    ["X-Content-Type-Options", "xctoValue", "x-content-type-options-undeterminable", "x-content-type-options-missing"],
+    ["Referrer-Policy", "refValue", "referrer-policy-undeterminable", null],
+    ["Permissions-Policy", "ppValue", "permissions-policy-undeterminable", "permissions-policy-missing"],
+  ];
+
+  const READABLE: Record<string, string> = {
+    "Content-Security-Policy": HARD_CSP,
+    "Strict-Transport-Security": HARD_HSTS,
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "Permissions-Policy": HARD_PP,
+  };
+
+  it.each(UNDETERMINABLE)("%s — a runtime-assembled value says so", (header, ident, rule, missing) => {
+    const found = securityConfigRules([
+      { path: "middleware.ts", source: `res.headers.set('${header}', ${ident})\n` },
+    ]);
+    const hit = found.find((f) => f.rule === rule);
+    expect(hit, rule).toBeDefined();
+    expect(hit!.severity).toBe("info");
+    expect(hit!.doc).toBe("web-security-headers");
+    // What was found, where, and that the real response is the authority.
+    expect(hit!.message).toContain("middleware.ts");
+    expect(hit!.message).toMatch(/assembled at runtime/);
+    // csp-undeterminable's own wording predates the other four and says "in a
+    // response"; the point asserted here is that all five send the reader to
+    // the emitted header rather than leaving the value unmentioned.
+    expect(hit!.fix).toMatch(/(?:in|on) a (?:real )?response/);
+    // The absence claim stays suppressed — that part was already right.
+    if (missing) expect(found.map((f) => f.rule)).not.toContain(missing);
+  });
+
+  it.each(UNDETERMINABLE)("%s — a readable value produces neither finding", (header, _ident, rule, missing) => {
+    const found = cfgIds([
+      { path: "_headers", source: `/*\n  ${header}: ${READABLE[header]}\n` },
+    ]);
+    expect(found).not.toContain(rule);
+    if (missing) expect(found).not.toContain(missing);
+  });
+
+  it("says so for every header at once rather than falling silent on four", () => {
+    const found = cfgIds([{ path: "middleware.ts", source:
+      UNDETERMINABLE.map(([h, ident]) => `res.headers.set('${h}', ${ident})`).join("\n") + "\n" }]);
+    for (const [, , rule] of UNDETERMINABLE) expect(found).toContain(rule);
   });
 });
 
@@ -969,6 +1230,50 @@ describe("rules that used to fire on correct code", () => {
     expect(ids(`<link rel="stylesheet" href="http://x.example/a.css">`, "p.html")).toContain("http-subresource");
   });
 
+  // The rule said "browsers block it as mixed content" for every element,
+  // including the three MDN says are auto-upgraded — contradicting
+  // web-security-headers.md, which was verified against MDN in the same
+  // release.
+  it("does not tell an upgraded request it was blocked", () => {
+    const msg = (markup: string) =>
+      securitySourceRules(markup, "p.html").find((f) => f.rule === "http-subresource")!.message;
+
+    for (const markup of [
+      `<img src="http://x.example/a.png" alt="a">`,
+      `<video src="http://x.example/v.mp4"></video>`,
+      `<audio src="http://x.example/a.mp3"></audio>`,
+      `<source src="http://x.example/v.webm">`,
+    ]) {
+      expect(msg(markup), markup).toMatch(/auto-upgrade/);
+      expect(msg(markup), markup).not.toMatch(/browsers block it as mixed content/);
+    }
+
+    // "All mixed content that is not upgradable" keeps the blocking wording.
+    for (const markup of [
+      `<script src="http://x.example/s.js"></script>`,
+      `<iframe src="http://x.example/f.html"></iframe>`,
+      `<link rel="stylesheet" href="http://x.example/a.css">`,
+      `<object data="http://x.example/o.swf"></object>`,
+    ]) {
+      expect(msg(markup), markup).toMatch(/browsers block it as mixed content/);
+      expect(msg(markup), markup).not.toMatch(/auto-upgrade/);
+    }
+
+    // MDN's exception: an otherwise-upgradable request to a literal IP host
+    // is blocked, not upgraded.
+    expect(msg(`<img src="http://93.184.215.14/a.png" alt="a">`)).toMatch(/browsers block it as mixed content/);
+    expect(msg(`<img src="http://[2606:2800:21f:cb07::1]/a.png" alt="a">`)).toMatch(/browsers block it as mixed content/);
+    expect(msg(`<img src="http://example.com/a.png" alt="a">`)).toMatch(/auto-upgrade/);
+  });
+
+  it("keeps the doc id on both halves of the mixed-content split", () => {
+    for (const markup of [`<img src="http://x.example/a.png" alt="a">`, `<script src="http://x.example/s.js"></script>`]) {
+      const f = securitySourceRules(markup, "p.html").find((x) => x.rule === "http-subresource")!;
+      expect(f.doc).toBe("web-security-headers");
+      expect(f.severity).toBe("error");
+    }
+  });
+
   it("does not match an attribute name inside a data- attribute", () => {
     // `-` is a non-word character, so `\bsrc` matched `data-src` — and
     // `\bnonce` matched `data-nonce`, which *suppressed* a real finding.
@@ -1057,6 +1362,35 @@ describe("rules that used to fire on correct code", () => {
     const secret = securitySourceRules(`const k = process.env.NEXT_PUBLIC_STRIPE_SECRET_KEY`)
       .find((x) => x.rule === "public-env-secret");
     expect(secret!.fix).toMatch(/rotate the value/);
+  });
+
+  // Softening the *fix text* left the severity alone, so a project whose only
+  // finding was a Mapbox `pk.*` token — public by design, and URL-restricted —
+  // still opened its report with "1 error". The severity is the part a reader
+  // triages on.
+  it("does not headline an error over a token whose name does not say it is secret", () => {
+    const sev = (code: string) =>
+      securitySourceRules(code).find((x) => x.rule === "public-env-secret")?.severity;
+    expect(sev(`const t = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN`)).toBe("warning");
+    expect(sev(`const t = process.env.NEXT_PUBLIC_ALGOLIA_SEARCH_TOKEN`)).toBe("warning");
+    // A name that carries SECRET, PRIVATE, PASSWORD, or an API_KEY/ACCESS_KEY
+    // pair is a defect whatever the value turns out to be.
+    expect(sev(`const k = process.env.NEXT_PUBLIC_STRIPE_SECRET_KEY`)).toBe("error");
+    expect(sev(`const k = process.env.NEXT_PUBLIC_API_KEY`)).toBe("error");
+    expect(sev(`const k = process.env.VITE_AWS_ACCESS_KEY`)).toBe("error");
+    expect(sev(`const k = process.env.REACT_APP_PRIVATE_KEY`)).toBe("error");
+    expect(sev(`const k = process.env.NEXT_PUBLIC_DB_PASSWORD`)).toBe("error");
+  });
+
+  it("stays silent on a name that declares itself the published half of a key pair", () => {
+    // A Solana mint address, a VAPID web-push key: PUBLIC_KEY is the name of
+    // the half you are supposed to ship.
+    expect(ids(`const m = process.env.NEXT_PUBLIC_TOKEN_MINT_PUBLIC_KEY`)).not.toContain("public-env-secret");
+    expect(ids(`const k = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY`)).not.toContain("public-env-secret");
+    // The exemption is the adjacent pair, not the bare segment "PUBLIC" —
+    // SECRET_KEY and PRIVATE_KEY can never match it.
+    expect(ids(`const k = process.env.VITE_PUBLIC_STRIPE_SECRET_KEY`)).toContain("public-env-secret");
+    expect(ids(`const k = process.env.NEXT_PUBLIC_SIGNING_PRIVATE_KEY`)).toContain("public-env-secret");
   });
 });
 

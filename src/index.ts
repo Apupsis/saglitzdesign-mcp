@@ -31,7 +31,7 @@ import { measure } from "./screenshot.js";
 import { renderMarkdown, renderHtml } from "./report.js";
 import { importTokensReport } from "./importtokens.js";
 import { projectAuditReport } from "./project.js";
-import { securityReport } from "./security.js";
+import { securityReport, HEADER_SOURCES_SENTENCE } from "./security.js";
 import { createDesignSystem, type DSPlatform } from "./designsystem.js";
 import { normalizeHex } from "./tokens.js";
 
@@ -818,7 +818,9 @@ tool(
 // ── Tool 30: audit security ──────────────────────────────────────────────────
 tool(
   "audit_security",
-  "Audit a web project or snippet for security defects a frontend actually ships: missing or weak Content-Security-Policy, absent HSTS, unpinned cross-origin scripts, mixed content, credentials in localStorage, secret-named NEXT_PUBLIC_/VITE_ variables, unsandboxed third-party iframes, wildcard postMessage, raw-HTML sinks with no sanitiser, production source maps and un-ignored .env files. Header state is inferred from next.config / vercel.json / netlify.toml / _headers / middleware, read as text and never evaluated — this makes no network request, so it also reports what it could not see. Pair with audit_project for design drift and audit_accessibility for WCAG.",
+  "Audit a web project or snippet for security defects a frontend actually ships: missing or weak Content-Security-Policy, absent HSTS, unpinned cross-origin scripts, mixed content, credentials in localStorage, secret-named NEXT_PUBLIC_/VITE_ variables, unsandboxed third-party iframes, wildcard postMessage, raw-HTML sinks with no sanitiser, production source maps and un-ignored .env files. "
+    + `${HEADER_SOURCES_SENTENCE} — this makes no network request, so it also reports what it could not see. `
+    + "Pair with audit_project for design drift and audit_accessibility for WCAG.",
   {
     path: z.string().optional().describe("Directory to audit. Absolute paths are strongly preferred. Required for configuration and header rules — a snippet cannot show them."),
     code: z.string().optional().describe("A single snippet to audit instead of a directory. Source rules only."),

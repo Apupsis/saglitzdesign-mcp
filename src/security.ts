@@ -53,6 +53,34 @@ const SUBRESOURCE_TAGS = new Set([
 ]);
 const SUBRESOURCE_ATTRS = ["src", "href", "data"] as const;
 
+/**
+ * MDN splits mixed content in two, and the split is a behavioural difference
+ * rather than a nuance: browsers "auto-upgrad[e] image, video, and audio
+ * mixed content requests from HTTP to HTTPS, and block insecure requests for
+ * all other resource types". Telling the reader an `<img>` is blocked sends
+ * them hunting for a block that never happened — the same class of false
+ * statement as calling a navigation mixed content, which this rule already
+ * had to fix once. `knowledge/security/web-security-headers.md` states the
+ * split too; a rule that contradicts its own cited document is a rule the
+ * reader stops believing.
+ *
+ * This is MDN's upgradable list, restricted to what the attribute scan below
+ * can actually see: `<img src>` (an `<img>` whose origin comes from `srcset`
+ * or `<picture>` is blockable, and neither attribute is read here),
+ * `<audio src>`, `<video src>`, `<source>`. Everything else falls in the
+ * other half by MDN's own definition of it — "all mixed content that is not
+ * upgradable".
+ */
+const UPGRADABLE_SUBRESOURCE_TAGS = new Set(["img", "video", "audio", "source"]);
+
+/**
+ * The one exception to the upgrade: MDN — "Mixed content requests that would
+ * otherwise be upgraded are blocked if the URL's host is an IP address rather
+ * than a domain name." So `http://93.184.215.14/a.png` genuinely is blocked
+ * where `http://example.com/a.png` is not, and it gets the blocking wording.
+ */
+const LITERAL_IP_HOST = /^https?:\/\/(?:\d{1,3}(?:\.\d{1,3}){3}|\[[0-9A-Fa-f:.]+\])(?::\d+)?(?:[/?#]|$)/;
+
 /** `<link>` only fetches for some `rel` values; `alternate`/`canonical` do not. */
 const FETCHING_REL = /\b(stylesheet|preload|modulepreload|prefetch|prerender|icon|manifest|apple-touch-icon)\b/i;
 
@@ -103,16 +131,28 @@ function hasSanitiserImport(code: string): boolean {
 }
 
 /**
- * Identifier segments, split on `_`/`-` and lower→upper case transitions and
- * upper-cased, so "authToken", "auth_token" and "AUTH_TOKEN" all normalise to
- * ["AUTH", "TOKEN"] while "tokenizer" stays the single segment "TOKENIZER".
- * Matching whole segments (rather than a bare substring test) is what keeps
- * "authToken" flagged and "authorized" / "tokenizer-settings" quiet.
+ * Identifier segments, split on `_`/`-`, on lower→upper case transitions, and
+ * on letter→digit transitions, then upper-cased — so "authToken",
+ * "auth_token" and "AUTH_TOKEN" all normalise to ["AUTH", "TOKEN"] while
+ * "tokenizer" stays the single segment "TOKENIZER". Matching whole segments
+ * (rather than a bare substring test) is what keeps "authToken" flagged and
+ * "authorized" / "tokenizer-settings" quiet.
+ *
+ * The letter→digit split is what makes `localStorage.setItem("token2", …)`
+ * fire: without it "token2" is one segment, no whole segment equals TOKEN,
+ * and a numbered credential key — the shape a second environment, a second
+ * account or a migration produces — was silently exempt. Note the cost,
+ * which is real: "auth0Domain" now splits to ["AUTH", "0", "DOMAIN"] and
+ * fires. That is the same trade the segment matcher already makes elsewhere,
+ * and it lands on names where a credential word is a word rather than a
+ * substring; "tokenizer" and "authorized" are untouched, because no digit
+ * boundary exists in them.
  */
 function segmentsOf(id: string): string[] {
   return id
     .replace(/[_-]+/g, " ")
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/([A-Za-z])(\d)/g, "$1 $2")
     .trim()
     .split(/\s+/)
     .filter(Boolean)
@@ -150,12 +190,17 @@ const SECRET_PAIRS = ["API_KEY", "ACCESS_KEY"] as const;
  * and ANON_KEY is not one of SECRET_PAIRS); this makes the same intent
  * explicit for names that also carry a credential word.
  */
-// Deliberately not "PUBLIC": every name here already carries a public prefix,
-// so accepting that segment would exempt VITE_PUBLIC_STRIPE_SECRET_KEY too.
+// Deliberately not the bare segment "PUBLIC": every name here already carries a
+// public prefix, so accepting that segment alone would exempt
+// VITE_PUBLIC_STRIPE_SECRET_KEY too. The *pair* PUBLIC_KEY is safe where the
+// bare segment is not — it names the half of an asymmetric pair that is
+// published on purpose (a VAPID web-push key, a Solana mint address), and it
+// cannot match SECRET_KEY or PRIVATE_KEY, which is where the danger was.
 const PUBLIC_BY_DESIGN = ["PUBLISHABLE", "ANON"] as const;
+const PUBLIC_BY_DESIGN_PAIRS = ["PUBLIC_KEY"] as const;
 
 const isDeclaredPublicCredential = (id: string): boolean =>
-  hasKeywordSegment(id, PUBLIC_BY_DESIGN);
+  hasKeywordSegment(id, PUBLIC_BY_DESIGN, PUBLIC_BY_DESIGN_PAIRS);
 
 export function securitySourceRules(code: string, filename?: string): LintFinding[] {
   const out: LintFinding[] = [];
@@ -229,8 +274,11 @@ export function securitySourceRules(code: string, filename?: string): LintFindin
       for (const a of SUBRESOURCE_ATTRS) {
         const v = attr(tag, a);
         if (v && /^http:\/\//i.test(v)) {
+          const upgradable = UPGRADABLE_SUBRESOURCE_TAGS.has(name) && !LITERAL_IP_HOST.test(v);
           push(tag.index, "error", "http-subresource",
-            `<${name} ${a}="${v}"> loads a subresource over plain HTTP; browsers block it as mixed content on an HTTPS page, and it is modifiable in transit.`,
+            upgradable
+              ? `<${name} ${a}="${v}"> is fetched over plain HTTP. Browsers auto-upgrade image, video and audio requests to HTTPS rather than blocking them, so this one fails only if that host has no HTTPS — a broken resource rather than an insecure one, and an upgrade you are relying on instead of stating.`
+              : `<${name} ${a}="${v}"> loads a subresource over plain HTTP; browsers block it as mixed content on an HTTPS page, and it is modifiable in transit.`,
             `Use https://, or a root-relative path on your own origin.`,
             "web-security-headers");
         }
@@ -308,15 +356,22 @@ export function securitySourceRules(code: string, filename?: string): LintFindin
     if (env && hasKeywordSegment(env[1], SECRET_WORDS, SECRET_PAIRS) && !isDeclaredPublicCredential(env[1])) {
       // Some credentials are *designed* to ship in the bundle: a Mapbox
       // `pk.*` access token, a Supabase anon key, a Stripe publishable key.
-      // Their names say so, and the segment check honours that. What remains
-      // is a name that merely ends in TOKEN — plausibly a publishable one —
-      // so the "already compromised" clause, which asks the reader to rotate
-      // every secret in sight, is softened to a question for that case only.
+      // Their names say so, and `isDeclaredPublicCredential` honours that.
+      // What remains is a name that merely carries TOKEN and nothing else —
+      // VITE_MAPBOX_ACCESS_TOKEN is that shape, and a Mapbox `pk.*` token is
+      // public by design and URL-restricted. Headlining "1 error" on a
+      // correct project is the false positive this module refuses, so a
+      // TOKEN-only match is a `warning` that asks the reader to confirm the
+      // token is publishable. Only a name that also carries SECRET, PRIVATE,
+      // PASSWORD or an API_KEY/ACCESS_KEY pair — where being in the bundle is
+      // a defect whatever the value turns out to be — stays an `error`.
       const tokenOnly = !hasKeywordSegment(env[1], ["SECRET", "PRIVATE", "PASSWORD", "PASSWD"], SECRET_PAIRS);
-      push(at, "error", "public-env-secret",
-        `A build-time public variable named "${env[0]}" is inlined into the client bundle and is public the moment it ships.`,
+      push(at, tokenOnly ? "warning" : "error", "public-env-secret",
         tokenOnly
-          ? `If this is a publishable token (a Mapbox pk.*, a Stripe publishable key), rename it to say so — PUBLISHABLE or ANON — so the next reader does not have to guess. If it is not, move it to a server-only variable and rotate the value.`
+          ? `A build-time public variable named "${env[0]}" is inlined into the client bundle, so whatever it holds ships to every visitor. Some tokens are meant to — a Mapbox pk.*, a Stripe publishable key — and this name does not say which kind it is.`
+          : `A build-time public variable named "${env[0]}" is inlined into the client bundle and is public the moment it ships.`,
+        tokenOnly
+          ? `Confirm this token is publishable and restricted by URL or origin. If it is, rename it to say so — PUBLISHABLE, ANON or PUBLIC_KEY — so the next reader does not have to check. If it is not, move it to a server-only variable and rotate the value.`
           : `Move it to a server-only variable and rotate the value — anything already shipped is compromised.`,
         "frontend-attack-surface");
     }
@@ -873,6 +928,13 @@ export function extractHeadersFrom(files: MaskedFile[]): Map<string, HeaderHit> 
         if (HEADER_NAME_SET.has(value.trim().toLowerCase())) continue;
         if (!undeterminable && /\$\{|\+\s*[A-Za-z_$]/.test(value)) undeterminable = true;
 
+        // A third guard, against a shape the first two cannot catch: a value
+        // that is a perfectly well-formed declaration of something that is
+        // not a header value. See `HEADER_GRAMMAR` — a decoy shadows a real
+        // absence, which is worse than inventing a finding. An unreadable
+        // value is exempt, because there is nothing to parse.
+        if (!undeterminable && !declaresHeaderValue(header, value)) continue;
+
         record(header.toLowerCase(), { value, file: file.path, line, undeterminable });
       }
     }
@@ -911,6 +973,134 @@ function matchesGitignorePattern(pattern: string, filePath: string): boolean {
   return toRegExp(p).test(base);
 }
 
+/**
+ * Every directive name in the CSP reference — fetch, document, navigation,
+ * reporting, "other", and the two deprecated ones (MDN's
+ * Content-Security-Policy page, verified 2026-08-13). Used only to answer
+ * "is this string a policy at all", never to grade one, so a name being
+ * deprecated or experimental is irrelevant here: a policy that sets it is
+ * still a policy.
+ */
+const CSP_DIRECTIVES = new Set([
+  // fetch directives
+  "child-src", "connect-src", "default-src", "fenced-frame-src", "font-src", "frame-src",
+  "img-src", "manifest-src", "media-src", "object-src", "prefetch-src", "script-src",
+  "script-src-elem", "script-src-attr", "style-src", "style-src-elem", "style-src-attr",
+  "worker-src",
+  // document directives
+  "base-uri", "sandbox",
+  // navigation directives
+  "form-action", "frame-ancestors",
+  // reporting directives
+  "report-to", "report-uri",
+  // other directives
+  "require-trusted-types-for", "trusted-types", "upgrade-insecure-requests",
+  // deprecated
+  "block-all-mixed-content",
+]);
+
+/**
+ * True when a candidate value names at least one CSP directive — i.e. when it
+ * is a policy rather than a string that merely sits where one would.
+ *
+ * A real policy always names a directive; `"controls which resources the page
+ * may load"` parses to a directive called `controls`. A policy whose only
+ * directive is newer than this list is rejected too, and surfaces as a
+ * visible, quickly-disproved `csp-missing` rather than a silent one — the
+ * same trade every guard in this family makes.
+ */
+const declaresCspDirective = (value: string): boolean =>
+  [...parseCsp(value).keys()].some((d) => CSP_DIRECTIVES.has(d));
+
+/**
+ * `max-age=<digits>` is mandatory (RFC 6797); `includeSubDomains` and
+ * `preload` are the only other tokens defined for the header. `max-age=0` is
+ * both legal and meaningful — it clears a previously-sent policy — so it is a
+ * declaration, not a decoy.
+ */
+const HSTS_MAX_AGE = /^max-age\s*=\s*"?\d+"?$/i;
+const HSTS_TOKEN = /^(?:max-age\s*=\s*"?\d+"?|includesubdomains|preload)$/i;
+
+const declaresHsts = (value: string): boolean => {
+  const tokens = value.split(";").map((t) => t.trim()).filter(Boolean);
+  return tokens.length > 0
+    && tokens.every((t) => HSTS_TOKEN.test(t))
+    && tokens.some((t) => HSTS_MAX_AGE.test(t));
+};
+
+/** The eight policy tokens the spec defines; a comma-separated list is legal
+ * (it is how a fallback for older agents is expressed) and stays accepted. */
+const REFERRER_POLICY_TOKENS = new Set([
+  "no-referrer", "no-referrer-when-downgrade", "origin", "origin-when-cross-origin",
+  "same-origin", "strict-origin", "strict-origin-when-cross-origin", "unsafe-url",
+]);
+
+const declaresReferrerPolicy = (value: string): boolean => {
+  const tokens = value.split(",").map((t) => t.trim().toLowerCase()).filter(Boolean);
+  return tokens.length > 0 && tokens.every((t) => REFERRER_POLICY_TOKENS.has(t));
+};
+
+/**
+ * `feature=(allowlist)` pairs, comma-separated. The allowlist is
+ * space-separated inside its parentheses, so splitting the value on commas
+ * never cuts one in half. `*`, `self` and a bare quoted origin are the other
+ * legal right-hand sides.
+ */
+const PERMISSIONS_POLICY_ITEM = /^[A-Za-z0-9-]+\s*=\s*(?:\([^()]*\)|\*|self|"[^"]*")$/;
+
+const declaresPermissionsPolicy = (value: string): boolean => {
+  const items = value.split(",").map((t) => t.trim()).filter(Boolean);
+  return items.length > 0 && items.every((t) => PERMISSIONS_POLICY_ITEM.test(t));
+};
+
+/**
+ * One grammar check per header the extractor reads: "is this string a value
+ * for this header at all", never "is it a good one" — grading is what the
+ * rules below do, and a check that grades here would suppress the very
+ * findings it exists to protect.
+ *
+ * Why every header and not just CSP. Recognising the object-literal shape
+ * `"Strict-Transport-Security": "…"` as a declaration means recognising
+ * anything shaped like it, and a docs map, an i18n bundle or a test fixture
+ * carries exactly that shape. The damage is not the invented finding: with no
+ * real header in the project, `hsts-missing` (warning) is replaced by
+ * `hsts-no-subdomains` (info) pointing at the decoy, so a real absence is
+ * hidden rather than embellished — the worse direction, and the same failure
+ * `csp-missing` had. Fixing it for one header would have been worse than
+ * fixing it for none: a guard that covers one header reads as a guard that
+ * covers headers.
+ *
+ * Each check is deliberately strict about tokens it does not know, because
+ * the two failure directions are not symmetric. Rejecting a legal value that
+ * post-dates this list produces a `*-missing` finding, which is visible and
+ * disproved in seconds. Accepting prose swallows a real absence silently.
+ *
+ * A value assembled at runtime is exempt at the call site: there is nothing
+ * to parse, and that path already reports `undeterminable` rather than
+ * claiming absence.
+ */
+// Keyed on `HEADER_NAMES` itself, and typed to require every one of them. A
+// free-form `Record<string, …>` would let a key drift out of step with the
+// name the extractor searches for — a typo, or a rename that touched one list
+// and not the other — and the failure would be silent in the worst direction:
+// the grammar check for that header simply stops running, and decoys are
+// accepted again. Here that is a compile error.
+const HEADER_GRAMMAR: Record<Lowercase<(typeof HEADER_NAMES)[number]>, (value: string) => boolean> = {
+  "content-security-policy": declaresCspDirective,
+  "content-security-policy-report-only": declaresCspDirective,
+  "strict-transport-security": declaresHsts,
+  // The only value the standard defines.
+  "x-content-type-options": (v) => /^nosniff;?$/i.test(v.trim()),
+  "referrer-policy": declaresReferrerPolicy,
+  "permissions-policy": declaresPermissionsPolicy,
+};
+
+/** True when `value` is readable as a value for `header`. */
+const declaresHeaderValue = (header: string, value: string): boolean => {
+  const grammar = (HEADER_GRAMMAR as Record<string, ((value: string) => boolean) | undefined>)[header.toLowerCase()];
+  return grammar ? grammar(value) : true;
+};
+
 /** Split a policy into directive → source list. */
 export function parseCsp(value: string): Map<string, string[]> {
   const out = new Map<string, string[]>();
@@ -944,6 +1134,27 @@ export function securityConfigRules(
   ) => out.push({ line, severity, rule, message: `${file}: ${message}`, fix, doc });
 
   const truncated = options.truncated === true;
+
+  /**
+   * "I found this header here and could not read its value."
+   *
+   * Not grading a value assembled at runtime is right — principle 2, do not
+   * claim what you cannot prove. Going *silent* about it is not: for four of
+   * the five headers there was no equivalent of `csp-undeterminable`, so an
+   * undeterminable hit suppressed the `*-missing` finding and emitted nothing
+   * in its place. A reader scanning a clean report could not tell "nothing
+   * found" from "something found and unparseable" — which is dropping a
+   * signal the `HeaderHit` was already carrying, not withholding a claim.
+   */
+  const undeterminableNote = (rule: string, hit: HeaderHit, what: string, why: string) =>
+    push(hit.file, hit.line, "info", rule,
+      // Same shape as csp-undeterminable, and deliberately no line number in
+      // the text: `push` prefixes the file and the report renders the line
+      // itself, so repeating it here would put one number in the reader's eye
+      // twice for a single finding.
+      `${what} is set from a value assembled at runtime, so ${why}.`,
+      `Confirm the emitted header on a real response, or extract the static parts into a named constant this audit can read.`);
+
   /** An absence claim: downgraded to an unconfirmed note when the scan was cut short. */
   const absent = (rule: string, severity: LintFinding["severity"], message: string, fix: string) =>
     push("configuration", 1, truncated ? "info" : severity, rule,
@@ -1062,13 +1273,20 @@ export function securityConfigRules(
         `HSTS omits includeSubDomains, leaving subdomains downgradeable.`,
         `Add includeSubDomains — but only once every subdomain serves HTTPS, because it is disruptive to undo.`);
     }
+  } else {
+    undeterminableNote("hsts-undeterminable", hsts,
+      `A Strict-Transport-Security header`, `its max-age and directives cannot be read from source`);
   }
 
   // ── the cheap ones ─────────────────────────────────────────────────────────
-  if (!headers.has("x-content-type-options")) {
+  const xcto = headers.get("x-content-type-options");
+  if (!xcto) {
     absent("x-content-type-options-missing", "warning",
       `X-Content-Type-Options is not set, so browsers may MIME-sniff a response into a script.`,
       `Set X-Content-Type-Options: nosniff. It has no downside.`);
+  } else if (xcto.undeterminable) {
+    undeterminableNote("x-content-type-options-undeterminable", xcto,
+      `An X-Content-Type-Options header`, `it cannot be confirmed from source to be nosniff`);
   }
   // There is deliberately no "referrer-policy-missing" rule. Since the November
   // 2020 spec revision, strict-origin-when-cross-origin IS the browser default
@@ -1077,15 +1295,22 @@ export function securityConfigRules(
   // configuration. Only an explicitly worse value is a finding.
   const LEAKY_REFERRER = /^(unsafe-url|no-referrer-when-downgrade|origin-when-cross-origin)$/i;
   const ref = headers.get("referrer-policy");
-  if (ref && !ref.undeterminable && LEAKY_REFERRER.test(ref.value.trim())) {
+  if (ref && ref.undeterminable) {
+    undeterminableNote("referrer-policy-undeterminable", ref,
+      `A Referrer-Policy header`, `its policy token cannot be read from source`);
+  } else if (ref && LEAKY_REFERRER.test(ref.value.trim())) {
     push(ref.file, ref.line, "warning", "referrer-policy-unsafe",
       `Referrer-Policy "${ref.value.trim()}" sends more than the browser default, leaking full URLs — including any token in a path or query — to other origins.`,
       `Remove the header to get strict-origin-when-cross-origin, or set that value explicitly.`);
   }
-  if (!headers.has("permissions-policy")) {
+  const pp = headers.get("permissions-policy");
+  if (!pp) {
     absent("permissions-policy-missing", "warning",
       `No Permissions-Policy, so embedded content may request camera, microphone and geolocation.`,
       `Set Permissions-Policy: camera=(), microphone=(), geolocation=() and open up only what you use.`);
+  } else if (pp.undeterminable) {
+    undeterminableNote("permissions-policy-undeterminable", pp,
+      `A Permissions-Policy header`, `the features it allows cannot be read from source`);
   }
 
   // ── build configuration ────────────────────────────────────────────────────
@@ -1139,6 +1364,41 @@ export function securityConfigRules(
 
 // ── report ───────────────────────────────────────────────────────────────────
 
+/**
+ * Every header-declaring shape this audit can read, as distinctive tokens.
+ *
+ * Three surfaces describe this list in prose, for three different readers:
+ * the "Not visible to this audit" block below (the human reading a report),
+ * the `audit_security` MCP tool description (the *client*, deciding whether
+ * to call the tool at all), and the README's tool table. They have drifted
+ * once already — the README was brought up to date and the tool description
+ * was not, which is the more consequential of the two: an agent that reads
+ * "next.config / vercel.json / netlify.toml / _headers / middleware" will not
+ * reach for this tool on a Nuxt or Remix project, and the tool's reach is
+ * exactly what the reader cannot otherwise find out.
+ *
+ * `tests/integrity.test.ts` asserts every token below appears in all three,
+ * so a shape added to the extractor cannot be announced in one place only.
+ */
+export const HEADER_SOURCE_TOKENS = [
+  "next.config", "vercel.json", "netlify.toml", "_headers", "staticwebapp.config.json",
+  "routeRules", "Remix", "hooks.server", "kit.csp", "middleware",
+  "new Response", "new Headers", "res.set", "res.setHeader", "meta http-equiv",
+] as const;
+
+/**
+ * The header-source clause of the `audit_security` tool description, kept
+ * here beside `HEADER_SOURCE_TOKENS` rather than inline in `index.ts` so the
+ * machine-facing description and this module's own account of its reach are
+ * one edit, not two.
+ */
+export const HEADER_SOURCES_SENTENCE =
+  "Header state is inferred from wherever your stack declares it — next.config, vercel.json, "
+  + "netlify.toml, _headers, staticwebapp.config.json, Nuxt routeRules, a Remix/React Router headers "
+  + "export, SvelteKit hooks.server.ts and kit.csp, Next.js and Astro middleware, new Response(body, "
+  + "{ headers }) and new Headers({…}) on Cloudflare Workers/Deno/Bun, Express res.set and "
+  + "res.setHeader, and <meta http-equiv> — read as text and never evaluated";
+
 // The first four bullets all describe one axis — *mechanism*: things that
 // happen somewhere this audit cannot reach. None of them described the other
 // axis, *coverage*: which configuration shapes the audit can actually read.
@@ -1150,8 +1410,8 @@ const RECOGNISED_SHAPES = [
   "`next.config` `headers()` `key`/`value` entries",
   "`vercel.json`, `netlify.toml`, `_headers`, `staticwebapp.config.json`",
   "quoted object properties (`{ \"Content-Security-Policy\": \"…\" }`) — Nuxt `routeRules`, a Remix/React Router `headers` export, `new Response(body, { headers })`, `new Headers({…})`, `res.set({…})`",
-  "`res.setHeader(…)`, `headers.set/append(…)`, `reply.header(…)`",
-  "SvelteKit's `kit.csp.directives`, and `<meta http-equiv>`",
+  "`res.setHeader(…)`, `headers.set/append(…)`, `reply.header(…)` — including from Next.js and Astro `middleware`",
+  "SvelteKit's `hooks.server.ts` and `kit.csp.directives`, and `<meta http-equiv>`",
 ].join("; ");
 
 const NOT_VISIBLE = `## Not visible to this audit
