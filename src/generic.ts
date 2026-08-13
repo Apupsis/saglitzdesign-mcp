@@ -308,8 +308,22 @@ export function genericVisualRules(code: string, filename?: string): LintFinding
 // Fixed, multi-word collocations. A phrase this specific is a fact worth
 // acting on the first time it appears — unlike a single filler adverb below,
 // nothing but a landing-page opener reaches for "unlock the power of".
+//
+// `supercharge` needed more than a companion word to earn its place here.
+// "Supercharge is our new CI caching layer" and "…chip can supercharge video
+// exports" are both already excluded by requiring your/our/the to follow —
+// but "Supercharge Your Local Dev Loop With Bun" still has "Your" right
+// after it, and that's a blog title, not hype: the object is a specific,
+// named thing ("Local Dev Loop", qualified further by "With Bun"), not the
+// stock construction's short, sentence-final, generic noun ("workflow",
+// "business"). The trailing lookahead is that distinction as a fact about
+// the source: the object is exactly one word, and nothing but sentence-
+// ending punctuation, a tag boundary (2+ blanked-tag spaces), or the end of
+// the document follows it. "Supercharge your workflow" ends there;
+// "Supercharge Your Local Dev Loop…" has a second word ("Dev") right after
+// the first, so the lookahead never finds a boundary and the match fails.
 const HYPE_OPENER_RE =
-  /\b(elevate your|unlock the power of|supercharge|transform your|take your[^\n.!?]{0,60}?to the next level|say goodbye to)\b/gi;
+  /\b(elevate your|unlock the power of|supercharge (?:your|our|the) \w+(?=[.!?]|\s{2,}|$)|transform your|take your[^\n.!?]{0,60}?to the next level|say goodbye to)\b/gi;
 
 // Single common adverbs, not distinctive phrases — "effortlessly" alone is as
 // likely in a changelog entry as in marketing copy, so one hit anywhere is
@@ -343,19 +357,29 @@ const TEXT_TAGS = new Set([
   "a", "button",
 ]);
 
-const QUOTE_OPEN = new Set(['"', "'", "“", "‘"]);
-const QUOTE_CLOSE = new Set(['"', "'", "”", "’"]);
+// Literal quote characters, straight or curly, plus the HTML entities a CMS
+// or markdown pipeline routinely typesets them as instead of the raw
+// character — `&ldquo;`/`&rdquo;` and the numeric/hex forms are common
+// output of "smart quotes" rendering, and `&quot;` shows up on either side
+// since it's directionless. `flattenTags` never touches entity text (it
+// isn't inside a `<...>` tag), so these survive into `flat` exactly as
+// written — but a literal-character-only check can't see them, which is
+// what let a documentation page typeset through a CMS fire this module's own
+// "don't flag copy quoted as an example" case in the first place.
+const QUOTE_OPEN_RE = /["'“‘]|&(?:ldquo|lsquo|quot|#0*8220|#0*8216|#x0*201[cC]);/;
+const QUOTE_CLOSE_RE = /["'”’]|&(?:rdquo|rsquo|quot|#0*8221|#0*8217|#x0*201[dD]);/;
 
 /**
- * Same line, a quote character before the match and another after it — the
+ * Same line, a quote marker before the match and another after it — the
  * fact a documentation page quoting bad copy as an example leaves behind,
- * whether the quote is set with straight or curly marks. Deliberately loose
- * ("a quote mark anywhere earlier on the line, another anywhere later"), not
- * "the match is wrapped tightly": the quoted span is usually the surrounding
- * sentence, longer than the fixed phrase the regex actually hit. This trades
- * a rare miss (an h1 that uses quotation marks as a stylistic flourish around
- * real hype copy) for not flagging a docs page for describing what to avoid —
- * the direction every rule in this module has erred.
+ * whether the quote is set with straight marks, curly marks, or an HTML
+ * entity. Deliberately loose ("a quote marker anywhere earlier on the line,
+ * another anywhere later"), not "the match is wrapped tightly": the quoted
+ * span is usually the surrounding sentence, longer than the fixed phrase the
+ * regex actually hit. This trades a rare miss (an h1 that uses quotation
+ * marks as a stylistic flourish around real hype copy) for not flagging a
+ * docs page for describing what to avoid — the direction every rule in this
+ * module has erred.
  */
 function isQuoted(text: string, start: number, end: number): boolean {
   const lineStart = text.lastIndexOf("\n", start - 1) + 1;
@@ -363,9 +387,7 @@ function isQuoted(text: string, start: number, end: number): boolean {
   const lineEnd = nlAfter === -1 ? text.length : nlAfter;
   const before = text.slice(lineStart, start);
   const after = text.slice(end, lineEnd);
-  const hasOpen = [...before].some((ch) => QUOTE_OPEN.has(ch));
-  const hasClose = [...after].some((ch) => QUOTE_CLOSE.has(ch));
-  return hasOpen && hasClose;
+  return QUOTE_OPEN_RE.test(before) && QUOTE_CLOSE_RE.test(after);
 }
 
 /**
@@ -438,22 +460,53 @@ export function genericCopyRules(code: string, filename?: string): LintFinding[]
   // Scored per element, not per document: two adjacent list items that each
   // use one filler word are two ordinary sentences, not the stacked
   // construction ("seamlessly … effortlessly …") this rule exists to name.
+  //
+  // Collected once per element, with each hit's absolute offset in `flat`
+  // kept alongside it, so the hero/subhead pass below can combine two
+  // elements' hits without re-deriving positions.
+  const textHits: { tag: Tag; start: number; hits: { text: string; at: number }[] }[] = [];
   for (const tag of tags) {
     if (!TEXT_TAGS.has(tag.name.toLowerCase())) continue;
     const span = elementSpan(masked, tag);
     if (!span) continue;
     const [start, end] = span;
-    const hits = [...flat.slice(start, end).matchAll(FILLER_ADVERB_RE)];
-    if (hits.length < FILLER_THRESHOLD) continue;
+    const hits = [...flat.slice(start, end).matchAll(FILLER_ADVERB_RE)]
+      .map((h) => ({ text: h[0], at: start + h.index! }));
+    textHits.push({ tag, start, hits });
+  }
+
+  const reportFiller = (pushAt: number, hits: { text: string; at: number }[]) => {
     const first = hits[0]!;
-    const firstStart = start + first.index!;
-    const firstEnd = firstStart + first[0].length;
-    if (isQuoted(flat, firstStart, firstEnd)) continue;
-    const distinct = [...new Set(hits.map((h) => h[0].toLowerCase()))];
-    push(start, "info", "filler-adverb",
+    if (isQuoted(flat, first.at, first.at + first.text.length)) return;
+    const distinct = [...new Set(hits.map((h) => h.text.toLowerCase()))];
+    push(pushAt, "info", "filler-adverb",
       `${distinct.length} filler adverbs in one span (${distinct.join(", ")}).`,
       `Cut them and say the specific thing that's true — see ux-writing.`,
       "ux-writing");
+  };
+
+  for (const entry of textHits) {
+    if (entry.hits.length >= FILLER_THRESHOLD) reportFiller(entry.start, entry.hits);
+  }
+
+  // Hero + subhead: a heading immediately followed by a paragraph, each
+  // carrying one filler adverb, is the same stacked construction split
+  // across two elements ("Seamlessly manage your team" / "Built for
+  // cutting-edge teams who move fast."). Paired only with the very next
+  // text-bearing element in document order, only heading-then-paragraph
+  // (never two list items, which is exactly the shape the per-element scan
+  // above exists to leave alone), and only when neither element already
+  // fired on its own — this is strictly the "1 + 1" gap, not a second path
+  // to the same finding.
+  for (let i = 0; i < textHits.length - 1; i++) {
+    const heading = textHits[i]!;
+    const next = textHits[i + 1]!;
+    if (!/^h[1-6]$/.test(heading.tag.name.toLowerCase())) continue;
+    if (next.tag.name.toLowerCase() !== "p") continue;
+    if (heading.hits.length >= FILLER_THRESHOLD || next.hits.length >= FILLER_THRESHOLD) continue;
+    const combined = [...heading.hits, ...next.hits];
+    if (combined.length < FILLER_THRESHOLD) continue;
+    reportFiller(heading.start, combined);
   }
 
   // ── generic-cta ──────────────────────────────────────────────────────────

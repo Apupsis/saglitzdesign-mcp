@@ -237,3 +237,55 @@ describe("copy rules — stay quiet on real product copy that shares a verb", ()
     expect(copyIds(code)).toEqual([]);
   });
 });
+
+describe("copy rules — supercharge matches a construction, not the bare word", () => {
+  it("flags the real signal: a short, generic, sentence-final object", () => {
+    expect(copyIds(`<h1>Supercharge your workflow</h1>`)).toContain("hype-opener");
+  });
+
+  it("accepts a blog title — a specific, named object, not the stock short noun", () => {
+    expect(copyIds(`<h2>Supercharge Your Local Dev Loop With Bun</h2>`)).toEqual([]);
+  });
+
+  it("accepts an ordinary sentence using the word as a plain verb", () => {
+    expect(copyIds(`<p>This laptop's new chip can supercharge video exports.</p>`)).toEqual([]);
+  });
+
+  it("accepts the word used as a product name", () => {
+    expect(copyIds(`<p>Supercharge is our new CI caching layer.</p>`)).toEqual([]);
+  });
+});
+
+describe("copy rules — quoted example copy, including CMS-typeset entity quotes", () => {
+  it("does not flag stock copy quoted with &ldquo;/&rdquo; entities", () => {
+    const code = `<p>Avoid headlines like &ldquo;Unlock the power of your data&rdquo; — describe the actual feature instead.</p>`;
+    expect(copyIds(code)).toEqual([]);
+  });
+
+  it("does not flag stock copy quoted with &quot; entities", () => {
+    const code = `<p>Avoid headlines like &quot;Unlock the power of your data&quot; — describe the actual feature instead.</p>`;
+    expect(copyIds(code)).toEqual([]);
+  });
+});
+
+describe("copy rules — filler-adverb catches a hero/subhead pair split across elements", () => {
+  it("flags a heading and its very next paragraph when each carries one filler adverb", () => {
+    const code = `<h1>Seamlessly manage your team</h1><p>Built for cutting-edge teams who move fast.</p>`;
+    expect(copyIds(code)).toContain("filler-adverb");
+  });
+
+  it("does not merge two unrelated list items that each use one filler word", () => {
+    const code = `<li>Effortlessly resume interrupted uploads</li><li>Seamlessly retry failed jobs</li>`;
+    expect(copyIds(code)).toEqual([]);
+  });
+});
+
+describe("copy rules — say goodbye to: kept as a fixed collocation, not narrowed", () => {
+  it("still fires on the stock construction", () => {
+    expect(copyIds(`<h1>Say goodbye to slow builds</h1>`)).toContain("hype-opener");
+  });
+
+  it("also fires on a deprecation note using the same stock phrase — accepted trade-off, see report", () => {
+    expect(copyIds(`<p>Say goodbye to the legacy v1 API.</p>`)).toContain("hype-opener");
+  });
+});
