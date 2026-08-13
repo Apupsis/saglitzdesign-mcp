@@ -276,13 +276,28 @@ export function genericVisualRules(code: string, filename?: string): LintFinding
   // `Inter Tight` is a different face from `Inter`, so it counts as a choice.
   const isDefaultFamily = (e: string) =>
     DEFAULT_FAMILIES.test(e) && e.replace(DEFAULT_FAMILIES_G, "").trim() === "";
-  const declaredDefault = entries.find(isDefaultFamily);
+  const defaultsDeclared = [...new Set(entries.filter(isDefaultFamily))];
   const otherFamilies = entries.filter((e) => !isDefaultFamily(e) && !FALLBACK_FAMILY_RE.test(e));
-  if (declaredDefault && otherFamilies.length === 0 && isBrandSurface(code, filename)) {
+  if (defaultsDeclared.length > 0 && otherFamilies.length === 0 && isBrandSurface(code, filename)) {
     const at = masked.search(DEFAULT_FAMILIES);
+    // The message states the fact the firing condition actually proves, which
+    // is set-shaped: *every* family declared here is a default UI sans or a
+    // system fallback. It deliberately does not say which face was chosen,
+    // because nothing here can tell — position cannot, since `Inter, 'Söhne
+    // Breit'` has to stay silent, so the first entry is not the choice.
+    //
+    // Naming one was wrong in a way that showed. On the plain system stack
+    // (`system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial,
+    // sans-serif`) the only entry that is not a fallback keyword is `Roboto`,
+    // so the finding read "Roboto is the only declared family" about a stack
+    // in which Roboto is the Android fallback leg and nobody's decision. The
+    // finding itself was right — a brand page set entirely in the system stack
+    // has made no typographic decision, which is what this rule is named after
+    // — and only the attribution was false. That the rule cannot *identify* a
+    // face never required the message to *name* one.
     push(at < 0 ? 0 : at, "warning", "default-ui-font",
-      `${declaredDefault} is the only declared family on what looks like a brand surface.`,
-      `Pair it with a display face that carries the brand, or replace it — typography-craft lists the faces to reach past.`,
+      `Every family declared on what looks like a brand surface is a default UI sans (${defaultsDeclared.join(", ")}) or a system fallback.`,
+      `Pair them with a display face that carries the brand, or replace them — typography-craft lists the faces to reach past.`,
       "typography-craft");
   }
 

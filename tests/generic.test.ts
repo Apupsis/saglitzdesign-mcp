@@ -96,6 +96,29 @@ describe("visual rules — fire when they should", () => {
     expect(ids(code, "app/(marketing)/page.html")).toContain("default-ui-font");
   });
 
+  // The message states what the firing condition actually proves — that every
+  // declared family is a default or a fallback — rather than naming one face as
+  // "the only declared family". Nothing here can identify the chosen face:
+  // position cannot, because `Inter, 'Söhne Breit'` has to stay silent. But the
+  // rule being unable to identify a face never obliged the message to name one.
+  //
+  // Naming one was wrong where it showed: on the plain system stack the only
+  // entry that is not a fallback keyword is Roboto, which is the Android
+  // fallback leg and nobody's decision.
+  it("states a set fact rather than attributing the choice to one face", () => {
+    const stack = (s: string) => `<h1>Ship faster</h1><a href="/signup">Get started</a><style>body{font-family:${s}}</style>`;
+    const messageFor = (s: string) =>
+      genericVisualRules(stack(s), "app/(marketing)/page.html").find((f) => f.rule === "default-ui-font")?.message ?? "";
+
+    const systemStack = messageFor(`system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif`);
+    expect(systemStack).toContain("Every family declared");
+    expect(systemStack).not.toMatch(/Roboto is the only declared family/);
+    // It still names which defaults are in the set — that part is a fact.
+    expect(systemStack).toContain("(Roboto)");
+    expect(messageFor(`Inter,sans-serif`)).toContain("(Inter)");
+    expect(messageFor(`Inter,Roboto,sans-serif`)).toContain("(Inter, Roboto)");
+  });
+
   it("flags an emoji standing in for an icon in a heading", () => {
     expect(ids(`<h3>🚀 Lightning fast</h3>`)).toContain("emoji-as-icon");
   });
