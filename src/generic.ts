@@ -783,6 +783,18 @@ repeated structure. It cannot see, and does not attempt to judge:
   a hand-written sentence that happens to avoid the phrase list is not
   praised for it, and a good sentence that happens to use one is still
   flagged.
+- **Copy in any language but English.** Every phrase, adverb and call-to-action
+  label the copy rules match is English. A generated page in Turkish, German,
+  Japanese or any other language is read by the visual rules alone and scores
+  strictly lower for it — the same page in two languages measured 74 and 92
+  here, and the 18-point difference was the translation, not the design. Do
+  not compare scores across languages.
+- **A stock gradient assembled through a CSS custom property.**
+  \`linear-gradient(135deg, var(--brand-a), var(--brand-b))\` is silent even when
+  those properties are defined as the stock pair a few lines above; resolving
+  it needs real value substitution, which this scanner does not do. Written
+  literally, or as Tailwind \`from-\`/\`to-\` utilities, the same gradient is
+  found.
 - **Judgement of any kind.** Whether the result is *good design* is not this
   tool's question — \`design_review_checklist\` and \`get_design_doc("design-critique-scoring")\`
   own that, with a human looking at the render.

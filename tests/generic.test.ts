@@ -704,6 +704,40 @@ describe("the report", () => {
     expect(genericReport({ source: `<p>Anything</p>` })).toMatch(/not visible to this audit/i);
   });
 
+  // Three limits the report has to state because a reader cannot infer any of
+  // them from a clean score. Each is paired below with the input that
+  // demonstrates it, so the disclosure and the behaviour cannot drift apart.
+  describe("states the limits it cannot fix", () => {
+    const notVisible = genericReport({ source: `<p>Anything</p>` });
+
+    it("says the copy rules read English only, and they do", () => {
+      expect(notVisible).toMatch(/Copy in any language but English/);
+      // Same page, same markup, same construction — translated.
+      const turkish = `<h1>Yapay zekâ ile daha hızlı yayına alın</h1>
+        <p>FlowStack mevcut iş akışınıza kusursuzca entegre olur ve ekibinizin tüm
+        potansiyelini zahmetsizce ortaya çıkarır.</p>
+        <a>Hemen Başlayın</a><a>Daha Fazla Bilgi</a>`;
+      const english = `<h1>Ship faster with AI</h1>
+        <p>FlowStack seamlessly integrates with your existing workflow to
+        effortlessly unlock your team's full potential.</p>
+        <a>Get Started</a><a>Learn More</a>`;
+      expect(copyIds(turkish)).toEqual([]);
+      expect(copyIds(english).length).toBeGreaterThan(0);
+    });
+
+    it("says a gradient behind a custom property is not resolved, and it is not", () => {
+      expect(notVisible).toMatch(/stock gradient assembled through a CSS custom property/);
+      const viaVar = `:root{--brand-a:#6366f1;--brand-b:#a855f7}\n.hero{background:linear-gradient(135deg,var(--brand-a),var(--brand-b));}`;
+      const literal = `.hero{background:linear-gradient(135deg,#6366f1,#a855f7);}`;
+      expect(ids(viaVar)).not.toContain("ai-default-gradient");
+      expect(ids(literal)).toContain("ai-default-gradient");
+    });
+
+    it("says story, test and fixture files are skipped in directory mode", () => {
+      expect(notVisible).toMatch(/Story, test and fixture files, in directory mode/);
+    });
+  });
+
   it("prints the score itemised, not as a bare number", () => {
     const out = genericReport({ source: `<div class="from-indigo-500 to-purple-600">` });
     expect(out).toMatch(/ai-default-gradient/);
