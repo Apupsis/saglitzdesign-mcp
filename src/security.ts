@@ -16,26 +16,64 @@ import { scanProject, MAX_FILES } from "./project.js";
 const lineOf = (src: string, index: number): number =>
   src.slice(0, index).split("\n").length;
 
-// `\b` is the wrong boundary for an attribute name: `-` is a non-word
-// character, so `\bsrc` matches inside `data-src`, `\bhref` inside
-// `data-href`, and — the dangerous one — `\bnonce` inside `data-nonce`, which
-// silently *suppressed* a real inline-script finding. An attribute name can
-// only begin at the start of the attribute chunk or after whitespace (or the
-// closing quote of the previous attribute's value), and never after a `-`.
-const ATTR_START = `(?:^|[\\s"'])`;
-
-const attr = (tag: Tag, name: string): string | undefined => {
-  const re = new RegExp(`${ATTR_START}${name}\\s*=\\s*("([^"]*)"|'([^']*)'|\\{[^}]*\\})`, "i");
-  const m = re.exec(tag.attrs);
-  if (!m) return undefined;
-  return m[2] ?? m[3] ?? m[1];
-};
+// An attribute name has to be found where a *name* can appear, and getting
+// that boundary right took two goes.
+//
+// `\b` was the first mistake: `-` is a non-word character, so `\bsrc` matched
+// inside `data-src`, `\bhref` inside `data-href`, and — the dangerous one —
+// `\bnonce` inside `data-nonce`, silently suppressing a real inline-script
+// finding. Allowing a name to begin only at the start of the chunk, after
+// whitespace, or after a quote fixed that *prefix* case.
+//
+// It did not fix the general one, and the comment here used to claim it had.
+// A quote before the name cannot be told from the quote *opening* a value,
+// and whitespace inside a quoted value qualifies too — so an attribute name
+// occurring inside another attribute's **value** still counted as that
+// attribute. Every instance was a false negative, which is the direction that
+// makes a report read clean when it is not:
+//
+//   <script data-n="add nonce later">var x=1</script>
+//       → inline-script-no-nonce silenced by the word "nonce" in a data value
+//   <iframe src="https://ads.example.com/x" title="sandbox demo">
+//       → iframe-no-sandbox silenced by the word "sandbox" in a title
+//   <script src="https://cdn.x/a.js" data-note="add integrity later">
+//       → external-script-no-sri silenced by the word "integrity"
+//   <a href="…" target="_blank" title="rel='noopener' explained">
+//       → blank-without-noopener silenced by a rel= inside a title
+//
+// The fix is to look for names only where values are not. `bareAttrs` blanks
+// every quoted or braced value; it is length-preserving, so `attr` can locate
+// the name in the blanked copy and then read the real value from the original
+// at the same offset.
+const bareAttrs = (attrs: string): string =>
+  attrs.replace(/=\s*("[^"]*"|'[^']*'|\{[^}]*\})/g, (m) => m.replace(/\S/g, " "));
 
 // Valueless attributes are real (`<iframe sandbox>`), so the name may be
 // followed by `=`, whitespace, the tag's own end, or nothing — but not by a
 // further name character, which is what keeps `nonce` out of `nonce-value`.
+const attrStart = (name: string): RegExp =>
+  new RegExp(`(?:^|\\s)${name}(?=[\\s=/>]|$)`, "i");
+
 const hasAttr = (tag: Tag, name: string): boolean =>
-  new RegExp(`${ATTR_START}${name}(?=[\\s=/>]|$)`, "i").test(tag.attrs);
+  attrStart(name).test(bareAttrs(tag.attrs));
+
+const attr = (tag: Tag, name: string): string | undefined => {
+  const at = attrStart(name).exec(bareAttrs(tag.attrs));
+  if (!at) return undefined;
+  const after = tag.attrs.slice(at.index + at[0].length);
+  // Quoted, braced, or a bare token — `<a target=_blank>` is valid HTML, and
+  // the two rules that used to sniff for it with their own regex now come
+  // through here instead.
+  //
+  // A backslash cannot begin an unquoted value, and excluding it keeps this
+  // reader off `<script type=\"module\">` — markup that only ever occurs
+  // inside a JavaScript string literal, which this module scans as text.
+  // Without the exclusion the bare-token branch matched the lone backslash
+  // and read it as the type.
+  const m = /^\s*=\s*("([^"]*)"|'([^']*)'|(\{[^}]*\})|([^\s"'`=<>\\]+))/.exec(after);
+  if (!m) return undefined;
+  return m[2] ?? m[3] ?? m[4] ?? m[5];
+};
 
 const isCrossOrigin = (url: string): boolean =>
   /^https?:\/\//i.test(url) || url.startsWith("//");
@@ -229,7 +267,9 @@ export function securitySourceRules(code: string, filename?: string): LintFindin
   for (const tag of scanTags(masked)) {
     const name = tag.name.toLowerCase();
 
-    if (name === "a" && /target\s*=\s*["']?_blank/i.test(tag.attrs)) {
+    // Read through `attr` rather than sniffing the raw chunk: a link whose
+    // title *described* `target="_blank"` was reported as being one.
+    if (name === "a" && /^_blank$/i.test((attr(tag, "target") ?? "").trim())) {
       const rel = attr(tag, "rel") ?? "";
       if (!/\bnoopener\b/i.test(rel)) {
         // Modern browsers (95.58%, caniuse mdn-html_elements_a_implicit_noopener)
@@ -296,7 +336,10 @@ export function securitySourceRules(code: string, filename?: string): LintFindin
       }
     }
 
-    if (name === "input" && /type\s*=\s*["']?password/i.test(tag.attrs)) {
+    // Same correction as the anchor above: `<input type="text"
+    // title='type="password" field'>` is a text input, and was reported as a
+    // password field with no autocomplete hint.
+    if (name === "input" && /^password$/i.test((attr(tag, "type") ?? "").trim())) {
       const ac = attr(tag, "autocomplete");
       if (!ac || /^off$/i.test(ac)) {
         push(tag.index, "warning", "password-autocomplete",

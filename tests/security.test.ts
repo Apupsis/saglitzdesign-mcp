@@ -98,6 +98,79 @@ describe("source rules — fire when they should", () => {
   });
 });
 
+// An attribute name has to be found where a *name* can appear. Allowing a
+// quote before it — which cannot be told from the quote opening a value —
+// meant a name occurring inside another attribute's value counted as that
+// attribute. Every instance below was a live false negative on shipped code:
+// the rule went silent and the report read clean.
+describe("an attribute name inside another attribute's value is not that attribute", () => {
+  it("does not let the word \"nonce\" in a data value exempt an inline script", () => {
+    expect(ids(`<script data-n="add nonce later">var x=1</script>`))
+      .toContain("inline-script-no-nonce");
+  });
+
+  it("does not let the word \"sandbox\" in a title exempt a third-party iframe", () => {
+    expect(ids(`<iframe src="https://ads.example.com/x" title="sandbox demo"></iframe>`))
+      .toContain("iframe-no-sandbox");
+  });
+
+  it("does not let the word \"integrity\" in a data value exempt a cross-origin script", () => {
+    expect(ids(`<script src="https://cdn.x.com/a.js" data-note="add integrity later"></script>`))
+      .toContain("external-script-no-sri");
+  });
+
+  it("does not read a rel= inside a title as the anchor's rel", () => {
+    expect(ids(`<a href="https://x.example.com" target="_blank" title="rel='noopener' explained">x</a>`))
+      .toContain("blank-without-noopener");
+  });
+
+  it("does not read a type= inside a data value as the script's type", () => {
+    // Before this, the data value made the script look like an ld+json data
+    // block, which CSP does not gate — so the nonce finding was dropped.
+    expect(ids(`<script data-x='type="application/ld+json"'>var x=1</script>`))
+      .toContain("inline-script-no-nonce");
+  });
+
+  // The two triggers that sniffed the raw attribute chunk with their own
+  // regex rather than going through the attribute reader. These are the
+  // false-positive direction: correct markup reported as a defect.
+  it("does not report a text input whose title describes a password field", () => {
+    expect(ids(`<input type="text" title='type="password" field'>`))
+      .not.toContain("password-autocomplete");
+  });
+
+  it("does not report an anchor whose title describes target=_blank", () => {
+    expect(ids(`<a href="/x" title='target="_blank" opens new tab'>x</a>`))
+      .not.toContain("blank-without-noopener");
+  });
+
+  it("does not treat a link with no real rel as one that fetches", () => {
+    expect(ids(`<link href="http://x.com/a.css" data-note='rel="stylesheet" needed'>`))
+      .not.toContain("http-subresource");
+  });
+
+  // What the earlier fix got right, and must keep getting right: the prefix
+  // case that started all of this.
+  it("still ignores a data- prefixed lookalike", () => {
+    expect(ids(`<script data-nonce="x">var x=1</script>`)).toContain("inline-script-no-nonce");
+    expect(ids(`<iframe src="https://ads.x.com/a" data-sandbox="x"></iframe>`)).toContain("iframe-no-sandbox");
+  });
+
+  it("still honours a valueless attribute", () => {
+    expect(ids(`<iframe src="https://ads.x.com/a" sandbox></iframe>`)).not.toContain("iframe-no-sandbox");
+    expect(ids(`<script nonce>var x=1</script>`)).not.toContain("inline-script-no-nonce");
+  });
+
+  it("reads an unquoted attribute value, which is valid HTML", () => {
+    expect(ids(`<a href=/x target=_blank>x</a>`)).toContain("blank-without-noopener");
+    expect(ids(`<input type=password name=p>`)).toContain("password-autocomplete");
+  });
+
+  it("still exempts a real ld+json data block, which CSP does not gate", () => {
+    expect(ids(`<script type="application/ld+json">{"a":1}</script>`)).not.toContain("inline-script-no-nonce");
+  });
+});
+
 describe("source rules — stay quiet when they should", () => {
   it("accepts target=_blank with rel=noopener noreferrer", () => {
     expect(ids(`<a href="https://x.com" target="_blank" rel="noopener noreferrer">go</a>`)).not.toContain("blank-without-noopener");
