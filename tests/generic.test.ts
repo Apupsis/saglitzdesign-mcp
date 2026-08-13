@@ -459,6 +459,36 @@ describe("the report", () => {
     expect(out).toMatch(/ai-default-gradient/);
     expect(out).toMatch(/\d+\s*\/\s*100/);
   });
+
+  // The clamp's reconciliation note is rendered by genericReport, but the
+  // clamp test above drives genericScore directly — so the line that actually
+  // reaches a reader had no coverage. The ten real weights sum to 92 and can
+  // never trip the clamp, so as with that test the only way in is a synthetic
+  // weight table, here keyed to rule ids the real rules genuinely emit so the
+  // report is driven end to end from source.
+  it("states the pre-clamp sum in the report when the display is capped", () => {
+    const original = { ...RULE_WEIGHTS };
+    for (const key of Object.keys(RULE_WEIGHTS)) delete RULE_WEIGHTS[key];
+    Object.assign(RULE_WEIGHTS, { "ai-default-gradient": 70, "emoji-as-icon": 60 });
+    try {
+      const out = genericReport({ source: `<div class="from-indigo-500 to-purple-600"><h3>🚀 Fast</h3></div>` });
+      expect(out).toMatch(/\*\*Score: 100 \/ 100\*\*/);
+      // The note appears, and names the real uncapped sum rather than a
+      // rounded or rescaled stand-in.
+      expect(out).toMatch(/The itemised points above sum to 130; the score display is capped at 100\./);
+      // And the items it reconciles still carry their citable weights.
+      expect(out).toMatch(/\*\*ai-default-gradient\*\* \+70/);
+      expect(out).toMatch(/\*\*emoji-as-icon\*\* \+60/);
+    } finally {
+      for (const key of Object.keys(RULE_WEIGHTS)) delete RULE_WEIGHTS[key];
+      Object.assign(RULE_WEIGHTS, original);
+    }
+  });
+
+  it("says nothing about a cap when the itemised points fit under 100", () => {
+    const out = genericReport({ source: `<div class="from-indigo-500 to-purple-600"><h3>🚀 Fast</h3></div>` });
+    expect(out).not.toMatch(/capped at 100/);
+  });
 });
 
 describe("the report — directory-mode breadth", () => {

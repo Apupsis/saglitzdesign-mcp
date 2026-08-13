@@ -698,6 +698,15 @@ repeated structure. It cannot see, and does not attempt to judge:
 - **Judgement of any kind.** Whether the result is *good design* is not this
   tool's question — \`design_review_checklist\` and \`get_design_doc("design-critique-scoring")\`
   own that, with a human looking at the render.
+- **Class names outside Tailwind's default scale.** The visual rules match
+  literal utility strings from that scale, so a project written with arbitrary
+  values, a custom scale, or another framework's class names is audited less
+  thoroughly than the score implies. A low score on such a project reflects
+  coverage, not necessarily restraint.
+- **The typeface rule off a recognised brand surface.** It evaluates only where
+  the surface reads as a brand page — a marketing route, or a heading beside a
+  conventional call to action — so a landing page at an unconventional path
+  with distinctive call-to-action copy is not assessed for it.
 
 A clean result here means the source carries none of these specific,
 recurring defaults — not that the design is good.`;
