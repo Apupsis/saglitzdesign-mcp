@@ -291,3 +291,204 @@ export function genericVisualRules(code: string, filename?: string): LintFinding
     })
     .sort((a, b) => a.line - b.line);
 }
+
+// ── copy ─────────────────────────────────────────────────────────────────────
+//
+// The governing rule at the top of this file applies harder here than to any
+// visual rule above it. A phrase list *feels* objective and is not: "Transform
+// your workflow" is stock, "Transform any CSV into a chart" is a product
+// description that happens to share a verb. Every rule below matches a
+// **construction** — a fixed multi-word collocation, or a *count* of an
+// otherwise-ordinary word — never a bare keyword. A bare keyword is exactly
+// what turns a changelog entry ("Effortlessly resume interrupted uploads") or
+// a documentation page quoting bad copy as an example of what not to write
+// into a false positive, and this module's whole premise is that a false
+// positive here costs more than a miss.
+
+// Fixed, multi-word collocations. A phrase this specific is a fact worth
+// acting on the first time it appears — unlike a single filler adverb below,
+// nothing but a landing-page opener reaches for "unlock the power of".
+const HYPE_OPENER_RE =
+  /\b(elevate your|unlock the power of|supercharge|transform your|take your[^\n.!?]{0,60}?to the next level|say goodbye to)\b/gi;
+
+// Single common adverbs, not distinctive phrases — "effortlessly" alone is as
+// likely in a changelog entry as in marketing copy, so one hit anywhere is
+// not a fact worth a finding on its own. The stock construction *stacks* two
+// or more of these in the same span ("Seamlessly integrate with your
+// effortlessly modern stack"); that co-occurrence, not the word, is what
+// FILLER_THRESHOLD measures below.
+const FILLER_ADVERB_RE =
+  /\b(seamlessly|effortlessly|revolutionary|game-changing|cutting-edge|best-in-class|next-generation)\b/gi;
+const FILLER_THRESHOLD = 2;
+
+const STOCK_CTA = new Set(["get started", "learn more", "sign up", "read more", "contact us"]);
+const CTA_TAG_NAMES = new Set(["a", "button"]);
+
+// A page's own copy shouldn't be read out of markup that never ships as
+// prose. script/style are code, full stop. code/pre are the harder case this
+// module has to get right: a documentation page quoting bad marketing copy
+// as an example of what not to write puts that exact phrase in a <code> or
+// <pre> element on purpose. Their *content*, not just their tags, is blanked
+// below before any phrase is matched — a nested <code> inside a <p> would
+// otherwise leak its quoted text into the paragraph's own scan.
+const SKIP_CONTENT_TAGS = new Set(["script", "style", "code", "pre"]);
+
+// Leaf-ish elements worth reading as one span of prose for the filler-adverb
+// count. Deliberately not "the whole document" — scanning at this
+// granularity is what keeps two adjacent <li> items, each with one filler
+// word, from being read as a single sentence carrying two.
+const TEXT_TAGS = new Set([
+  "h1", "h2", "h3", "h4", "h5", "h6", "p", "li", "blockquote",
+  "dd", "dt", "figcaption", "td", "th", "caption", "summary", "label",
+  "a", "button",
+]);
+
+const QUOTE_OPEN = new Set(['"', "'", "“", "‘"]);
+const QUOTE_CLOSE = new Set(['"', "'", "”", "’"]);
+
+/**
+ * Same line, a quote character before the match and another after it — the
+ * fact a documentation page quoting bad copy as an example leaves behind,
+ * whether the quote is set with straight or curly marks. Deliberately loose
+ * ("a quote mark anywhere earlier on the line, another anywhere later"), not
+ * "the match is wrapped tightly": the quoted span is usually the surrounding
+ * sentence, longer than the fixed phrase the regex actually hit. This trades
+ * a rare miss (an h1 that uses quotation marks as a stylistic flourish around
+ * real hype copy) for not flagging a docs page for describing what to avoid —
+ * the direction every rule in this module has erred.
+ */
+function isQuoted(text: string, start: number, end: number): boolean {
+  const lineStart = text.lastIndexOf("\n", start - 1) + 1;
+  const nlAfter = text.indexOf("\n", end);
+  const lineEnd = nlAfter === -1 ? text.length : nlAfter;
+  const before = text.slice(lineStart, start);
+  const after = text.slice(end, lineEnd);
+  const hasOpen = [...before].some((ch) => QUOTE_OPEN.has(ch));
+  const hasClose = [...after].some((ch) => QUOTE_CLOSE.has(ch));
+  return hasOpen && hasClose;
+}
+
+/**
+ * Blanks the *content* of script/style/code/pre elements to spaces (real
+ * newlines kept, so line numbers downstream stay correct) without touching
+ * the rest of the source. Length-preserving, same convention as
+ * `maskComments`.
+ */
+function blankSkippedContent(masked: string, tags: Tag[]): string {
+  const chars = [...masked];
+  for (const tag of tags) {
+    const name = tag.name.toLowerCase();
+    if (tag.selfClosing || !SKIP_CONTENT_TAGS.has(name)) continue;
+    const closeIdx = masked.toLowerCase().indexOf(`</${name}`, tag.end);
+    const end = closeIdx === -1 ? masked.length : closeIdx;
+    for (let i = tag.end; i < end; i++) {
+      if (chars[i] !== "\n") chars[i] = " ";
+    }
+  }
+  return chars.join("");
+}
+
+/**
+ * Blanks every tag's own markup to spaces, length-preserving, leaving only
+ * visible text at its original offsets — an attribute like `data-cta="Get
+ * Started"` or a class named `learn-more` never survives into this string,
+ * so copy rules can only ever match what a reader would actually see.
+ */
+function flattenTags(src: string): string {
+  return src.replace(/<[^>]*>/g, (m) => m.replace(/[^\n]/g, " "));
+}
+
+/** `[start, end)` of one element's content, `end` exclusive of its own closing tag. */
+function elementSpan(masked: string, tag: Tag): [number, number] | null {
+  if (tag.selfClosing) return null;
+  const name = tag.name.toLowerCase();
+  const closeIdx = masked.toLowerCase().indexOf(`</${name}`, tag.end);
+  return [tag.end, closeIdx === -1 ? masked.length : closeIdx];
+}
+
+export function genericCopyRules(code: string, filename?: string): LintFinding[] {
+  const masked = maskComments(code, filename ?? "snippet.html");
+  const out: LintFinding[] = [];
+  const push = (
+    index: number,
+    severity: LintFinding["severity"],
+    rule: string,
+    message: string,
+    fix: string,
+    doc: string,
+  ) => out.push({ line: lineOf(code, index), severity, rule, message, fix, doc });
+
+  const tags = scanTags(masked);
+  // Skip-tag content blanked first, then every remaining tag's own markup —
+  // `flat` is the only string any rule below reads visible text from.
+  const flat = flattenTags(blankSkippedContent(masked, tags));
+
+  // ── hype-opener ──────────────────────────────────────────────────────────
+  for (const m of flat.matchAll(HYPE_OPENER_RE)) {
+    const start = m.index!;
+    const end = start + m[0].length;
+    if (isQuoted(flat, start, end)) continue;
+    push(start, "warning", "hype-opener",
+      `"${m[0]}" is a stock landing-page opener.`,
+      `Say what the product actually does instead — see ux-writing for what to reach for.`,
+      "ux-writing");
+  }
+
+  // ── filler-adverb ────────────────────────────────────────────────────────
+  // Scored per element, not per document: two adjacent list items that each
+  // use one filler word are two ordinary sentences, not the stacked
+  // construction ("seamlessly … effortlessly …") this rule exists to name.
+  for (const tag of tags) {
+    if (!TEXT_TAGS.has(tag.name.toLowerCase())) continue;
+    const span = elementSpan(masked, tag);
+    if (!span) continue;
+    const [start, end] = span;
+    const hits = [...flat.slice(start, end).matchAll(FILLER_ADVERB_RE)];
+    if (hits.length < FILLER_THRESHOLD) continue;
+    const first = hits[0]!;
+    const firstStart = start + first.index!;
+    const firstEnd = firstStart + first[0].length;
+    if (isQuoted(flat, firstStart, firstEnd)) continue;
+    const distinct = [...new Set(hits.map((h) => h[0].toLowerCase()))];
+    push(start, "info", "filler-adverb",
+      `${distinct.length} filler adverbs in one span (${distinct.join(", ")}).`,
+      `Cut them and say the specific thing that's true — see ux-writing.`,
+      "ux-writing");
+  }
+
+  // ── generic-cta ──────────────────────────────────────────────────────────
+  // "Every CTA is stock" needs at least two labels to say anything — a page
+  // with a single "Learn More" link (a footer, a card, a nav item) hasn't
+  // shown that it never made a specific choice, only that it has one
+  // ordinary, common link. This mirrors ai-default-gradient's own "two
+  // stops, not one" bound above.
+  const ctas: { text: string; index: number }[] = [];
+  for (const tag of tags) {
+    if (!CTA_TAG_NAMES.has(tag.name.toLowerCase())) continue;
+    const span = elementSpan(masked, tag);
+    if (!span) continue;
+    const [start, end] = span;
+    const text = flat.slice(start, end).replace(/\s+/g, " ").trim();
+    if (!text) continue;
+    ctas.push({ text, index: start });
+  }
+  if (ctas.length >= 2) {
+    const normalize = (s: string) => s.replace(/[^\p{L}\p{N} ]+$/gu, "").trim().toLowerCase();
+    if (ctas.every((c) => STOCK_CTA.has(normalize(c.text)))) {
+      push(ctas[0]!.index, "info", "generic-cta",
+        `Every call to action on the page is drawn from the stock set (${ctas.map((c) => c.text).join(", ")}).`,
+        `Name the actual action — "Start a 14-day trial", not "Get Started" — see ux-writing.`,
+        "ux-writing");
+    }
+  }
+
+  const seen = new Set<string>();
+  return out
+    .filter((f) => {
+      const key = `${f.rule}:${f.line}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .sort((a, b) => a.line - b.line);
+}

@@ -1,8 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { genericVisualRules } from "../dist/generic.js";
+import { genericVisualRules, genericCopyRules } from "../dist/generic.js";
 
 const ids = (code: string, filename?: string) =>
   genericVisualRules(code, filename).map((f) => f.rule).sort();
+
+const copyIds = (code: string) => genericCopyRules(code).map((f) => f.rule);
 
 describe("visual rules — fire when they should", () => {
   it("flags an indigo-to-violet Tailwind gradient", () => {
@@ -166,5 +168,72 @@ describe("every finding is actionable", () => {
       expect(f.doc).toBeTruthy();
       expect(f.line).toBeGreaterThan(0);
     }
+  });
+});
+
+describe("copy rules", () => {
+  it("flags a hype opener", () => {
+    expect(copyIds(`<h1>Unlock the power of your data</h1>`)).toContain("hype-opener");
+  });
+
+  it("flags filler adverbs", () => {
+    expect(copyIds(`<p>Seamlessly integrate with your effortlessly modern stack.</p>`)).toContain("filler-adverb");
+  });
+
+  it("flags Get Started and Learn More as the only CTAs", () => {
+    expect(copyIds(`<a class="btn">Get Started</a><a class="btn">Learn More</a>`)).toContain("generic-cta");
+  });
+
+  it("accepts a specific CTA alongside them", () => {
+    const code = `<a class="btn">Start a 14-day trial</a><a class="btn">Learn More</a>`;
+    expect(copyIds(code)).not.toContain("generic-cta");
+  });
+
+  it("accepts concrete product copy", () => {
+    const code = `<h1>Deploy a Postgres branch in 400ms</h1><p>Every pull request gets its own database.</p>`;
+    expect(copyIds(code)).toEqual([]);
+  });
+
+  it("does not read copy out of a comment", () => {
+    expect(copyIds(`<!-- Unlock the power of your data -->`)).toEqual([]);
+  });
+});
+
+describe("copy rules — stay quiet on real product copy that shares a verb", () => {
+  it("accepts a product description that uses a listed verb without the stock construction", () => {
+    expect(copyIds(`<h1>Transform any CSV into a chart in one step</h1>`)).toEqual([]);
+  });
+
+  it("judged silent: a single hype word describing an actual claim, not the stacked construction", () => {
+    // "revolutionary" is on the filler-adverb list, but it appears once. The
+    // same fact-based threshold that keeps a changelog entry silent (below)
+    // has to apply here too, or the rule is just a keyword match wearing a
+    // count as a disguise — so one adverb, anywhere, stays silent, even when
+    // the sentence around it reads as a marketing claim.
+    expect(copyIds(`<p>Our revolutionary new pricing is simply lower.</p>`)).toEqual([]);
+  });
+
+  it("accepts a changelog entry using one filler word — a feature note, not marketing", () => {
+    expect(copyIds(`<li>Effortlessly resume interrupted uploads</li>`)).toEqual([]);
+  });
+
+  it("accepts a page whose only CTAs are one specific action and one stock label", () => {
+    const code = `<a class="btn">Start a 14-day trial</a><a class="btn">Learn More</a>`;
+    expect(copyIds(code)).toEqual([]);
+  });
+
+  it("does not flag stock copy quoted in prose as an example of what not to write", () => {
+    const code = `<p>Avoid headlines like "Unlock the power of your data" — describe the actual feature instead.</p>`;
+    expect(copyIds(code)).toEqual([]);
+  });
+
+  it("does not flag stock copy quoted inside inline code in a documentation page", () => {
+    const code = `<p>Don't write <code>"Unlock the power of your data"</code> as a headline.</p>`;
+    expect(copyIds(code)).toEqual([]);
+  });
+
+  it("does not read hype-opener or filler-adverb phrases out of a comment", () => {
+    const code = `<!-- Unlock the power of your data. Seamlessly integrate with your effortlessly modern stack. -->`;
+    expect(copyIds(code)).toEqual([]);
   });
 });
