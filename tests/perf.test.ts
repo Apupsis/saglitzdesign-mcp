@@ -112,6 +112,35 @@ describe("the negatives — correct work stays silent", () => {
     expect(ids(code, "Card.tsx")).toContain("image-without-dimensions");
   });
 
+  it("stays silent on an image whose class cannot be read — a CSS module names the file we cannot see", () => {
+    const code = `export default () => <main><img src="/a.jpg" alt="Cover" className={styles.cover} /></main>;`;
+    expect(ids(code, "Card.tsx")).not.toContain("image-without-dimensions");
+  });
+
+  it("stays silent on images in containers that are not painted with the page", () => {
+    const pixel = `<body><noscript><img src="https://t.example.com/p.gif" alt=""></noscript></body>`;
+    expect(ids(pixel, "p.html"), "tracking pixel").toEqual([]);
+    const tpl = `<body><template><img src="/row.jpg" alt="Row"></template></body>`;
+    expect(ids(tpl, "p.html"), "template row").toEqual([]);
+    const dlg = `<body><dialog><img src="/promo.jpg" alt="Offer"></dialog></body>`;
+    expect(ids(dlg, "p.html"), "dialog").toEqual([]);
+  });
+
+  it("stays silent on six script hosts that share one registrable domain", () => {
+    const scripts = ["a", "b", "c", "d", "e", "f"]
+      .map((s) => `<script async src="https://${s}.example.com/x.js"></script>`).join("");
+    expect(ids(`<body>${scripts}</body>`, "p.html")).not.toContain("third-party-script-count");
+  });
+
+  it("does not let a scoped descendant rule silence every image in the file", () => {
+    const code = `<style>.card__media img { width: 100%; height: 100%; }</style>
+<div class="card__media"><img src="/a.jpg" alt="In the card"></div>
+<div class="other"><img src="/b.jpg" alt="Not in the card"></div>`;
+    const fired = perfRules(code, "p.html").filter((x) => x.rule === "image-without-dimensions");
+    expect(fired).toHaveLength(1);
+    expect(fired[0].line).toBe(3);
+  });
+
   it("stays silent on an @font-face with font-display: swap", () => {
     expect(ids(GOOD_HTML, "index.html")).not.toContain("font-display-missing");
   });
@@ -196,6 +225,40 @@ describe("the negatives — correct work stays silent", () => {
   </main>
 );`;
     expect(ids(code, "page.tsx")).toEqual([]);
+  });
+});
+
+// An attribute name must only be found where a name can appear. The earlier
+// idiom allowed a quote or a space before the name, which meant a name
+// occurring inside another attribute's *value* counted — in both directions,
+// and both were serious.
+describe("an attribute name inside another attribute's value is not that attribute", () => {
+  it.each([
+    ["alt", `<img src="/b.avif" alt="Priority support illustration" width="800" height="600" loading="lazy">`],
+    ["class", `<img src="/b.avif" class="priority low" alt="x" width="800" height="600" loading="lazy">`],
+    ["title", `<img src="/b.avif" title="Priority queue" alt="x" width="800" height="600" loading="lazy">`],
+  ])("does not read \"priority\" in a %s value as the priority prop", (_where, code) => {
+    expect(ids(code, "index.html")).not.toContain("lazy-hero");
+  });
+
+  it("does not read \"width\" in alt text as a width attribute", () => {
+    expect(ids(`<main><img src="/a.jpg" alt="Full width photo"></main>`, "p.html"))
+      .toContain("image-without-dimensions");
+  });
+
+  it("does not read \"height\" in alt text as a height attribute", () => {
+    expect(ids(`<main><img src="/a.jpg" alt="height of the wall"></main>`, "p.html"))
+      .toContain("image-without-dimensions");
+  });
+
+  it("does not read \"async\" in a data attribute's value as async", () => {
+    const code = `<html><head><script src="/a.js" data-x="run async later"></script></head><body></body></html>`;
+    expect(ids(code, "p.html")).toContain("render-blocking-script");
+  });
+
+  it("still reads a real valueless attribute, and a real one after a quoted value", () => {
+    const code = `<html><head><script src="/a.js" data-note="x" defer></script></head><body></body></html>`;
+    expect(ids(code, "p.html")).not.toContain("render-blocking-script");
   });
 });
 
@@ -376,6 +439,53 @@ describe("lazy-hero's scope, which is narrower than \"first image on the page\""
     expect(ids(code, "app/page.tsx")).toEqual([]);
   });
 
+  // Skipping an image silently promotes the next one. Recognising more
+  // component names fixed one cause; these are the rest.
+  it("does not promote past an image in a <dialog>, which is not displayed on load", () => {
+    const code = `<main>
+  <dialog><img src="/promo.avif" alt="Spring offer" width="600" height="400" loading="lazy"></dialog>
+  <img src="/hero.avif" alt="Studio" width="1600" height="900" fetchpriority="high">
+  <h1>Pricing</h1>
+</main>`;
+    expect(ids(code, "index.html")).toEqual([]);
+  });
+
+  it("still reaches the real hero past a <dialog>, and points at it", () => {
+    const code = `<main>
+  <dialog><img src="/promo.avif" alt="Spring offer" width="600" height="400" loading="lazy"></dialog>
+  <img src="/hero.avif" alt="Studio" width="1600" height="900" loading="lazy">
+  <h1>Pricing</h1>
+</main>`;
+    const f = perfRules(code, "index.html").find((x) => x.rule === "lazy-hero");
+    expect(f).toBeDefined();
+    expect(f!.line).toBe(3);
+  });
+
+  it("withdraws when another image already carries the author's priority marking", () => {
+    const code = `<header class="site-hero"><img src="/hero.avif" alt="Studio" width="1600" height="900" fetchpriority="high"></header>
+<main><img src="/chart.avif" alt="Costs" width="800" height="500" loading="lazy"></main>`;
+    expect(ids(code, "index.html")).toEqual([]);
+  });
+
+  it("withdraws when an image sits above <main> outside the landmarks", () => {
+    const code = `<section class="hero"><img src="/hero.avif" alt="Studio" width="1600" height="900"></section>
+<main><img src="/chart.avif" alt="Costs" width="800" height="500" loading="lazy"></main>`;
+    expect(ids(code, "index.html")).toEqual([]);
+  });
+
+  it("skips a small image sized only in the page's own CSS", () => {
+    const code = `<style>.byline-avatar { width: 40px; height: 40px; border-radius: 50%; }</style>
+<main><img class="byline-avatar" src="/jane.jpg" alt="Jane" loading="lazy"><h1>Post</h1></main>`;
+    expect(ids(code, "post.html")).toEqual([]);
+  });
+
+  it("skips an image the author named a logo, an avatar or a badge", () => {
+    for (const name of ["site-logo", "author-avatar", "trust-badge", "icon-tick"]) {
+      const code = `<main><img class="${name}" src="/x.svg" alt="x" width="120" height="40" loading="lazy"><h1>Page</h1></main>`;
+      expect(ids(code, "index.html"), name).toEqual([]);
+    }
+  });
+
   it("still fires when the candidate sits under the page's heading", () => {
     const code = `<main>
   <h1>Website redesign pricing</h1>
@@ -485,6 +595,49 @@ import hero from "../assets/hero.avif";
 </body>
 </html>`;
     expect(ids(code, "docs/media.html")).toEqual([]);
+  });
+});
+
+// A fix a reader cannot lawfully follow is worse than no fix: it is
+// confident, actionable and wrong.
+describe("advice stays inside what the source and the licence allow", () => {
+  const fixFor = (host: string) => {
+    const code = `<!doctype html><html><head><link href="https://${host}/x.css" rel="stylesheet"></head><body></body></html>`;
+    return perfRules(code, "index.html").find((x) => x.rule === "third-party-font-host")!.fix;
+  };
+
+  it("tells a Google Fonts user to download and self-host", () => {
+    expect(fixFor("fonts.googleapis.com")).toMatch(/download/i);
+  });
+
+  it.each(["use.typekit.net", "p.typekit.net", "cloud.typography.com", "fast.fonts.net"])(
+    "never tells a %s subscriber to redistribute the files", (host) => {
+      const fix = fixFor(host);
+      expect(fix).not.toMatch(/download the/i);
+      expect(fix).toMatch(/not license redistribution/i);
+    });
+
+  it("claims a possible shift, not a certain one, from a read that cannot see external CSS", () => {
+    const f = perfRules(`<main><img src="/a.jpg" alt="A photo"></main>`, "p.html")
+      .find((x) => x.rule === "image-without-dimensions")!;
+    expect(f.message).toMatch(/can shift/);
+    expect(f.message).not.toMatch(/everything below it moves/);
+  });
+
+  it("describes the candidate's position as the code establishes it", () => {
+    const code = GOOD_HTML.replace(` fetchpriority="high"`, ` loading="lazy"`);
+    const f = perfRules(code, "index.html").find((x) => x.rule === "lazy-hero")!;
+    expect(f.message).toMatch(/near the top of the primary content/);
+  });
+
+  it("counts remote domains without asserting they are third parties", () => {
+    const scripts = ["plausible.io", "cdn.usefathom.com", "js.stripe.com", "widget.intercom.io",
+      "static.hotjar.com", "connect.facebook.net"]
+      .map((h) => `<script async src="https://${h}/x.js"></script>`).join("");
+    const f = perfRules(`<body>${scripts}</body>`, "p.html")
+      .find((x) => x.rule === "third-party-script-count")!;
+    expect(f.message).toMatch(/distinct remote domains/);
+    expect(f.message).toMatch(/Some may be your own infrastructure/);
   });
 });
 

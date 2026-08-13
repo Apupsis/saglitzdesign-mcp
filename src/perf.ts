@@ -25,10 +25,12 @@
 //
 // It was specified with `technical-seo` as its document. Neither that document
 // nor any other in this knowledge base recommends preconnecting to a font
-// host: "preconnect" appears exactly twice across `knowledge/`, both times in
-// `privacy-consent-and-tracking`, where a `<link rel="preconnect">` to a third
-// party is described as *contact* with it — a consent problem added by a
-// performance ticket. The remedy the knowledge base does document is the
+// host: "preconnect" appears four times across `knowledge/`, in two files and
+// never in an SEO or performance one. Twice in `privacy-consent-and-tracking`,
+// where a `<link rel="preconnect">` to a third party is described as *contact*
+// with it — a consent problem added by a performance ticket — and twice in
+// `ai-feature-security`, where it is a request type a CSP has to close. Not
+// one of the four recommends it. The remedy the knowledge base does document is the
 // opposite one: seo-for-designers §2 says "Self-host WOFF2. Third-party font
 // CDNs add a connection." So the connection cost is real and cited, and the
 // rule that states it is `third-party-font-host`, which points at self-hosting
@@ -83,13 +85,31 @@ import { scanTags, type Tag, maskComments, elementSpan, flattenTags } from "./sc
 const lineOf = (src: string, index: number): number =>
   src.slice(0, index).split("\n").length;
 
-// Same attribute-boundary reasoning as security.ts and seo.ts: `\b` matches
-// inside `data-src`, so an attribute name may only start at the beginning of
-// the attribute chunk or after whitespace / the previous value's closing quote.
-const ATTR_START = `(?:^|[\\s"'])`;
+// An attribute name may only begin where a *name* can begin, and the two
+// earlier modules' idiom — allow a quote character before the name, so that a
+// name following the previous value's closing quote is found — cannot tell a
+// closing quote from an opening one, and a space inside a quoted value
+// qualifies too. So `alt="Priority support illustration"` read as the
+// `priority` attribute, and `<img alt="Full width photo">` read as an image
+// declaring a `width`.
+//
+// The consequences ran both ways and both were serious: a plain HTML image
+// with no priority marking anywhere was reported at this module's highest
+// severity describing markup that is not in the file, and a genuinely
+// dimensionless image went silent because the word "width" appeared in its
+// alt text.
+//
+// The fix is to look for names only where values are not. `bareAttrs` blanks
+// every quoted or braced value — length-preserving, so offsets still line up
+// with the original — and both readers below work from that.
+const bareAttrs = (attrs: string): string =>
+  attrs.replace(/=\s*("[^"]*"|'[^']*'|\{[^}]*\})/g, (m) => m.replace(/\S/g, " "));
+
+const attrStart = (name: string): RegExp =>
+  new RegExp(`(?:^|\\s)${name}(?=[\\s=/>]|$)`, "i");
 
 const hasAttr = (tag: Tag, name: string): boolean =>
-  new RegExp(`${ATTR_START}${name}(?=[\\s=/>]|$)`, "i").test(tag.attrs);
+  attrStart(name).test(bareAttrs(tag.attrs));
 
 /** `{...props}` — the attribute may well be forwarded; don't guess. */
 const hasSpread = (tag: Tag): boolean => /\{\s*\.\.\./.test(tag.attrs);
@@ -104,9 +124,14 @@ const hasSpread = (tag: Tag): boolean => /\{\s*\.\.\./.test(tag.attrs);
 interface AttrValue { present: boolean; value?: string }
 
 const attrValue = (tag: Tag, name: string): AttrValue => {
-  const re = new RegExp(`${ATTR_START}${name}\\s*=\\s*("([^"]*)"|'([^']*)'|\\{[^}]*\\})`, "i");
-  const m = re.exec(tag.attrs);
-  if (!m) return { present: hasAttr(tag, name) };
+  // Locate the name in the blanked copy, then read its value from the
+  // original at the same offset — `bareAttrs` preserves length, so the two
+  // stay aligned.
+  const at = attrStart(name).exec(bareAttrs(tag.attrs));
+  if (!at) return { present: false };
+  const after = tag.attrs.slice(at.index + at[0].length);
+  const m = /^\s*=\s*("([^"]*)"|'([^']*)'|\{[^}]*\})/.exec(after);
+  if (!m) return { present: true };                           // valueless, or unquoted
   const raw = m[2] ?? m[3];
   if (raw === undefined) return { present: true };            // a JSX expression
   if (/\$\{|\{[^}]*\}/.test(raw)) return { present: true };   // interpolated literal
@@ -226,6 +251,24 @@ const basenameOf = (url: string): string =>
   (url.split(/[?#]/)[0].split("/").pop() ?? "").toLowerCase();
 
 /**
+ * The last two labels of a host, or three where the second-to-last is one of
+ * the common second-level registry labels (`example.co.uk`). Approximate by
+ * design — the exact answer is the Public Suffix List, which is a dependency
+ * this module will not take — and it errs toward *merging* hosts, which is the
+ * direction that avoids a finding rather than invents one.
+ */
+const REGISTRY_SLD = /^(?:co|com|org|net|ac|gov|edu|mil|sch)$/i;
+
+function registrableDomain(host: string): string {
+  if (!host) return "";
+  const labels = host.split(".");
+  if (labels.length <= 2) return host;
+  const [sld, tld] = labels.slice(-2);
+  const take = REGISTRY_SLD.test(sld) && tld.length <= 3 ? 3 : 2;
+  return labels.slice(-take).join(".");
+}
+
+/**
  * Font CDNs, named rather than inferred. Every one of these is a host whose
  * only job is serving typefaces, so "this page's fonts come from a third
  * party" is a fact rather than a guess about what a generic CDN is carrying.
@@ -234,6 +277,22 @@ const FONT_HOSTS = [
   "fonts.googleapis.com", "fonts.gstatic.com", "use.typekit.net", "p.typekit.net",
   "use.fontawesome.com", "fast.fonts.net", "cloud.typography.com", "fonts.bunny.net",
   "cdn.fonts.net", "use.edgefonts.net",
+];
+
+/**
+ * The hosts whose files may lawfully be served from your own origin. Google
+ * Fonts and Bunny serve open-licensed families (OFL/Apache) and Font Awesome
+ * ships a self-host distribution, so "download the WOFF2 and serve it
+ * yourself" is available advice.
+ *
+ * The rest are subscription foundries — Adobe Fonts, Monotype, Hoefler — whose
+ * licences do not permit redistributing the font files. Telling those readers
+ * to self-host is telling them to breach their licence, which is worse than a
+ * false positive: it is confident, actionable and wrong. The fix string is
+ * gated on this list for exactly that reason.
+ */
+const SELF_HOSTABLE_FONT_HOSTS = [
+  "fonts.googleapis.com", "fonts.gstatic.com", "fonts.bunny.net", "use.fontawesome.com",
 ];
 
 // ── the LCP candidate ────────────────────────────────────────────────────────
@@ -294,7 +353,7 @@ const visibleText = (masked: string): string =>
  * nothing in the source establishes one. See the module header for why the
  * answer is so often null and why that is the right trade.
  */
-function lcpCandidate(masked: string, tags: Tag[]): Tag | null {
+function lcpCandidate(masked: string, tags: Tag[], css: SizedCss): Tag | null {
   const main = firstSpan(masked, tags, "main");
   if (!main) return null;
 
@@ -302,12 +361,32 @@ function lcpCandidate(masked: string, tags: Tag[]): Tag | null {
     ...elementRanges(masked, "header"),
     ...elementRanges(masked, "nav"),
     ...elementRanges(masked, "footer"),
+    ...inertRanges(masked),
   ];
 
-  const first = tags.find(
-    (t) => isImageTag(t.name) && t.index >= main[0] && t.index < main[1] && !inRanges(t.index, excluded),
-  );
+  const images = tags.filter((t) => isImageTag(t.name) && !inRanges(t.index, excluded));
+  const first = images.find((t) => t.index >= main[0] && t.index < main[1]);
   if (!first) return null;
+
+  // **The general form of the Nuxt defect: skipping an image promotes the next
+  // one.** Recognising more component names fixed one cause of skipping; these
+  // two withdrawals cover the rest, and both are facts about the source rather
+  // than guesses about the render.
+  //
+  // First: some other image in this document carries the author's own priority
+  // marking. They have named the element they want painted first and it is not
+  // this one — a `<header class="site-hero">` image with `fetchpriority="high"`
+  // above a lazy chart inside `<main>` had this module reporting the chart,
+  // with the real answer sitting in the same file. Every image is considered
+  // here, including the ones inside the landmarks excluded above, because the
+  // marking is the author's statement and its position does not weaken it.
+  if (tags.some((t) => isImageTag(t.name) && t !== first && declaresHighPriority(t))) return null;
+
+  // Second: an image above `<main>` that is not in a header, nav or footer —
+  // a full-bleed `<section class="hero">` laid out before the primary content.
+  // It is painted before anything in `<main>` and may well be the largest
+  // thing on screen, so no image inside `<main>` can be called first.
+  if (images.some((t) => t.index < main[0])) return null;
 
   // An unresolved component between the top of `<main>` and this image may be
   // rendering the image that actually comes first. No claim about ordering
@@ -317,12 +396,60 @@ function lcpCandidate(masked: string, tags: Tag[]): Tag | null {
   );
   if (opaqueAbove) return null;
 
-  const width = Number(attrValue(first, "width").value);
-  if (Number.isFinite(width) && width > 0 && width < HERO_MIN_WIDTH) return null;
+  // Small, or named as something small. The width attribute was the only thing
+  // read here at first, which missed every image sized in CSS: a 40px byline
+  // avatar and a sponsor logo strip both led `<main>` and both were reported
+  // at error severity.
+  const width = declaredWidth(first, css);
+  if (width !== undefined && width < HERO_MIN_WIDTH) return null;
+  if (namedDecorative(first) || namedDecorative(nearestWrapper(masked, tags, first))) return null;
 
   if (visibleText(masked.slice(main[0], first.index)).length > HERO_TEXT_BUDGET) return null;
 
   return first;
+}
+
+/**
+ * Containers whose contents are not painted with the page: `<template>` is
+ * inert until a script clones it, `<noscript>` renders only when scripting is
+ * off (which is where the standard 1×1 tracking pixel lives), and a `<dialog>`
+ * is not displayed until it is opened. None of them can hold the LCP element
+ * or shift the layout on load.
+ */
+const inertRanges = (masked: string): Array<[number, number]> => [
+  ...elementRanges(masked, "template"),
+  ...elementRanges(masked, "noscript"),
+  ...elementRanges(masked, "dialog"),
+];
+
+/** What the author called it. A logo or an avatar is not a hero, whatever its position. */
+const DECORATIVE_NAME =
+  /(?:^|[^a-z])(?:avatar|logo|badge|icon|thumb|thumbnail|byline|sponsor|profile-pic)(?![a-z])/i;
+
+const namedDecorative = (tag: Tag | null): boolean => {
+  if (!tag) return false;
+  const named = `${classesOf(tag)} ${attrValue(tag, "id").value ?? ""}`;
+  return DECORATIVE_NAME.test(named);
+};
+
+/**
+ * A width in CSS pixels the source declares for this element — the `width`
+ * attribute, a `width: 40px` in its `style`, or a rule in the file's own CSS
+ * matching one of its classes. Percentages and viewport units are not a pixel
+ * width and are deliberately not read as one.
+ */
+function declaredWidth(tag: Tag, css: SizedCss): number | undefined {
+  const attr = Number(attrValue(tag, "width").value);
+  if (Number.isFinite(attr) && attr > 0) return attr;
+
+  const style = attrValue(tag, "style").value;
+  const inline = style ? /(?:^|[\s;])width\s*:\s*(\d+(?:\.\d+)?)px/i.exec(style) : null;
+  if (inline) return Number(inline[1]);
+
+  const widths = classesOf(tag).split(/\s+/)
+    .map((c) => (c ? css.pixelWidths.get(c) : undefined))
+    .filter((w): w is number => w !== undefined);
+  return widths.length ? Math.min(...widths) : undefined;
 }
 
 /** next/image's `priority` prop compiles to `fetchpriority="high"`. */
@@ -360,7 +487,8 @@ export function perfRules(code: string, filename?: string): LintFinding[] {
   ) => out.push({ line: lineOf(code, index), severity, rule, message, fix, doc });
 
   const headSpan = firstSpan(masked, tags, "head");
-  const candidate = lcpCandidate(masked, tags);
+  const css = sizedSelectors(regions);
+  const candidate = lcpCandidate(masked, tags, css);
 
   // ── the LCP candidate image ────────────────────────────────────────────────
 
@@ -382,7 +510,7 @@ export function perfRules(code: string, filename?: string): LintFinding[] {
   const candidateLazy = candidate !== null && isLazy(candidate) && !contradictory.includes(candidate);
   if (candidateLazy) {
     push(candidate!.index, "error", "lazy-hero",
-      `This is the first image inside <main>, above the page's opening copy, which makes it the document's LCP candidate — and it carries loading="lazy", which holds its request back until layout has run. technical-seo's LCP quick wins say the LCP element is never lazy-loaded.`,
+      `This is the first image inside <main>, near the top of the primary content, which makes it this document's LCP candidate — and it carries loading="lazy", which holds its request back until layout has run. technical-seo's LCP quick wins say the LCP element is never lazy-loaded.`,
       `If this image is above the fold, remove loading="lazy" and add fetchpriority="high". If it is genuinely below the fold, loading="lazy" is correct and this finding is reading the wrong image — only the render can settle that.`,
       "technical-seo");
   }
@@ -458,9 +586,20 @@ export function perfRules(code: string, filename?: string): LintFinding[] {
   }
   if (fontHosts.size) {
     const hosts = [...fontHosts.keys()].sort();
+    const selfHostable = hosts.filter((h) => SELF_HOSTABLE_FONT_HOSTS.includes(h));
+    const licensed = hosts.filter((h) => !SELF_HOSTABLE_FONT_HOSTS.includes(h));
+
+    // The advice is split by what the licence actually allows. Telling an
+    // Adobe Fonts or Monotype subscriber to "download the files and serve
+    // them yourself" is telling them to breach their licence — confident,
+    // actionable and wrong, which is worse than saying nothing.
+    const fix = selfHostable.length
+      ? `seo-for-designers §2 asks for self-hosted WOFF2: download the ${selfHostable.join(" and ")} files, serve them from this origin, subset them to the character sets in use, and preload the primary text face. next/font and Fontsource both automate the download and the CSS.`
+      : `Self-hosting is what seo-for-designers §2 asks for, and ${licensed.join(" and ")} ${licensed.length > 1 ? "do" : "does"} not license redistribution of the files, so that is not available here. What is: preload the font CSS, keep the family and weight count to the §8 budget, and set font-display so text is never invisible while the round trip completes.`;
+
     push(Math.min(...fontHosts.values()), "info", "third-party-font-host",
       `Fonts are loaded from ${hosts.join(" and ")} — ${hosts.length > 1 ? "third-party font CDNs" : "a third-party font CDN"}. That is an extra DNS lookup, TLS handshake and round trip before the first glyph is requested, and the request itself carries the visitor's IP address to another company.`,
-      `seo-for-designers §2 asks for self-hosted WOFF2: download the files, serve them from this origin, subset them to the character sets in use, and preload the primary text face. next/font and Fontsource both automate the download and the CSS.`,
+      fix,
       "seo-for-designers");
   }
 
@@ -472,34 +611,51 @@ export function perfRules(code: string, filename?: string): LintFinding[] {
   // Astro infers them from the imported asset. Reporting a correct
   // `<Image src={hero} alt="…" />` as dimensionless would be flagging the one
   // component in the ecosystem that cannot ship without dimensions.
-  const sized = sizedSelectors(regions);
   const reserved = (tag: Tag): boolean => {
     const classes = classesOf(tag);
     if (utilitySized(classes)) return true;
-    if (sized.has("img") && tag.name === "img") return true;
-    return classes.split(/\s+/).some((c) => c && sized.has(c));
+    if (tag.name === "img" && css.elements.has("img")) return true;
+    return classes.split(/\s+/).some((c) => c && css.classes.has(c));
   };
+
+  const inert = inertRanges(masked);
 
   for (const tag of tags) {
     if (tag.name !== "img") continue;
     if (hasSpread(tag)) continue;
+    // Nothing here is painted with the page: a `<template>` is inert until a
+    // script clones it, a `<noscript>` renders only when scripting is off —
+    // which is where the standard 1×1 tracking pixel lives — and a `<dialog>`
+    // is not displayed until it is opened. None of them shifts the layout on
+    // load, which is the whole subject of this rule.
+    if (inRanges(tag.index, inert)) continue;
     // Fire only when there is no dimensional information at all. A
     // width-without-height image is a narrower question than this module can
     // settle from source, and silence is the honest answer to it.
     if (hasAttr(tag, "width") || hasAttr(tag, "height")) continue;
     const style = attrValue(tag, "style");
     if (style.present && (style.value === undefined || /aspect-ratio|height|width/i.test(style.value))) continue;
+    // An unreadable class is the same case as an unreadable style, and this
+    // rule honoured it for one and not the other: `className={styles.cover}`
+    // yielded an empty string and the image was reported as unsized, when the
+    // CSS module naming it is exactly the file this module admits it cannot
+    // see. No readable class, no absence claim.
+    const cls = attrValue(tag, "class");
+    const cn = attrValue(tag, "className");
+    if ((cls.present && cls.value === undefined) || (cn.present && cn.value === undefined)) continue;
     if (reserved(tag)) continue;
     // The wrapper that reserves the space, which is where a card, a figure or
     // a media slot normally puts it — `.card__media { aspect-ratio: 16 / 9 }`
-    // around an `<img>` filling it. Only the *nearest* enclosing element is
-    // considered: an `<html class="h-full">` shell is not a reservation for
-    // every image on the page, and treating it as one would silence the rule
-    // outright on a great many Tailwind projects.
+    // around an `<img>` filling it, or `.card__media img { … }` sizing the
+    // image through it. Only the *nearest* enclosing element is considered: an
+    // `<html class="h-full">` shell is not a reservation for every image on
+    // the page, and treating it as one would silence the rule outright on a
+    // great many Tailwind projects.
     const wrapper = nearestWrapper(masked, tags, tag);
-    if (wrapper && reserved(wrapper)) continue;
+    if (wrapper && (reserved(wrapper)
+      || classesOf(wrapper).split(/\s+/).some((c) => c && css.wrappers.has(c)))) continue;
     push(tag.index, "warning", "image-without-dimensions",
-      `<img> declares neither width and height nor an aspect-ratio, so nothing in this markup tells the browser the shape of the box before the file arrives and everything below it moves when it does.`,
+      `<img> declares neither width and height nor an aspect-ratio, so nothing in this file reserves the box before the image arrives, and anything below it can shift when it does.`,
       `Add width and height attributes at the image's intrinsic pixel size — CSS can still resize it with width: 100%; height: auto — or set aspect-ratio on it in CSS. technical-seo asks for this on all images, videos, iframes and embeds.`,
       "technical-seo");
   }
@@ -526,18 +682,29 @@ export function perfRules(code: string, filename?: string): LintFinding[] {
     }
   }
 
-  // ── third-party script origins ─────────────────────────────────────────────
-  const thirdParty = new Map<string, number>();
+  // ── remote script domains ──────────────────────────────────────────────────
+  //
+  // Counted by *registrable domain*, not by host: six scripts from
+  // `a.example.com` … `f.example.com` are one party's infrastructure, and
+  // calling them six third parties was both wrong and the kind of wrong a
+  // reader can see at a glance.
+  //
+  // And the message says "remote domains", not "third-party origins". This
+  // module reads one file; it does not know which host the document is served
+  // from, so it cannot establish that any of these is a third party. What it
+  // can establish is that the script is fetched from somewhere else by
+  // absolute URL. The reader knows which of them are their own.
+  const remote = new Map<string, number>();
   for (const tag of tags) {
     if (tag.name !== "script") continue;
-    const host = hostOf(attrValue(tag, "src").value ?? "");
-    if (!host || thirdParty.has(host)) continue;
-    thirdParty.set(host, tag.index);
+    const domain = registrableDomain(hostOf(attrValue(tag, "src").value ?? ""));
+    if (!domain || remote.has(domain)) continue;
+    remote.set(domain, tag.index);
   }
-  if (thirdParty.size > THIRD_PARTY_ORIGIN_LIMIT) {
-    const hosts = [...thirdParty.keys()].sort();
-    push(Math.min(...thirdParty.values()), "info", "third-party-script-count",
-      `This document loads scripts from ${hosts.length} third-party origins (${hosts.join(", ")}). Each is a separate connection to open and a separate body of code running on the same main thread the page's own event handlers use.`,
+  if (remote.size > THIRD_PARTY_ORIGIN_LIMIT) {
+    const domains = [...remote.keys()].sort();
+    push(Math.min(...remote.values()), "info", "third-party-script-count",
+      `This document loads scripts from ${domains.length} distinct remote domains (${domains.join(", ")}). Each is a separate connection to open and a separate body of code running on the same main thread the page's own event handlers use. Some may be your own infrastructure; the rest are third parties.`,
       `technical-seo asks for third-party scripts to be minimised: give each one a named owner and a business reason, drop the ones with neither, and load what survives after first interaction or with defer. seo-for-designers §8 budgets three, all deferred.`,
       "technical-seo");
   }
@@ -632,24 +799,40 @@ const utilitySized = (classes: string): boolean =>
   || (TW_WIDTH.test(classes) && TW_HEIGHT.test(classes));
 
 /**
- * Class names — and the bare `img` element selector — that the file's own CSS
- * gives a determined box: an `aspect-ratio`, or a `width` and a `height` that
- * are not `auto`. An image sized either way reserves its space correctly
- * without width and height attributes, and reporting it would be flagging the
- * second of the two remedies the cited document itself names.
+ * What the file's own CSS says about the size of things.
  *
- * Only the *last* compound of a selector is read, because that is the element
- * the rule sizes. `.card__media img { width: 100%; height: 100% }` sizes the
- * image, not the media slot — collecting `card__media` from it and then
- * looking for that class on the `<img>` is what made this module report the
- * repository's own card recipe, correct and shipped, as a layout-shift defect.
+ *  • `elements` — element names given a determined box by a *top-level*
+ *    selector (`img { aspect-ratio: 3 / 2 }`).
+ *  • `classes` — class names given a determined box on the element that
+ *    carries them (`.cover { aspect-ratio: 16 / 9 }`).
+ *  • `wrappers` — class names whose *descendant* images are sized
+ *    (`.card__media img { width: 100%; height: 100% }`). Kept separate from
+ *    `elements` because a descendant rule sizes the images under one wrapper,
+ *    not every image in the document; folding it into a bare `img` key
+ *    silenced the rule file-wide.
+ *  • `pixelWidths` — a class's declared px width, so a 40px byline avatar is
+ *    known to be small even though nothing says so in the markup.
+ *
+ * A determined box is an `aspect-ratio`, or a `width` and a `height` that are
+ * not `auto`; either reserves the space correctly without width and height
+ * attributes, and reporting one would be flagging the second of the two
+ * remedies the cited document itself names.
  *
  * Only this file's CSS is read, which is the limit of what can be proven: an
  * image sized by an external stylesheet or a CSS module still fires, because
  * nothing here can see that file.
  */
-function sizedSelectors(regions: CssRegion[]): Set<string> {
-  const out = new Set<string>();
+interface SizedCss {
+  elements: Set<string>;
+  classes: Set<string>;
+  wrappers: Set<string>;
+  pixelWidths: Map<string, number>;
+}
+
+function sizedSelectors(regions: CssRegion[]): SizedCss {
+  const out: SizedCss = {
+    elements: new Set(), classes: new Set(), wrappers: new Set(), pixelWidths: new Map(),
+  };
   const determined = (body: string): boolean =>
     /(?:^|[\s;{])aspect-ratio\s*:/i.test(body)
     || (/(?:^|[\s;{])width\s*:\s*(?!auto)/i.test(body) && /(?:^|[\s;{])height\s*:\s*(?!auto)/i.test(body));
@@ -658,11 +841,28 @@ function sizedSelectors(regions: CssRegion[]): Set<string> {
     const re = /([^{}]+)\{([^{}]*)\}/g;
     let m: RegExpExecArray | null;
     while ((m = re.exec(region.text)) !== null) {
-      if (!determined(m[2])) continue;
-      for (const selector of m[1].split(",")) {
-        const last = selector.trim().split(/[\s>+~]+/).pop() ?? "";
-        if (/^img(?![\w-])/i.test(last)) out.add("img");
-        for (const cls of last.matchAll(/\.([A-Za-z_][\w-]*)/g)) out.add(cls[1]);
+      const [, selectors, body] = m;
+      const px = /(?:^|[\s;{])width\s*:\s*(\d+(?:\.\d+)?)px/i.exec(body);
+
+      for (const selector of selectors.split(",")) {
+        const compounds = selector.trim().split(/[\s>+~]+/).filter(Boolean);
+        const last = compounds[compounds.length - 1] ?? "";
+        const lastClasses = [...last.matchAll(/\.([A-Za-z_][\w-]*)/g)].map((c) => c[1]);
+
+        if (px) for (const cls of lastClasses) out.pixelWidths.set(cls, Number(px[1]));
+        if (!determined(body)) continue;
+
+        if (/^img(?![\w-])/i.test(last)) {
+          if (compounds.length === 1) {
+            out.elements.add("img");
+          } else {
+            // `.card__media img { … }` — the images under that wrapper.
+            for (const part of compounds.slice(0, -1)) {
+              for (const cls of part.matchAll(/\.([A-Za-z_][\w-]*)/g)) out.wrappers.add(cls[1]);
+            }
+          }
+        }
+        for (const cls of lastClasses) out.classes.add(cls);
       }
     }
   }
