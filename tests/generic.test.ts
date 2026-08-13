@@ -304,6 +304,38 @@ describe("copy rules — filler-adverb catches a hero/subhead pair split across 
     const code = `<section><h1>Seamlessly onboard new hires</h1></section><section><p>Built for cutting-edge deployment pipelines.</p></section>`;
     expect(copyIds(code)).toEqual([]);
   });
+
+  // Round 3: the reviewer was asked to defeat the adjacency reasoning, not
+  // just re-check the three cases above, and found two more gaps — one in
+  // each direction.
+  it("does not pair across an HTML comment used as a section boundary (A1)", () => {
+    // maskComments blanks the whole comment, delimiters included, before this
+    // rule ever sees the source — a naive gap check reading the masked text
+    // would see nothing but whitespace here and wrongly pair the two.
+    const code = `<h1>Seamlessly onboard new hires</h1><!-- section break --><p>Built for cutting-edge deployment pipelines.</p>`;
+    expect(copyIds(code)).toEqual([]);
+  });
+
+  it("does not pair across two consecutive HTML comments", () => {
+    const code = `<h1>Seamlessly onboard new hires</h1><!-- End Hero --><!-- Begin Features --><p>Built for cutting-edge deployment pipelines.</p>`;
+    expect(copyIds(code)).toEqual([]);
+  });
+
+  it("pairs an anchored-permalink heading with the paragraph right after it (A2)", () => {
+    // The heading's own <a> is itself a TEXT_TAGS entry sitting between the
+    // heading and the real next paragraph in array order — nothing at all
+    // sits between </h1> and <p> in the actual markup.
+    const code = `<h1><a href="#">Seamlessly onboard new hires</a></h1><p>Built for cutting-edge deployment pipelines.</p>`;
+    expect(copyIds(code)).toContain("filler-adverb");
+  });
+
+  it("stays silent for an anchored heading whose paragraph genuinely has no filler adverb", () => {
+    // Proves the previous test fires because the pairing mechanism actually
+    // reached the paragraph and evaluated it — not because anchored headings
+    // are silently exempt from the threshold check.
+    const code = `<h1><a href="#">Seamlessly onboard new hires</a></h1><p>Every plan includes unlimited projects and priority support.</p>`;
+    expect(copyIds(code)).toEqual([]);
+  });
 });
 
 describe("copy rules — isQuoted does not treat an ordinary contraction as a quote mark", () => {

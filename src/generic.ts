@@ -515,23 +515,46 @@ export function genericCopyRules(code: string, filename?: string): LintFinding[]
   // anyway: in well-formed markup, the only way anything can sit between a
   // heading's closing tag and the next paragraph's opening tag is *some*
   // tag — closing a wrapper, opening a sibling section, an <img>, an empty
-  // <div> — and every one of those starts with `<`. So "the raw source
-  // between the two is whitespace only, not even one `<`" is a fact that
-  // rules out a heading and paragraph landing in different containers, not
-  // merely a proxy for it. A first cut of this pass paired by array
-  // position alone (next text-bearing element in document order, skipping
-  // non-text tags like <img>/<div> in between) and fired across sibling
-  // <article>s, sibling <section>s, and an unrelated paragraph behind a
-  // spacer <div> — all still ordinary pages, none of them a hero/subhead.
-  // The gap check below closes all three: any of those insertions puts at
-  // least one tag between the two closing/opening tags, and `gap.trim()`
-  // stops being empty.
-  for (let i = 0; i < textHits.length - 1; i++) {
+  // <div> — and every one of those starts with `<`. "The raw source between
+  // the two is whitespace only, not even one `<`" is a fact that rules out a
+  // heading and paragraph landing in different containers, not merely a
+  // proxy for it.
+  //
+  // Two corrections on top of that base check, both found by a reviewer
+  // asked to defeat the reasoning rather than confirm the three cases it was
+  // first tested against:
+  //
+  // 1. The gap must be read from `code` (the original, unmasked source),
+  //    not `masked`. `maskComments` blanks a comment's delimiters along with
+  //    its contents — for good reason everywhere else in this module, a
+  //    phrase inside a comment must never count as copy — but that means a
+  //    section-boundary comment (`<!-- End Hero --><!-- Begin Features
+  //    -->`) disappears into whitespace *before* this check ever runs,
+  //    exactly the `<` this check exists to find. `code` still has it.
+  //    Content-matching (`flat`, built from `masked`) is untouched, so a
+  //    phrase actually written inside a comment still never fires anything.
+  //
+  // 2. The search for "the next element" must skip any `textHits` entry
+  //    still *inside* the heading's own span — an anchored-permalink
+  //    heading's own `<a>` (`<h1><a href="#">Title</a></h1>`) is in
+  //    TEXT_TAGS too, so it became its own entry sitting between the
+  //    heading and the real next paragraph in array order, and a naive
+  //    `textHits[i]`/`textHits[i+1]` comparison never got past it. Skipping
+  //    every entry whose own tag starts before the heading's closing tag —
+  //    checkable from the scanner's offsets alone, nesting implies
+  //    started-before-parent-closed — reaches the real next element without
+  //    needing a tree, and an entry that starts *after* the heading closes
+  //    is guaranteed to be a sibling or later, never a description of "how
+  //    many things are nested inside the heading."
+  for (let i = 0; i < textHits.length; i++) {
     const heading = textHits[i]!;
-    const next = textHits[i + 1]!;
     if (!/^h[1-6]$/.test(heading.tag.name.toLowerCase())) continue;
+    let j = i + 1;
+    while (j < textHits.length && textHits[j]!.tag.index < heading.closeEnd) j++;
+    if (j >= textHits.length) continue;
+    const next = textHits[j]!;
     if (next.tag.name.toLowerCase() !== "p") continue;
-    const gap = masked.slice(heading.closeEnd, next.tag.index);
+    const gap = code.slice(heading.closeEnd, next.tag.index);
     if (gap.trim() !== "") continue;
     if (heading.hits.length >= FILLER_THRESHOLD || next.hits.length >= FILLER_THRESHOLD) continue;
     const combined = [...heading.hits, ...next.hits];
