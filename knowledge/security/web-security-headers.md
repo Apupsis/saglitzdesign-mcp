@@ -38,7 +38,7 @@ Line by line:
 | `https: 'unsafe-inline'` | **Backward-compat fallbacks, not a weakening.** `'strict-dynamic'` needs Chrome 52+, Edge 79+, Firefox 52+, Safari 15.4+. Browsers that support it ignore both fallbacks; browsers that don't at least get `https:`. All recent browsers ignore `'unsafe-inline'` when a nonce or hash is present. |
 | `object-src 'none'` | Kills `<object>`/`<embed>` plugin-based script execution. One of the three directives a strict CSP is *defined* by. |
 | `base-uri 'none'` | Blocks an injected `<base href>` from re-pointing every relative script URL at an attacker's host. `default-src` does **not** cover this. |
-| `frame-ancestors 'none'` | Clickjacking. This is the real control; `X-Frame-Options` is the legacy shadow of it. Use `'self'` if you embed yourself. |
+| `frame-ancestors 'none'` | Clickjacking. This is the real control; `X-Frame-Options` is the legacy shadow of it. Use `'self'` if you embed yourself. Pair it with `SameSite` on the session cookie — see [[auth-and-session-ux]] — because the header stops the framing and the cookie attribute stops the framed click carrying an authenticated session. |
 | `form-action 'self'` | Stops injected markup from posting your form data to another origin. Not covered by `default-src`. |
 | `require-trusted-types-for 'script'` | See [Trusted Types](#trusted-types). Add it in report-only first. |
 | `report-uri` + `report-to` | Send both. Browsers that support `report-to` ignore `report-uri`; browsers that don't still report. |
@@ -102,7 +102,7 @@ What a strict policy typically breaks, in the order you will hit it:
 - **Inline `style="…"` attributes.** A `style-src` nonce does not cover style *attributes* — nonces apply to elements. Either leave `style-src` permissive at first, or move the styles into classes. Do not solve this by loosening `script-src`.
 - **Analytics and tag managers.** GTM/GA snippets are inline scripts and will be blocked. Pass the nonce into the snippet (Next.js's `<GoogleTagManager nonce={nonce} />`, or the `nonce` prop on `<Script>`). Tags injected *by* GTM are covered by `'strict-dynamic'`.
 - **Embedded video and maps.** Iframes are `frame-src`, not `script-src`. A strict `script-src` doesn't block them, but a `default-src 'self'` does — add `frame-src https://www.youtube-nocookie.com` etc. explicitly.
-- **Injected third-party widgets** — chat, consent banners, session replay, support bubbles. These are exactly what `'strict-dynamic'` exists for, provided the loader snippet itself carries the nonce.
+- **Injected third-party widgets** — chat, consent banners, session replay, support bubbles. These are exactly what `'strict-dynamic'` exists for, provided the loader snippet itself carries the nonce. Note that making a consent banner *load* is only half the job: what it gates has to stay unloaded until it has a decision, which is [[privacy-consent-and-tracking]].
 - **`eval` in development.** React uses `eval` in dev to reconstruct server error stacks; you need `'unsafe-eval'` in dev only. Neither React nor Next.js use `eval` in production by default. Gate it on `NODE_ENV`.
 - **WebAssembly** needs `'wasm-unsafe-eval'`, which is *not* the same as `'unsafe-eval'` and is far narrower. Use it.
 
@@ -130,7 +130,7 @@ Rules:
 
 - **Additive, never a replacement.** Trusted Types stops DOM XSS (attacker string reaches a sink in your own JS). A strict `script-src` stops injected-markup XSS. You need both; neither covers the other's case.
 - Report-only first, always. Enforcement throws at runtime and will take out a page.
-- The only thing that can reintroduce DOM XSS once enforced is the code inside your own policies. Use `trustedTypes.createPolicy()` with a real sanitizer (DOMPurify), and use the **default policy sparingly** — prefer refactoring call sites to named policies.
+- The only thing that can reintroduce DOM XSS once enforced is the code inside your own policies. Use `trustedTypes.createPolicy()` with a real sanitizer (DOMPurify), and use the **default policy sparingly** — prefer refactoring call sites to named policies. Which call sites those are, and which DOMPurify cautions apply to the sanitizer inside the policy, are in [[frontend-attack-surface]].
 
 ## HSTS
 
