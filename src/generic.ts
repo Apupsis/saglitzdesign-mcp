@@ -100,16 +100,38 @@ const DEFAULT_FAMILIES = /\b(Inter|Roboto|Open Sans|DM Sans|Plus Jakarta Sans)\b
 // would make those calls order-dependent and intermittently wrong.
 const DEFAULT_FAMILIES_G = /\b(Inter|Roboto|Open Sans|DM Sans|Plus Jakarta Sans)\b/gi;
 
-// Font-family values arrive two shapes: a quoted name (`"Instrument Serif"`,
-// possibly nested inside an HTML attribute's own quotes) and an unquoted list
-// (`Inter, sans-serif`). Excluding all quote characters from the capture — the
-// simplest regex — breaks the first shape entirely, and capturing across a
-// bare `;`/`}` boundary without honouring an opening quote over-reads into
-// whatever markup follows an inline `style="font-family:'Foo'"` attribute.
-// The quoted alternative (backreferenced to its own opening quote) is tried
-// first so it wins in both cases; the unquoted alternative falls back to
-// stopping at `;`, `}`, or a quote it didn't open.
-const FONT_FAMILY_RE = /font-family\s*:\s*(?:(["'])((?:(?!\1)[^\\])*)\1|([^;}"']+))/gi;
+// The **whole** declared value, commas and quotes included, split into
+// entries at the call site.
+//
+// The shape this had until a review ran mixed stacks through it captured
+// either one fully-quoted name or an unquoted run that stopped dead at the
+// first quote — so every list pairing an unquoted default with a quoted
+// display face was truncated to its first entry. `font-family: Inter, 'Söhne
+// Breit', sans-serif` was read as the single family `Inter`, and the rule then
+// told a developer who had *already* paired Inter with a display face that
+// Inter was "the only declared family". Reading a quoted segment as one unit
+// rather than as a stopping point is what keeps the rest of the list.
+//
+// `<` and `>` are excluded from every branch. No font stack contains either,
+// and excluding them is what stops an inline `style="font-family:'Foo'"` from
+// running past its own attribute and swallowing the next tag's attributes as
+// if they were families — the over-read the old regex's quote-stopping was
+// there to prevent.
+const FONT_FAMILY_RE = /font-family\s*:\s*((?:[^;}"'<>]|"[^"<>]*"|'[^'<>]*')+)/gi;
+
+// An entry that is not a face anyone chose: the CSS generic families, the
+// CSS-wide keywords, and the system fallbacks every stack ends with. Anchored
+// to the whole entry, so a real face whose name merely starts with one of
+// these words (`Helvetica Compressed` is not `Helvetica`) still counts.
+//
+// Script-agnostic by construction, and that is the point of it. The test this
+// replaced asked whether anything matching `[A-Z][A-Za-z0-9 ]{2,}` survived
+// stripping the defaults — Latin-only — so `font-family: Inter, メイリオ,
+// sans-serif` reported Inter as the only declared family, and any CJK,
+// Cyrillic, Greek or Arabic face was invisible. Here, anything left over after
+// the defaults and this list is a family, whatever alphabet it is written in.
+const FALLBACK_FAMILY_RE =
+  /^(?:serif|sans-serif|monospace|cursive|fantasy|system-ui|ui-serif|ui-sans-serif|ui-monospace|ui-rounded|math|emoji|fangsong|-apple-system|blinkmacsystemfont|segoe ui|helvetica|helvetica neue|arial|inherit|initial|unset|revert|revert-layer)$/i;
 
 /** Emoji that stand in for an icon. Not an exhaustive emoji set — these six. */
 const ICON_EMOJI = /[\u{1F680}\u{1F4A1}\u{2728}\u{26A1}\u{1F525}\u{1F3AF}]/u;
@@ -203,16 +225,25 @@ export function genericVisualRules(code: string, filename?: string): LintFinding
   }
 
   // ── typeface ───────────────────────────────────────────────────────────────
-  const families = [...masked.matchAll(FONT_FAMILY_RE)].map((m) => m[2] ?? m[3] ?? "");
-  const declared = families.join(" ");
-  const onlyDefault =
-    families.length > 0 &&
-    DEFAULT_FAMILIES.test(declared) &&
-    !/["']?[A-Z][A-Za-z0-9 ]{2,}["']?/.test(declared.replace(DEFAULT_FAMILIES_G, "").replace(/sans-serif|serif|monospace|system-ui|ui-sans-serif|-apple-system|BlinkMacSystemFont|Segoe UI|Helvetica|Arial/gi, ""));
-  if (onlyDefault && isBrandSurface(code, filename)) {
+  // Every entry of every font-family declaration in the file, split on commas
+  // and unquoted. The rule fires only when a default family is declared and
+  // nothing else is — one entry that is neither a default nor a fallback
+  // keyword is a face someone picked, and this rule has nothing to say about
+  // a page that picked one.
+  const entries = [...masked.matchAll(FONT_FAMILY_RE)]
+    .flatMap((m) => m[1]!.split(","))
+    .map((e) => e.trim().replace(/^["']|["']$/g, "").trim())
+    .filter((e) => e !== "");
+  // "This entry *is* a default family", not "contains one of their names":
+  // `Inter Tight` is a different face from `Inter`, so it counts as a choice.
+  const isDefaultFamily = (e: string) =>
+    DEFAULT_FAMILIES.test(e) && e.replace(DEFAULT_FAMILIES_G, "").trim() === "";
+  const declaredDefault = entries.find(isDefaultFamily);
+  const otherFamilies = entries.filter((e) => !isDefaultFamily(e) && !FALLBACK_FAMILY_RE.test(e));
+  if (declaredDefault && otherFamilies.length === 0 && isBrandSurface(code, filename)) {
     const at = masked.search(DEFAULT_FAMILIES);
     push(at < 0 ? 0 : at, "warning", "default-ui-font",
-      `${DEFAULT_FAMILIES.exec(declared)?.[0]} is the only declared family on what looks like a brand surface.`,
+      `${declaredDefault} is the only declared family on what looks like a brand surface.`,
       `Pair it with a display face that carries the brand, or replace it — typography-craft lists the faces to reach past.`,
       "typography-craft");
   }

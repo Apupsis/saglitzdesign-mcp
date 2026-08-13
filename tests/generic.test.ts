@@ -98,6 +98,48 @@ describe("visual rules — stay quiet when they should", () => {
     expect(ids(code, "app/(marketing)/page.tsx")).not.toContain("default-ui-font");
   });
 
+  // The mixed stack: an unquoted default followed by a quoted display face.
+  // The declaration-capturing regex stopped at the first quote, so the value
+  // was truncated to `Inter` and the rule told a developer who had already
+  // paired Inter with a display face that Inter was the only family declared.
+  // Both quote styles, and the mirror order, which missed for the same reason
+  // from the other side.
+  it("accepts Inter paired with a single-quoted display face in one stack", () => {
+    const code = `<h1>Ship faster</h1><a href="/signup">Get started</a><style>body{font-family:Inter,'Söhne Breit',sans-serif}</style>`;
+    expect(ids(code, "app/(marketing)/page.tsx")).not.toContain("default-ui-font");
+  });
+
+  it("accepts Inter paired with a double-quoted display face in one stack", () => {
+    const code = `<h1>Ship faster</h1><a href="/signup">Get started</a><style>body{font-family:Inter,"PP Neue Montreal",sans-serif}</style>`;
+    expect(ids(code, "app/(marketing)/page.tsx")).not.toContain("default-ui-font");
+  });
+
+  it("accepts the display face declared before the default", () => {
+    const code = `<h1>Ship faster</h1><a href="/signup">Get started</a><style>body{font-family:'Söhne Breit',Inter,sans-serif}</style>`;
+    expect(ids(code, "app/(marketing)/page.tsx")).not.toContain("default-ui-font");
+  });
+
+  // The "another family is declared" test was `[A-Z][A-Za-z0-9 ]{2,}` —
+  // Latin-only — so a face written in any other script was invisible to it and
+  // the rule reported Inter as the sole family on a page that had paired it.
+  it("accepts a Japanese face beside Inter", () => {
+    const code = `<h1>Ship faster</h1><a href="/signup">Get started</a><style>body{font-family:Inter,メイリオ,sans-serif}</style>`;
+    expect(ids(code, "app/(marketing)/page.tsx")).not.toContain("default-ui-font");
+  });
+
+  it("accepts a Cyrillic face beside Inter", () => {
+    const code = `<h1>Ship faster</h1><a href="/signup">Get started</a><style>body{font-family:Inter,Пантон,sans-serif}</style>`;
+    expect(ids(code, "app/(marketing)/page.tsx")).not.toContain("default-ui-font");
+  });
+
+  // The other direction: widening the capture must not turn the rule off.
+  // A stack of nothing but the default and the system fallbacks is still the
+  // finding, however many entries it lists.
+  it("still flags Inter followed only by the system fallback stack", () => {
+    const code = `<h1>Ship faster</h1><a href="/signup">Get started</a><style>body{font-family:Inter,system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif}</style>`;
+    expect(ids(code, "app/(marketing)/page.tsx")).toContain("default-ui-font");
+  });
+
   it("accepts an emoji in body copy rather than as an icon", () => {
     expect(ids(`<p>We shipped it 🚀 last Tuesday after a long month.</p>`)).not.toContain("emoji-as-icon");
   });
