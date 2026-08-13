@@ -278,6 +278,44 @@ describe("copy rules — filler-adverb catches a hero/subhead pair split across 
     const code = `<li>Effortlessly resume interrupted uploads</li><li>Seamlessly retry failed jobs</li>`;
     expect(copyIds(code)).toEqual([]);
   });
+
+  // A first cut of the hero/subhead pass paired by array position alone —
+  // "the next text-bearing element in document order" — with no check for
+  // what sat between the two tags in the actual markup. All three of these
+  // are ordinary pages with two unrelated sections that each happen to use
+  // one common word from the filler-adverb list; none of them is a
+  // hero/subhead, and the pass must not pair across any of them.
+  it("does not pair a heading with an unrelated paragraph behind an intervening <img>", () => {
+    const code = `<h1>Seamlessly onboard new hires</h1><img src="a.png" alt=""><p>Built for cutting-edge deployment pipelines.</p>`;
+    expect(copyIds(code)).toEqual([]);
+  });
+
+  it("does not pair a heading with an unrelated paragraph behind an intervening empty <div>", () => {
+    const code = `<h1>Seamlessly onboard new hires</h1><div></div><p>Built for cutting-edge deployment pipelines.</p>`;
+    expect(copyIds(code)).toEqual([]);
+  });
+
+  it("does not pair a heading in one <article> with a paragraph in a sibling <article>", () => {
+    const code = `<article><h1>Seamlessly onboard new hires</h1></article><article><p>Built for cutting-edge deployment pipelines.</p></article>`;
+    expect(copyIds(code)).toEqual([]);
+  });
+
+  it("does not pair a heading in one <section> with a paragraph in a sibling <section>", () => {
+    const code = `<section><h1>Seamlessly onboard new hires</h1></section><section><p>Built for cutting-edge deployment pipelines.</p></section>`;
+    expect(copyIds(code)).toEqual([]);
+  });
+});
+
+describe("copy rules — isQuoted does not treat an ordinary contraction as a quote mark", () => {
+  it("fires when a genuine hype phrase sits between two unrelated contractions", () => {
+    const code = `<p>Don't miss out — unlock the power of your data, it's free.</p>`;
+    expect(copyIds(code)).toContain("hype-opener");
+  });
+
+  it("still fires when only a leading contraction is nearby", () => {
+    const code = `<p>It's time to unlock the power of your data warehouse.</p>`;
+    expect(copyIds(code)).toContain("hype-opener");
+  });
 });
 
 describe("copy rules — say goodbye to: kept as a fixed collocation, not narrowed", () => {
