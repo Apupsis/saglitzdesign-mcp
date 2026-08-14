@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { maskComments, findAttr, hasAttr, hasSpread, bareAttrs } from "../dist/scan.js";
+import { maskComments, findAttr, hasAttr, hasSpread, bareAttrs, attrValueText } from "../dist/scan.js";
 
 // `maskComments` is length-preserving by construction — every branch either
 // copies a character through unchanged or replaces it with a same-width
@@ -143,5 +143,39 @@ describe("findAttr — a name is only a name where a name can appear", () => {
     expect(bareAttrs(attrs).length).toBe(attrs.length);
     const at = findAttr(attrs, "href")!;
     expect(attrs.slice(at.index + at.length)).toBe(`="https://example.com/x"`);
+  });
+});
+
+// `attrValueText` reads an attribute's literal source text whether or not
+// `findAttr` marked it bound. `bound` guards a claim about what a binding
+// *evaluates to*; it says nothing about whether the characters after `=` are
+// readable, and for every framework's bound syntax they are.
+describe("attrValueText — a bound value's literal text is still text", () => {
+  it("reads a static value, same as an unbound caller expects", () => {
+    expect(attrValueText(` class="a b c"`, findAttr(` class="a b c"`, "class")!)).toBe("a b c");
+  });
+
+  it("reads Vue's :class binding (colon prefix, no bracket to skip)", () => {
+    const attrs = ` :class="['a','b']"`;
+    expect(attrValueText(attrs, findAttr(attrs, "class")!)).toBe("['a','b']");
+  });
+
+  it("reads v-bind:class, the unabbreviated prefix", () => {
+    const attrs = ` v-bind:class="'a b'"`;
+    expect(attrValueText(attrs, findAttr(attrs, "class")!)).toBe("'a b'");
+  });
+
+  it("reads Angular's [class] binding, skipping the closing bracket before the =", () => {
+    const attrs = ` [class]="'a b'"`;
+    const at = findAttr(attrs, "class")!;
+    expect(at.bound).toBe(true);
+    // Regression pin: at.index + at.length lands on the "]", not the "=" —
+    // attrValueText has to step over it, or the value regex never matches.
+    expect(attrs.slice(at.index + at.length)).toBe(`]="'a b'"`);
+    expect(attrValueText(attrs, at)).toBe("'a b'");
+  });
+
+  it("returns null for a valueless attribute", () => {
+    expect(attrValueText(` sandbox`, findAttr(` sandbox`, "sandbox")!)).toBeNull();
   });
 });

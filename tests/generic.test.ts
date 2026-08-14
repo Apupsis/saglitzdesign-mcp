@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { genericVisualRules, genericCopyRules, genericScore, genericReport, isBrandSurface, RULE_WEIGHTS } from "../dist/generic.js";
 import { loadKnowledge, findDoc } from "../dist/knowledge.js";
+import { seoRules } from "../dist/seo.js";
 
 const ids = (code: string, filename?: string) =>
   genericVisualRules(code, filename).map((f) => f.rule).sort();
@@ -1578,5 +1579,68 @@ describe("visual rules — a class list is only what the element declares", () =
       .toContain("ai-default-gradient");
     expect(ids(`<div className="bg-gradient-to-r from-indigo-500 to-purple-600">x</div>`))
       .toContain("ai-default-gradient");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A bound `:class` is not an unreadable value the way a bound `:alt` is — the
+// class names are literal text in the file, not something only known at
+// runtime. `classesOf` gained `if (!at || at.bound) continue;` when it moved
+// onto the shared attribute reader in scan.ts, which is right for `alt` and
+// wrong for `class`: it made the gradient and gradient-text rules blind on
+// every Vue and Angular file that binds its classes, which is how those
+// frameworks are conventionally written. `<section :class="[...]">` and
+// `<h2 :class="'...'">` fired at 5a10dcc and went silent at fb18227; the same
+// markup with a static `class=` fired at both.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("visual rules — a bound :class is read, unlike a bound :alt", () => {
+  it("reads Vue's array-syntax :class binding", () => {
+    expect(ids(`<section :class="['bg-gradient-to-r','from-indigo-500','to-purple-600']">x</section>`, "Hero.vue"))
+      .toContain("ai-default-gradient");
+  });
+
+  it("reads Vue's string-syntax :class binding", () => {
+    expect(ids(`<h2 :class="'bg-gradient-to-r from-indigo-500 to-purple-600 bg-clip-text text-transparent'">x</h2>`, "Hero.vue"))
+      .toContain("gradient-text");
+  });
+
+  it("reads Vue's object-syntax :class binding", () => {
+    expect(ids(`<div :class="{'from-indigo-500': active, 'to-purple-600': active}">x</div>`, "Hero.vue"))
+      .toContain("ai-default-gradient");
+  });
+
+  it("reads Angular's [class] binding the same way", () => {
+    expect(ids(`<div [class]="'bg-gradient-to-r from-indigo-500 to-purple-600'"></div>`, "hero.component.html"))
+      .toContain("ai-default-gradient");
+  });
+
+  it("reads v-bind:class, the unabbreviated form", () => {
+    expect(ids(`<div v-bind:class="['from-indigo-500','to-purple-600']"></div>`, "Hero.vue"))
+      .toContain("ai-default-gradient");
+  });
+
+  it("does not fire on a :class binding that holds only an identifier", () => {
+    // "theme" is literal text too — it just matches no rule below. Nothing
+    // special-cases this; it is simply the harmless case.
+    expect(ids(`<div :class="theme">x</div>`, "Hero.vue")).not.toContain("ai-default-gradient");
+  });
+
+  it("still treats a bound :alt as unreadable, not absent — the distinction this fix has to keep", () => {
+    // classesOf has nothing to say about alt; this pins the boundary at the
+    // seo auditor, which is where alt-missing actually lives, so a change to
+    // classesOf can't be mistaken for having widened what a bound alt claims.
+    const html = `<img :alt="caption" src="a.jpg">`;
+    expect(seoRules(html, "page.html").map((f) => f.rule)).not.toContain("alt-missing");
+  });
+
+  it("full reproduction: both syntaxes on one element fire what they fired before the routing regression", () => {
+    const hero = [
+      `<section :class="['bg-gradient-to-r','from-indigo-500','to-purple-600']">`,
+      `<h2 :class="'bg-gradient-to-r from-indigo-500 to-purple-600 bg-clip-text text-transparent'">Title</h2>`,
+      `</section>`,
+    ].join("");
+    const found = ids(hero, "Hero.vue");
+    expect(found).toContain("ai-default-gradient");
+    expect(found).toContain("gradient-text");
   });
 });

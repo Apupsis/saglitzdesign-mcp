@@ -23,7 +23,7 @@
 // its place; see the task report for the two rejected alternatives.
 
 import { type LintFinding, type Tag } from "./lint.js";
-import { scanTags, maskComments, elementSpan, flattenTags, findAttr } from "./scan.js";
+import { scanTags, maskComments, elementSpan, flattenTags, findAttr, attrValueText } from "./scan.js";
 import { scanProject, MAX_FILES } from "./project.js";
 
 const lineOf = (src: string, index: number): number =>
@@ -37,15 +37,35 @@ const lineOf = (src: string, index: number): number =>
  * `<div data-class="from-indigo-500 to-purple-600">` both drew
  * `ai-default-gradient` — a rule firing on markup that declares no classes at
  * all. The name is now found where a name can appear, through the shared
- * reader in scan.ts; the value is still read with this module's own pattern,
- * which accepts the `{\`…\`}` template-literal form the others do not.
+ * reader in scan.ts.
+ *
+ * `class` is read even when it is bound (`:class`, `v-bind:class`, Angular's
+ * `[class]`) — deliberately unlike every other attribute this codebase reads
+ * through `findAttr`. A bound `alt` or `width` is unreadable because the
+ * *value the browser ends up with* is unknown, and claiming it absent would
+ * be a claim about something not in the file. A bound `class` is different in
+ * kind: Vue's array (`:class="['a','b']"`), string (`:class="'a b'"`) and
+ * object (`:class="{'a': cond}"`) syntaxes, and Angular's `[class]`
+ * equivalent, all write the class names themselves as literal text in the
+ * file — `attrValueText` reads that text the same way it reads a plain
+ * `class="…"`, and every rule below matches literal substrings, so array
+ * brackets, quotes and object-key colons riding along are inert punctuation
+ * to them. A binding that holds only an identifier (`:class="theme"`) still
+ * returns literal text — just text ("theme") that matches no rule, which is
+ * harmless and needs no special handling.
+ *
+ * `className` is not given the same treatment: JSX has no equivalent bound
+ * syntax (`className={expr}` is a plain attribute whose value happens to be
+ * an expression, not a `findAttr`-recognised binding prefix), so this never
+ * meaningfully applies to it.
  */
 const classesOf = (tag: Tag): string => {
   for (const name of ["class", "className"]) {
     const at = findAttr(tag.attrs, name);
-    if (!at || at.bound) continue;
-    const m = /^\s*=\s*("([^"]*)"|'([^']*)'|\{`([^`]*)`\})/.exec(tag.attrs.slice(at.index + at.length));
-    if (m) return m[2] ?? m[3] ?? m[4] ?? "";
+    if (!at) continue;
+    if (at.bound && name !== "class") continue;
+    const value = attrValueText(tag.attrs, at);
+    if (value !== null) return value;
   }
   return "";
 };

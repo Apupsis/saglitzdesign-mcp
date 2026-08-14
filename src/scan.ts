@@ -243,6 +243,33 @@ export function findAttr(attrs: string, name: string): AttrMatch | null {
 export const hasAttr = (attrs: string, name: string): boolean => findAttr(attrs, name) !== null;
 
 /**
+ * The literal source text of an attribute's declared value, static or bound.
+ * `bound` on the `AttrMatch` means *this codebase cannot know what the
+ * binding evaluates to* — it does not mean the value is invisible. Vue's
+ * `:class="['a','b']"` and Angular's `[class]="'a b'"` still write that value
+ * as ordinary text between quotes; a caller whose rule only cares about
+ * literal substrings the file actually contains (class-like tokens, say) can
+ * read it the same way a static value is read. A caller that needs the
+ * *evaluated* value (an `alt` string, a `width` number) still must not call
+ * this on a bound match — that is a different claim, and `at.bound` is the
+ * flag that guards it; this function only reports what character follow `=`.
+ *
+ * Angular writes a bound name inside its own brackets (`[class]`), so a bound
+ * `AttrMatch`'s offset there lands just before the closing `]` rather than
+ * directly before `=`; that one stray character is skipped so the same value
+ * pattern matches every bound form and the unbound one alike.
+ *
+ * Returns `null` when no value follows — a valueless attribute (`<iframe
+ * sandbox>`) or a value shape this reader does not parse (a bare `{expr}`
+ * with no template-literal backticks inside).
+ */
+export function attrValueText(attrs: string, at: AttrMatch): string | null {
+  const rest = attrs.slice(at.index + at.length).replace(/^\]/, "");
+  const m = /^\s*=\s*("([^"]*)"|'([^']*)'|\{`([^`]*)`\})/.exec(rest);
+  return m ? (m[2] ?? m[3] ?? m[4] ?? "") : null;
+}
+
+/**
  * A declaration that may be carrying attributes this scan cannot enumerate:
  * JSX's `{...props}` and Vue's object form of `v-bind="attrs"` — the same
  * thing said twice in two languages. Read from the blanked copy, because a
