@@ -4,6 +4,10 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { seoRules, seoConfigRules, seoReport, SEO_NOT_VISIBLE, SEO_EXTENSIONS, SEO_FILENAMES } from "../dist/seo.js";
 import { loadKnowledge, findDoc } from "../dist/knowledge.js";
+import {
+  CORRECT_STACK_PAGES, NEXT_APP_ROUTER, ASTRO_PAGE, SVELTEKIT_PAGE, STATIC_HTML,
+  DOCUSAURUS_BUILT, BROKEN_PAGE, IMAGE_ONLY_SPLASH, MINIMAL_404,
+} from "./helpers/stackFixtures.js";
 
 const ids = (code: string, filename?: string) =>
   seoRules(code, filename).map((f) => f.rule).sort();
@@ -1444,4 +1448,99 @@ describe("seoReport — a truncated scan cannot prove absence", () => {
       expect(f.severity, `${f.rule} should be demoted`).toBe("info");
     }
   }, 30_000);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The per-stack fixture matrix.
+//
+// Five correctly-made pages, one per stack, defined once in
+// `tests/helpers/stackFixtures.ts` and graded here by `audit_seo_geo` and in
+// `perf.test.ts` by `audit_performance`. Both tools read the same five pages,
+// because a page only one auditor ever sees proves nothing about the other.
+//
+// Every page here was written before this module's rules were read, so none of
+// them is reverse-engineered into passing. All five came back clean on the
+// first run; no rule was changed to make that true.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("the per-stack fixture matrix — five correct pages", () => {
+  it.each(CORRECT_STACK_PAGES)("says nothing about a correct $stack page", ({ path, code }) => {
+    expect(seoRules(code, path)).toEqual([]);
+  });
+
+  // Silence is only worth asserting if the page gave the rules something to
+  // look at. Each probe below is one minimal edit to one of the five pages;
+  // it must produce the named finding. A probe that goes silent means the
+  // fixture above passed for want of substrate rather than for being correct,
+  // and the assertion it anchors is worthless.
+  const SUBSTRATE: Array<[string, string, string, string]> = [
+    ["title-missing", "static HTML", STATIC_HTML.replace(/<title>.*?<\/title>\n/, ""), "public/pricing/index.html"],
+    ["title-length", "static HTML", STATIC_HTML.replace(/<title>.*?<\/title>/, `<title>${"t".repeat(95)}</title>`), "public/pricing/index.html"],
+    ["meta-description-missing", "static HTML", STATIC_HTML.replace(/<meta name="description".*?>\n/, ""), "public/pricing/index.html"],
+    ["meta-description-length", "static HTML", STATIC_HTML.replace(/(<meta name="description" content=")[^"]*/, `$1${"d".repeat(230)}`), "public/pricing/index.html"],
+    ["canonical-missing", "static HTML", STATIC_HTML.replace(/<link rel="canonical".*?>\n/, ""), "public/pricing/index.html"],
+    ["canonical-not-absolute", "static HTML", STATIC_HTML.replace('href="https://saglitz.com/pricing/">', 'href="/pricing/">'), "public/pricing/index.html"],
+    ["canonical-points-elsewhere", "static HTML", STATIC_HTML.replace('rel="canonical" href="https://saglitz.com/pricing/"', 'rel="canonical" href="http://localhost:3000/pricing/"'), "public/pricing/index.html"],
+    ["jsonld-unparseable", "static HTML", STATIC_HTML.replace('"datePublished": "2026-02-11"', '"datePublished": "2026-02-11",'), "public/pricing/index.html"],
+    ["jsonld-missing-required", "static HTML", STATIC_HTML.replace('"@context": "https://schema.org",\n    ', ""), "public/pricing/index.html"],
+    ["jsonld-deprecated-type", "static HTML", STATIC_HTML.replace('"@type": "Article"', '"@type": "HowTo"'), "public/pricing/index.html"],
+    ["alt-missing", "static HTML", STATIC_HTML.replace(' alt="Two designers reviewing wireframes pinned to a studio wall"', ""), "public/pricing/index.html"],
+    ["heading-order-skipped", "static HTML", STATIC_HTML.replace("<h2>What changes the price</h2>", "<h4>What changes the price</h4>"), "public/pricing/index.html"],
+    ["multiple-h1", "Next.js", NEXT_APP_ROUTER.replace("<h2>What changes the price</h2>", "<h1>What changes the price</h1>"), "app/pricing/page.tsx"],
+    ["multiple-h1", "SvelteKit", SVELTEKIT_PAGE.replace("<h2>What changes the price</h2>", "<h1>What changes the price</h1>"), "src/routes/pricing/+page.svelte"],
+    ["alt-missing", "Astro", ASTRO_PAGE.replace(' alt="Saglitz Design"', ""), "src/pages/pricing.astro"],
+    ["heading-order-skipped", "Docusaurus", DOCUSAURUS_BUILT.replace("<h2>Where the shift comes from</h2>", "<h4>Where the shift comes from</h4>"), "build/docs/reserving-space/index.html"],
+  ];
+
+  it.each(SUBSTRATE)("%s had substrate in the %s fixture and stayed silent on purpose", (rule, _stack, code, path) => {
+    expect(seoRules(code, path).map((f) => f.rule)).toContain(rule);
+  });
+
+  // A matrix that returns clean for everything has proved nothing. This page
+  // carries ten seeded defects and the assertion names every finding it draws,
+  // so a rule that stops firing, or starts firing twice, fails here.
+  it("names every finding on the deliberately broken page", () => {
+    expect(ids(BROKEN_PAGE, "public/broken.html")).toEqual([
+      "alt-missing",
+      "alt-missing",
+      "canonical-missing",
+      "heading-order-skipped",
+      "jsonld-unparseable",
+      "meta-description-missing",
+      "multiple-h1",
+      "title-length",
+    ]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The two counterexamples that priced the `recipes/` guard.
+//
+// A reviewer proposed exempting a document with no <h1>, no sectioning
+// landmark and no outbound link, to silence the 24 findings this package's own
+// `recipes/*/html-css.html` demos draw. Measured against the eight demo files
+// it removes 18 of the 24 — `recipes/card` has an <article> and a link and
+// `recipes/empty-state` has a <section>, so both stay graded and the
+// disclosure has to stand anyway.
+//
+// These two pages are what it would cost. Both are pages a real visitor
+// reaches, both match the proposed signal on every term, and every finding
+// below is true and actionable. The guard was declined; these assertions are
+// where that decision is written down, so re-proposing it fails here first.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("pages that match the proposed component-demo signal but are real pages", () => {
+  it("grades an image-only splash page, which has no h1, no landmark and no link", () => {
+    expect(ids(IMAGE_ONLY_SPLASH, "public/index.html")).toEqual([
+      "canonical-missing",
+      "meta-description-missing",
+      "title-missing",
+    ]);
+  });
+
+  it("grades a minimal 404, whose only structure is a link home", () => {
+    expect(ids(MINIMAL_404, "public/404.html")).toEqual([
+      "canonical-missing",
+      "meta-description-missing",
+      "title-length",
+    ]);
+  });
 });

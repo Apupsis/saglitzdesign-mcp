@@ -4,6 +4,10 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { perfRules, perfReport, PERF_NOT_VISIBLE, PERF_EXTENSIONS } from "../dist/perf.js";
 import { loadKnowledge, findDoc } from "../dist/knowledge.js";
+import {
+  CORRECT_STACK_PAGES, NEXT_APP_ROUTER, ASTRO_PAGE, SVELTEKIT_PAGE, STATIC_HTML,
+  DOCUSAURUS_BUILT, BROKEN_PAGE, IMAGE_ONLY_SPLASH, MINIMAL_404,
+} from "./helpers/stackFixtures.js";
 
 const ids = (code: string, filename?: string) =>
   perfRules(code, filename).map((f) => f.rule).sort();
@@ -930,5 +934,92 @@ describe("perfReport — what it discloses it cannot see", () => {
       "will rank", "rank higher", "improve your rankings", "boost your ranking", "guarantee",
     ].join("|"), "i");
     expect(forbidden.test(text), text).toBe(false);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The per-stack fixture matrix.
+//
+// The same five pages `seo.test.ts` grades, from the same module, read here by
+// the other auditor. One page per stack, each written the way a developer on
+// that stack writes one — and written before this module's rules were read, so
+// none of them is reverse-engineered into passing. All five came back clean on
+// the first run; no rule was changed to make that true.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("the per-stack fixture matrix — five correct pages", () => {
+  it.each(CORRECT_STACK_PAGES)("says nothing about a correct $stack page", ({ path, code }) => {
+    expect(perfRules(code, path)).toEqual([]);
+  });
+
+  // Silence proves something only where the rule had something to look at.
+  // Each probe is one minimal edit to one of the five pages and must produce
+  // the named finding; a silent probe means the fixture above passed for want
+  // of substrate, not for being correct.
+  const SUBSTRATE: Array<[string, string, string, string]> = [
+    ["lazy-hero", "static HTML", STATIC_HTML.replace('width="1600" height="900" fetchpriority="high"', 'width="1600" height="900" loading="lazy"'), "public/pricing/index.html"],
+    ["hero-no-fetchpriority", "static HTML", STATIC_HTML.replace(' fetchpriority="high"', ""), "public/pricing/index.html"],
+    ["font-display-missing", "static HTML", STATIC_HTML.replace("      font-display: swap;\n", ""), "public/pricing/index.html"],
+    ["third-party-font-host", "static HTML", STATIC_HTML.replace('<link rel="preconnect" href="https://plausible.io">', '<link href="https://fonts.googleapis.com/css2?family=Inter" rel="stylesheet">'), "public/pricing/index.html"],
+    ["image-without-dimensions", "static HTML", STATIC_HTML.replace(' width="800" height="500"', ""), "public/pricing/index.html"],
+    ["render-blocking-script", "static HTML", STATIC_HTML.replace('<script defer src="/js/nav.js">', '<script src="/js/nav.js">'), "public/pricing/index.html"],
+    ["third-party-script-count", "static HTML", STATIC_HTML.replace("</head>", `<script async src="https://cdn.usefathom.com/s.js"></script>
+  <script async src="https://js.stripe.com/v3/"></script>
+  <script async src="https://widget.intercom.io/w.js"></script>
+  <script async src="https://static.hotjar.com/c/h.js"></script>
+  <script async src="https://connect.facebook.net/en_US/fbevents.js"></script>
+</head>`), "public/pricing/index.html"],
+    ["lazy-hero", "Next.js", NEXT_APP_ROUTER.replace("        priority\n", `        loading="lazy"\n`), "app/pricing/page.tsx"],
+    ["lazy-hero", "SvelteKit", SVELTEKIT_PAGE.replace('height="900"\n    fetchpriority="high"', 'height="900"\n    loading="lazy"'), "src/routes/pricing/+page.svelte"],
+    ["hero-no-fetchpriority", "Astro", ASTRO_PAGE.replace('\n        loading="eager"\n        fetchpriority="high"', ""), "src/pages/pricing.astro"],
+    ["image-without-dimensions", "SvelteKit", SVELTEKIT_PAGE.replace('    width="800"\n    height="500"\n', ""), "src/routes/pricing/+page.svelte"],
+    ["font-display-missing", "Astro", ASTRO_PAGE.replace("        font-display: swap;\n", ""), "src/pages/pricing.astro"],
+    ["font-display-missing", "SvelteKit", SVELTEKIT_PAGE.replace("    font-display: swap;\n", ""), "src/routes/pricing/+page.svelte"],
+    ["font-display-missing", "Docusaurus", DOCUSAURUS_BUILT.replace("      font-display: swap;\n", ""), "build/docs/reserving-space/index.html"],
+    ["image-without-dimensions", "Docusaurus", DOCUSAURUS_BUILT.replace(' width="960" height="540"', ""), "build/docs/reserving-space/index.html"],
+    ["render-blocking-script", "Docusaurus", DOCUSAURUS_BUILT.replace('<script defer src="/assets/js/main.9a7d31.js">', '<script src="/assets/js/main.9a7d31.js">'), "build/docs/reserving-space/index.html"],
+  ];
+
+  it.each(SUBSTRATE)("%s had substrate in the %s fixture and stayed silent on purpose", (rule, _stack, code, path) => {
+    expect(perfRules(code, path).map((f) => f.rule)).toContain(rule);
+  });
+
+  it("names every finding on the deliberately broken page", () => {
+    expect(ids(BROKEN_PAGE, "public/broken.html")).toEqual([
+      "image-without-dimensions",
+      "image-without-dimensions",
+      "render-blocking-script",
+      "render-blocking-script",
+      "render-blocking-script",
+      "render-blocking-script",
+      "third-party-font-host",
+    ]);
+  });
+
+  // The broken page's hero carries loading="lazy" and `lazy-hero` does not
+  // fire on it, because the page has no <main> and so has no LCP candidate.
+  // That is the scoping cost this module's header states outright, not a
+  // regression — pinned here so it stays a decision rather than a surprise.
+  it("does not reach the broken page's lazy hero, which sits outside any <main>", () => {
+    expect(BROKEN_PAGE).not.toMatch(/<main[\s>]/);
+    expect(ids(BROKEN_PAGE, "public/broken.html")).not.toContain("lazy-hero");
+    const withMain = BROKEN_PAGE.replace('<div class="page">', "<main>").replace("</div>\n</body>", "</main>\n</body>");
+    expect(ids(withMain, "public/broken.html")).toContain("lazy-hero");
+  });
+});
+
+// The two pages that priced the `recipes/` guard proposed against `seo.ts`.
+// `audit_performance` has no equivalent gate, and both pages draw only what is
+// true of them: the splash reserves no space for either image, and the 404
+// carries no media at all.
+describe("the counterexamples that priced the recipes/ guard", () => {
+  it("grades an image-only splash page", () => {
+    expect(ids(IMAGE_ONLY_SPLASH, "public/index.html")).toEqual([
+      "image-without-dimensions",
+      "image-without-dimensions",
+    ]);
+  });
+
+  it("says nothing about a minimal 404", () => {
+    expect(ids(MINIMAL_404, "public/404.html")).toEqual([]);
   });
 });
