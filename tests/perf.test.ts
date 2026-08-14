@@ -1194,4 +1194,22 @@ describe("PERF_NOT_VISIBLE — the lazy-hero entry says what the rule does", () 
     expect(ids(`<div><img src="/hero.avif" alt="H" width="1600" height="900" loading="lazy" fetchpriority="high"></div>`, "component.html"))
       .toContain("lazy-hero");
   });
+
+  // Stale since 3caa49e made a Vue SFC's root <template> the component body:
+  // the old wording claimed every <template> is passed over, which stopped
+  // being true for exactly that one case. Qualified rather than deleted,
+  // because it is still true for a nested <template> and for every other
+  // file this module reads.
+  it("says a .vue file's root <template> is graded, not passed over, unlike a nested one or a plain document's", () => {
+    expect(joined).toMatch(/outermost `<template>` is the component body/);
+
+    const vueRoot = `<template><main><img src="/hero.avif" alt="H"></main></template>`;
+    expect(ids(vueRoot, "pages/index.vue")).toContain("image-without-dimensions");
+
+    const vueNested = `<template><main><template #row><img src="/row.avif" alt="A row"></template></main></template>`;
+    expect(ids(vueNested, "components/Table.vue")).toEqual([]);
+
+    const plainHtml = `<main><template id="row"><img src="/row.avif" alt="A row"></template></main>`;
+    expect(ids(plainHtml, "index.html")).toEqual([]);
+  });
 });
