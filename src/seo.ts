@@ -482,6 +482,16 @@ function insideSvg(masked: string, index: number): boolean {
 
 const ABSOLUTE_URL = /^https?:\/\//i;
 
+/**
+ * A base URL a relative canonical is resolved against, declared in the same
+ * file. Next.js's `metadataBase` is the one that matters — it is the whole
+ * reason `alternates.canonical` may be relative — and it is deliberately the
+ * only literal named here rather than a loose `url:` key, because a JSON-LD
+ * `"url": "https://…"` is common in a real page and would suppress a genuine
+ * finding.
+ */
+const URL_BASE_DECLARED = /\bmetadataBase\s*[:=]/i;
+
 const hostOf = (url: string): string => {
   const m = /^https?:\/\/([^/?#]+)/i.exec(url);
   return (m?.[1] ?? "").toLowerCase().replace(/:\d+$/, "");
@@ -853,12 +863,26 @@ export function seoRules(code: string, filename?: string): LintFinding[] {
   }
   if (decl.canonical?.value) {
     const url = decl.canonical.value.trim();
-    if (!ABSOLUTE_URL.test(url)) {
+    // Claimed only where a relative canonical is provably a relative canonical.
+    //
+    // `canonical-missing`'s own fix says "in Next.js, metadata.alternates
+    // .canonical with metadataBase" — and following that advice fired this
+    // rule, with a fix (hardcode an absolute URL per route) that breaks every
+    // preview deployment. `metadataBase` exists precisely so route canonicals
+    // can be written relative and resolved at build time; the same is true of
+    // Astro's `site`, Nuxt's `app.baseURL` and Gatsby's `siteUrl`. A framework
+    // file's relative canonical is a fragment of a URL this call cannot see the
+    // other half of, so nothing here can call it relative in the emitted HTML.
+    //
+    // A self-contained document is the case where it can: that file's `<head>`
+    // is the whole head, and `href="/pricing/"` in it is what ships.
+    if (!ABSOLUTE_URL.test(url) && selfContained && !URL_BASE_DECLARED.test(masked)) {
       push(decl.canonical.index, "warning", "canonical-not-absolute",
         `The canonical href "${url}" is relative. technical-seo asks for absolute URLs only, matching the final protocol and host exactly.`,
         `Write the full URL: https://example.com${url.startsWith("/") ? url : `/${url}`}`,
         "technical-seo");
-    } else if (UNREACHABLE_HOST.test(hostOf(url))) {
+    }
+    if (ABSOLUTE_URL.test(url) && UNREACHABLE_HOST.test(hostOf(url))) {
       push(decl.canonical.index, "error", "canonical-points-elsewhere",
         `The canonical points at "${hostOf(url)}", which is not the host this page is served from — a development or staging URL left in the markup.`,
         `Point the canonical at the page's own production URL, matching the final protocol, host and trailing slash.`,
@@ -1302,6 +1326,7 @@ export const SEO_NOT_VISIBLE: string[] = [
   "**An HTML email graded as a web page.** Email templates are exempted from the page rules when a layout table appears beside either a mail path (`emails/`, `mail/`, `mailers/`, `.eml`, `.mjml`) or Outlook-only markup (`xmlns:v`, `xmlns:o`, `mso-` declarations). A genuine email that sits outside a mail path and carries no Outlook markup is graded as a page, and its missing description and canonical are then reported as defects when they are correct for an email — its subject-line title is graded as a page title too, which is how `title-length` turns up on one. The third signal that would have caught it also exempted a real landing page, so this miss is deliberate.",
   "**A client-rendered shell whose mount point it does not recognise.** The head rules step aside for a shell that names a known mount — `root`, `app`, `__next`, `___gatsby`, `__nuxt`, `main-app`, `q-app`, `ember-app`, `app-root`, or an `<app-root>` / `<ember-app>` element — or that loads a script recognisable as the application's own bundle. A shell with some other mount id whose only script is a plain `type=\"module\"` file is read as a finished document, and is reported as missing the description and canonical its framework writes at runtime. A shell that ships a placeholder title (`<title>My App</title>`) is graded on that title rather than reported as having none.",
   "**A component demo page graded as an indexed page.** A standalone HTML file whose job is to demonstrate one component — this repository's own `recipes/*/html-css.html` files are the example — carries a real `<head>`, so it is graded as a self-contained document. The missing description, missing canonical and short-title warnings reported against it are true of the file and beside the point for a page no crawler will ever fetch. Read findings on demo, style-guide and sandbox files as facts about those files.",
+  "**A relative canonical in a framework file.** `canonical-not-absolute` is claimed only for a self-contained document, where the `href` in the file is the `href` that ships. A framework route writes half of one: Next.js's `metadata.alternates.canonical` is resolved against `metadataBase`, Astro's against `site`, and the same relative string that would be a defect in a plain HTML file is the documented, correct form there — hardcoding an absolute URL per route instead breaks every preview deployment. So a genuinely absolute-less canonical in a framework file is not reported, and the base it resolves against is not checked either.",
   "**Whether the content deserves to rank.** Nothing here reads the writing: this checks that a description exists and is roughly the right length, never that it is worth clicking, answers the question, or says anything a reader wanted. `audit_ux_copy` grades the prose, and `get_design_doc(\"on-page-seo\")` covers the judgement.",
 ];
 

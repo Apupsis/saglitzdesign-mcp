@@ -1619,3 +1619,39 @@ describe("unquoted attribute values — valid HTML, and standard in minified out
     expect(fired).toEqual([]);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// `canonical-not-absolute` flagged the exact idiom `canonical-missing`'s own
+// fix recommends. Follow "in Next.js, metadata.alternates.canonical with
+// metadataBase" and the rule fired, with a fix — hardcode an absolute URL per
+// route — that breaks every preview deployment.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("canonical-not-absolute — only where a relative canonical is provably one", () => {
+  const NEXT_PAGE = `export const metadata = {
+  title: "Website Redesign Pricing for UK Startups | Saglitz",
+  alternates: { canonical: "/pricing" },
+};
+
+export default function Page() {
+  return <main><h1>Website redesign pricing</h1></main>;
+}`;
+
+  it("says nothing about a route canonical resolved against metadataBase", () => {
+    expect(ids(NEXT_PAGE, "app/pricing/page.tsx")).not.toContain("canonical-not-absolute");
+  });
+
+  it("says nothing about a relative canonical in any framework file", () => {
+    expect(ids(`<script>useHead({ link: [{ rel: "canonical", href: "/pricing" }] })</script>`, "pages/pricing.vue"))
+      .not.toContain("canonical-not-absolute");
+  });
+
+  it("still fires on a self-contained document, where that href is what ships", () => {
+    expect(ids(GOOD_HTML.replace('href="https://saglitz.com/pricing/"', 'href="/pricing/"'), "index.html"))
+      .toContain("canonical-not-absolute");
+  });
+
+  it("still fires on a staging host, which is wrong at every scope", () => {
+    expect(ids(NEXT_PAGE.replace('"/pricing"', '"https://staging.saglitz.com/pricing"'), "app/pricing/page.tsx"))
+      .toContain("canonical-points-elsewhere");
+  });
+});
