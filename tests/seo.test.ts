@@ -1780,6 +1780,21 @@ describe("the disclosures, measured against what the rules actually do", () => {
     expect(fired).not.toContain("canonical-missing");
   });
 
+  // `title-length` only half-applies to a recognised email: the over-60-
+  // character branch doesn't need a self-contained document to mean
+  // something, but the under-30-character branch is gated on one, and a
+  // recognised email is never one. So a two-character subject line is
+  // silent — the same string on a page is not — while an overlong subject
+  // line still fires either way.
+  it("grades an overlong email subject line, but not a two-character one", () => {
+    const shortTitle = EMAIL.replace("<meta charset=\"utf-8\">", `<meta charset="utf-8"><title>Hi</title>`);
+    expect(ids(shortTitle, "emails/invoice.html")).not.toContain("title-length");
+    expect(ids(shortTitle, "page.html")).toContain("title-length");
+
+    const longTitle = EMAIL.replace("<meta charset=\"utf-8\">", `<meta charset="utf-8"><title>${"x".repeat(65)}</title>`);
+    expect(ids(longTitle, "emails/invoice.html")).toContain("title-length");
+  });
+
   it("reads a Next.js app/robots.ts without parsing it, so it reports no robots findings", () => {
     const fired = configIds([
       { path: "app/robots.ts", source: `export default function robots() {\n  return { rules: { userAgent: "*", disallow: "/" } };\n}` },
