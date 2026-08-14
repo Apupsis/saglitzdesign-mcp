@@ -33,8 +33,8 @@ import { importTokensReport } from "./importtokens.js";
 import { projectAuditReport } from "./project.js";
 import { securityReport, HEADER_SOURCES_SENTENCE } from "./security.js";
 import { genericReport } from "./generic.js";
-import { seoReport } from "./seo.js";
-import { perfReport } from "./perf.js";
+import { seoReport, SEO_CAPABILITIES } from "./seo.js";
+import { perfReport, PERF_CAPABILITIES } from "./perf.js";
 import { createDesignSystem, type DSPlatform } from "./designsystem.js";
 import { normalizeHex } from "./tokens.js";
 
@@ -910,6 +910,27 @@ tool(
  * descriptions matter — an `outputSchema` is documentation an agent reads
  * before it ever calls the tool.
  */
+/**
+ * A tool description's list of what it checks, built from the auditor's own
+ * capability table rather than written beside it.
+ *
+ * Both audit descriptions once advertised checks that did not exist and omitted
+ * rules that did. A caller reads a tool description the way they read the
+ * `notVisible` list — as a statement of reach — so "it looked and found
+ * nothing" and "it never looked" have to be distinguishable from the blurb too.
+ * Composing the sentence from the table makes an unbacked claim a compile
+ * error's worth of impossible, and the suites assert the mapping both ways.
+ */
+const advertised = (capabilities: Array<{ text: string }>): string => {
+  const items = capabilities.map((c) => c.text);
+  // Semicolons, not commas: several entries carry commas of their own, and a
+  // comma-joined list of them reads as one run-on sentence in which no reader
+  // can tell where one check ends and the next begins.
+  return items.length > 1
+    ? `${items.slice(0, -1).join("; ")}; and ${items[items.length - 1]}`
+    : items.join("");
+};
+
 const AUDIT_OUTPUT_SCHEMA = {
   findings: z
     .array(
@@ -941,7 +962,7 @@ const AUDIT_OUTPUT_SCHEMA = {
 
 tool(
   "audit_seo_geo",
-  "Audit a page, a component or a whole web project for the SEO and GEO signals that are actually in the source: title and meta-description presence and length, multiple H1s and skipped heading levels, canonical shape and self-reference, hreflang reciprocity, JSON-LD that parses and declares @context/@type, missing alt text, robots.txt crawl rules — including the AI crawlers behind ChatGPT, Claude, Perplexity and Google's AI surfaces — sitemap references, llms.txt, and content that exists only once a script has run. "
+  `Audit a page, a component or a whole web project for the SEO and GEO signals that are actually in the source: ${advertised(SEO_CAPABILITIES)}. `
     + "It reads source and does not measure anything: no request is made to your site, nothing is rendered, and no finding is or can be a Core Web Vitals result, an indexing status or a ranking outcome — so do not call it expecting a vitals or ranking report. "
     + "Absence is only ever claimed where it can be proven — a self-contained HTML document, or a whole directory — and a scan that hits its cap downgrades every absence claim to an unconfirmed note. "
     + "Returns markdown plus structured output: findings (rule, severity, message, fix, doc, file, line), a severity summary, and a machine-readable `notVisible` list of what it could not check. "
@@ -981,7 +1002,7 @@ tool(
 
 tool(
   "audit_performance",
-  "Audit a page, a component or a whole web project for the performance signals that are actually in the source: a hero image held back by loading=\"lazy\" or contradicting its own fetchpriority, images with no width/height or aspect-ratio to reserve their box, render-blocking scripts and stylesheets in the <head>, @font-face without font-display, third-party font hosts, unsized embeds, and eagerly loaded offscreen media. "
+  `Audit a page, a component or a whole web project for the performance signals that are actually in the source: ${advertised(PERF_CAPABILITIES)}. `
     + "It reads source and does not measure anything: Core Web Vitals are 75th-percentile field data from real devices, this loads nothing and times nothing, and no finding is or can be an LCP, INP or CLS verdict — so do not call it expecting a vitals report. "
     + "Its hero rules are deliberately narrow (the first image inside <main>, with the header logo and the mid-article diagram structurally excluded), which means some pages get no hero finding at all; that limitation and the others are returned explicitly rather than left to read as a clean result. "
     + "Returns markdown plus structured output: findings (rule, severity, message, fix, doc, file, line), a severity summary, and a machine-readable `notVisible` list of what it could not check. "

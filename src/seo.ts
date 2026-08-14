@@ -1233,6 +1233,40 @@ export function seoConfigRules(
   return out.sort((a, b) => a.line - b.line);
 }
 
+// ── what this tool advertises ────────────────────────────────────────────────
+
+/**
+ * The capabilities `audit_seo_geo` claims, each mapped to the rule ids that
+ * deliver it. The tool description is built from this list, and the suite
+ * asserts the mapping is exact in both directions.
+ *
+ * The description shipped two claims this module does not make — canonical
+ * *self-reference* (there is no such rule; the canonical rules read presence,
+ * absolute shape and host) and *hreflang reciprocity* (reciprocity is a claim
+ * about two pages and only one is ever in the file; what the rule checks is
+ * that the set names this page at all). Both were the sibling tool's defect in
+ * mirror image: a caller who reads a silent run as "my canonicals
+ * self-reference correctly" has been told something by the blurb that no rule
+ * here ever established.
+ */
+export const SEO_CAPABILITIES: Array<{ rules: string[]; text: string }> = [
+  { rules: ["title-missing", "title-length"], text: "a missing <title>, and one longer or shorter than the width a result gives it" },
+  { rules: ["meta-description-missing", "meta-description-length"], text: "a missing meta description, and one outside the width a snippet gives it" },
+  { rules: ["multiple-h1"], text: "more than one <h1> on a page" },
+  { rules: ["heading-order-skipped"], text: "a heading level skipped in the outline" },
+  { rules: ["canonical-missing"], text: "no canonical link at all" },
+  { rules: ["canonical-not-absolute"], text: "a canonical written as a relative URL in a self-contained document" },
+  { rules: ["canonical-points-elsewhere"], text: "a canonical left pointing at localhost or a staging host" },
+  { rules: ["hreflang-not-reciprocal"], text: "an hreflang set that never lists the page itself" },
+  { rules: ["jsonld-unparseable", "jsonld-missing-required"], text: "JSON-LD that does not parse, or that declares no @context or @type" },
+  { rules: ["jsonld-deprecated-type"], text: "JSON-LD declaring a type whose rich result Google has retired" },
+  { rules: ["alt-missing"], text: "an image with no alt attribute at all" },
+  { rules: ["robots-blocks-everything", "robots-blocks-ai-crawlers"], text: "robots.txt crawl rules, including the AI crawlers behind ChatGPT, Claude, Perplexity and Google's AI surfaces" },
+  { rules: ["sitemap-not-referenced"], text: "a robots.txt that names no sitemap" },
+  { rules: ["llms-txt-absent"], text: "no llms.txt beside it" },
+  { rules: ["content-not-in-html"], text: "content that exists only once a script has run" },
+];
+
 // ── the report ───────────────────────────────────────────────────────────────
 
 /**

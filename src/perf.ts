@@ -899,6 +899,33 @@ function nearestWrapper(masked: string, tags: Tag[], tag: Tag): Tag | null {
   return best;
 }
 
+// ── what this tool advertises ────────────────────────────────────────────────
+
+/**
+ * The capabilities `audit_performance` claims, each mapped to the rule ids that
+ * deliver it. The tool description is built from this list, and the suite
+ * asserts the mapping is exact in both directions.
+ *
+ * It exists because the description shipped three checks that do not exist —
+ * "render-blocking … **stylesheets**", "**unsized embeds**" and "**eagerly
+ * loaded offscreen media**" — while `css-hero-not-preloaded`,
+ * `hero-no-fetchpriority` and `third-party-script-count`, which do, went
+ * unlisted. That is the `notVisible` failure moved into the blurb, and it is
+ * the worse half of it: a caller reads silence about their render-blocking CSS
+ * as a clean bill *because the description said it looked*. A sentence a reader
+ * acts on is a claim, and a claim in this package has to be true of the code.
+ */
+export const PERF_CAPABILITIES: Array<{ rules: string[]; text: string }> = [
+  { rules: ["lazy-hero"], text: 'a hero image held back by loading="lazy", or contradicting its own fetchpriority' },
+  { rules: ["hero-no-fetchpriority"], text: "the LCP-candidate image declaring no fetch priority at all" },
+  { rules: ["css-hero-not-preloaded"], text: "a hero background declared in CSS or an inline style, which the HTML preload scanner never sees" },
+  { rules: ["image-without-dimensions"], text: "images with no width/height or aspect-ratio to reserve their box" },
+  { rules: ["render-blocking-script"], text: 'a <script src> in the <head> carrying neither defer nor async nor type="module"' },
+  { rules: ["font-display-missing"], text: "@font-face blocks with no font-display" },
+  { rules: ["third-party-font-host"], text: "fonts served from a third-party font CDN" },
+  { rules: ["third-party-script-count"], text: "scripts loaded from more distinct remote domains than any reading of \"minimise\" defends" },
+];
+
 // ── the report ───────────────────────────────────────────────────────────────
 
 /**

@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { join } from "node:path";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { perfRules, perfReport, PERF_NOT_VISIBLE, PERF_EXTENSIONS } from "../dist/perf.js";
+import { perfRules, perfReport, PERF_NOT_VISIBLE, PERF_EXTENSIONS, PERF_CAPABILITIES } from "../dist/perf.js";
 import { loadKnowledge, findDoc } from "../dist/knowledge.js";
 import {
   CORRECT_STACK_PAGES, NEXT_APP_ROUTER, ASTRO_PAGE, SVELTEKIT_PAGE, STATIC_HTML,
@@ -781,6 +781,25 @@ describe("every doc a rule cites resolves and makes the rule's claim", () => {
   it("resolves every cited id", () => {
     const dangling = findings.filter((f) => !f.doc || !findDoc(docs, f.doc)).map((f) => `${f.rule} → ${f.doc}`);
     expect(dangling).toEqual([]);
+  });
+
+  // `audit_performance`'s description once advertised render-blocking
+  // *stylesheets*, *unsized embeds* and *eagerly loaded offscreen media*. None
+  // of the three is a rule here — `render-blocking-script` is gated on
+  // `tag.name !== "script"` and `image-without-dimensions` on
+  // `tag.name !== "img"` — while three rules that do exist went unlisted. A
+  // caller reads a tool description as a statement of reach, so an advertised
+  // check that never runs turns silence into a clean bill. The description is
+  // now built from PERF_CAPABILITIES; these two assertions are what keep that
+  // table honest, in both directions.
+  it("advertises nothing that is not a rule", () => {
+    const claimed = PERF_CAPABILITIES.flatMap((c) => c.rules);
+    expect(claimed.filter((r) => !(r in CLAIM_VOCABULARY))).toEqual([]);
+  });
+
+  it("leaves no rule unadvertised", () => {
+    const claimed = new Set(PERF_CAPABILITIES.flatMap((c) => c.rules));
+    expect(Object.keys(CLAIM_VOCABULARY).filter((r) => !claimed.has(r))).toEqual([]);
   });
 
   it.each(Object.entries(CLAIM_VOCABULARY))(

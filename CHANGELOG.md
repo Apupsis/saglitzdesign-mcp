@@ -23,19 +23,30 @@ trusting the reader remembered the document.
   chaining `audit → fix` needs to know what was never checked as much as
   what was found; prose alone cannot stop a caller from reading silence as a
   clean bill.
-  - `audit_seo_geo` reads title and meta-description presence and length,
-    multiple `<h1>`s and skipped heading levels, canonical shape and
-    self-reference, hreflang reciprocity, JSON-LD that parses and declares
-    `@context`/`@type`, missing alt text, robots.txt crawl rules — including
-    the AI crawlers behind ChatGPT, Claude, Perplexity and Google's AI
-    surfaces — sitemap references, `llms.txt`, and content that exists only
-    once a script has run.
+  - `audit_seo_geo` reads a missing `<title>` and one outside the width a
+    result gives it, the same for the meta description, multiple `<h1>`s,
+    skipped heading levels, a missing canonical, one written relative in a
+    self-contained document, one left pointing at localhost or staging, an
+    hreflang set that never lists the page itself, JSON-LD that does not
+    parse or declares no `@context`/`@type` or declares a type whose rich
+    result Google has retired, missing alt text, robots.txt crawl rules —
+    including the AI crawlers behind ChatGPT, Claude, Perplexity and
+    Google's AI surfaces — a robots.txt naming no sitemap, no `llms.txt`
+    beside it, and content that exists only once a script has run.
   - `audit_performance` reads a hero image held back by `loading="lazy"` or
-    contradicting its own `fetchpriority`, images with no `width`/`height`
-    or `aspect-ratio` to reserve their box, render-blocking scripts and
-    stylesheets in `<head>`, `@font-face` without `font-display`,
-    third-party font hosts, unsized embeds, and eagerly loaded offscreen
-    media.
+    contradicting its own `fetchpriority`, the LCP-candidate image
+    declaring no fetch priority at all, a hero background declared in CSS or
+    an inline style that the HTML preload scanner never sees, images with no
+    `width`/`height` or `aspect-ratio` to reserve their box, a
+    `<script src>` in the `<head>` carrying neither `defer` nor `async` nor
+    `type="module"`, `@font-face` without `font-display`, third-party font
+    hosts, and scripts loaded from more distinct remote domains than any
+    reading of "minimise" defends.
+  - **Both descriptions are built from the auditors' own capability
+    tables**, and the suites assert the mapping is exact in both
+    directions. A tool description is read as a statement of reach, so an
+    advertised check that no rule performs turns silence into a clean bill
+    — the `notVisible` failure moved into the blurb.
   - **The governing rule both modules were written against: these audit what
     is authored, not what is measured.** A finding may state a fact about
     the source and pair it with a documented causal link — "the hero image

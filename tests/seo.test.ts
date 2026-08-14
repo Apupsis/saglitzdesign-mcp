@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { join } from "node:path";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { seoRules, seoConfigRules, seoReport, SEO_NOT_VISIBLE, SEO_EXTENSIONS, SEO_FILENAMES } from "../dist/seo.js";
+import { seoRules, seoConfigRules, seoReport, SEO_NOT_VISIBLE, SEO_EXTENSIONS, SEO_FILENAMES, SEO_CAPABILITIES } from "../dist/seo.js";
 import { loadKnowledge, findDoc } from "../dist/knowledge.js";
 import {
   CORRECT_STACK_PAGES, NEXT_APP_ROUTER, ASTRO_PAGE, SVELTEKIT_PAGE, STATIC_HTML,
@@ -1194,6 +1194,23 @@ describe("every doc a rule cites resolves and makes the rule's claim", () => {
   it("resolves every cited id", () => {
     const dangling = findings.filter((f) => !f.doc || !findDoc(docs, f.doc)).map((f) => `${f.rule} → ${f.doc}`);
     expect(dangling).toEqual([]);
+  });
+
+  // `audit_seo_geo`'s description once advertised canonical *self-reference*
+  // (no such rule) and hreflang *reciprocity* (the rule reads self-reference —
+  // reciprocity is a claim about two pages and only one is ever in the file).
+  // A caller reads a tool description as a statement of reach, so an advertised
+  // check that never runs turns silence into a clean bill. The description is
+  // now built from SEO_CAPABILITIES; these two assertions are what keep that
+  // table honest, in both directions.
+  it("advertises nothing that is not a rule", () => {
+    const claimed = SEO_CAPABILITIES.flatMap((c) => c.rules);
+    expect(claimed.filter((r) => !(r in CLAIM_VOCABULARY))).toEqual([]);
+  });
+
+  it("leaves no rule unadvertised", () => {
+    const claimed = new Set(SEO_CAPABILITIES.flatMap((c) => c.rules));
+    expect(Object.keys(CLAIM_VOCABULARY).filter((r) => !claimed.has(r))).toEqual([]);
   });
 
   it.each(Object.entries(CLAIM_VOCABULARY))(
