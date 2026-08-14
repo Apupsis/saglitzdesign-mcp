@@ -742,6 +742,41 @@ function conditionallyRendered(masked: string, tag: Tag): boolean {
   return CONDITIONAL_BLOCK.test(masked.slice(open, tag.index));
 }
 
+/**
+ * A JS/TS module, where several components legitimately live side by side.
+ * `.vue`, `.svelte` and `.astro` are single-file components and are not in
+ * here: one file is one component and one segment.
+ */
+const JS_MODULE = /\.(?:[jt]sx?|[cm][jt]s)$/i;
+
+/**
+ * The start of a top-level component declaration — `export default function
+ * Page`, `export const NotFound = `, `function ErrorBoundary(`. Capitalised
+ * names only, which is the one convention every JSX framework enforces rather
+ * than merely suggests: a lowercase identifier is not a component, so a
+ * `const inter = Inter({…})` beside a page does not split it.
+ */
+const TOP_LEVEL_COMPONENT =
+  /^(?:export\s+(?:default\s+)?)?(?:async\s+)?(?:function\s+(?:[A-Z][\w$]*)?\s*\(|(?:const|let|var)\s+[A-Z][\w$]*\s*[=:])/gm;
+
+/**
+ * The `[start, end)` of each rendered page in this file. One segment for a
+ * document or a single-file component; one per top-level component in a JS
+ * module, because only one of those components is ever on screen at a time.
+ */
+function componentSegments(masked: string, path: string): Array<[number, number]> {
+  if (!JS_MODULE.test(path)) return [[0, masked.length]];
+  const starts: number[] = [];
+  TOP_LEVEL_COMPONENT.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = TOP_LEVEL_COMPONENT.exec(masked)) !== null) starts.push(m.index);
+  if (starts.length < 2) return [[0, masked.length]];
+  // Anything above the first declaration belongs with it; nothing renders
+  // above a component in a module.
+  starts[0] = 0;
+  return starts.map((start, i) => [start, starts[i + 1] ?? masked.length] as [number, number]);
+}
+
 // ── the rule set ─────────────────────────────────────────────────────────────
 
 // Ranges are the brief's, not the documents': on-page-seo targets 50–60
@@ -979,24 +1014,46 @@ export function seoRules(code: string, filename?: string): LintFinding[] {
   }
 
   // ── headings ───────────────────────────────────────────────────────────────
+  //
+  // Counted per *rendered page*, which in a JS module is per top-level
+  // component rather than per file. The "a component file is not a page"
+  // doctrine was applied rigorously to metadata and not at all here, so a
+  // module holding several components was graded as though a visitor received
+  // all of them at once:
+  //
+  //   src/components/Heading.stories.tsx   three stories of one Heading
+  //   app/routes/errors.tsx                NotFound and ServerError
+  //   app/dashboard/page.tsx               Page and its ErrorBoundary
+  //   src/panels.tsx                       an <h1> here and an <h3> there
+  //
+  // All four drew a finding, and `.stories.tsx` matters most of the four: a
+  // design-system repository is this package's own audience, and a story file
+  // per component is how those repositories are laid out. Only one of those
+  // components is ever on screen.
+  //
+  // A single-file component — `.vue`, `.svelte`, `.astro` — and a real
+  // document are one segment, so nothing is lost there. Two `<h1>`s inside one
+  // component still fire, which is the case the rule exists for.
   const inert = inertTemplateSpans(masked, path);
-  const headings = tags
+  const allHeadings = tags
     .filter((t) => /^h[1-6]$/i.test(t.name))
     .filter((t) => !inert.some(([s, e]) => t.index >= s && t.index < e))
     .map((t) => ({ level: Number(t.name[1]), index: t.index, tag: t }));
 
-  const h1s = headings.filter((h) => h.level === 1);
-  if (h1s.length > 1 && !h1s.some((h) => conditionallyRendered(masked, h.tag))) {
-    push(h1s[1].index, "warning", "multiple-h1",
-      `${h1s.length} <h1> elements on one page. One is the clean signal of the page's topic, for search engines and for the models that parse structure into chunks.`,
-      `Keep one <h1> and demote the rest to <h2>. Size them with CSS, not with the tag.`,
-      "on-page-seo");
-  }
+  for (const [from, to] of componentSegments(masked, path)) {
+    const headings = allHeadings.filter((h) => h.index >= from && h.index < to);
+    const h1s = headings.filter((h) => h.level === 1);
+    if (h1s.length > 1 && !h1s.some((h) => conditionallyRendered(masked, h.tag))) {
+      push(h1s[1].index, "warning", "multiple-h1",
+        `${h1s.length} <h1> elements on one page. One is the clean signal of the page's topic, for search engines and for the models that parse structure into chunks.`,
+        `Keep one <h1> and demote the rest to <h2>. Size them with CSS, not with the tag.`,
+        "on-page-seo");
+    }
 
-  // Only checked when the file contains an `<h1>`. Without one there is no
-  // root to the outline, and a fragment that legitimately starts at `<h3>`
-  // because its parent rendered the `<h2>` would be reported as a skip.
-  if (h1s.length) {
+    // Only checked when the segment contains an `<h1>`. Without one there is no
+    // root to the outline, and a fragment that legitimately starts at `<h3>`
+    // because its parent rendered the `<h2>` would be reported as a skip.
+    if (!h1s.length) continue;
     let previous = 0;
     for (const h of headings) {
       if (previous && h.level > previous + 1) {
@@ -1327,6 +1384,7 @@ export const SEO_NOT_VISIBLE: string[] = [
   "**A client-rendered shell whose mount point it does not recognise.** The head rules step aside for a shell that names a known mount — `root`, `app`, `__next`, `___gatsby`, `__nuxt`, `main-app`, `q-app`, `ember-app`, `app-root`, or an `<app-root>` / `<ember-app>` element — or that loads a script recognisable as the application's own bundle. A shell with some other mount id whose only script is a plain `type=\"module\"` file is read as a finished document, and is reported as missing the description and canonical its framework writes at runtime. A shell that ships a placeholder title (`<title>My App</title>`) is graded on that title rather than reported as having none.",
   "**A component demo page graded as an indexed page.** A standalone HTML file whose job is to demonstrate one component — this repository's own `recipes/*/html-css.html` files are the example — carries a real `<head>`, so it is graded as a self-contained document. The missing description, missing canonical and short-title warnings reported against it are true of the file and beside the point for a page no crawler will ever fetch. Read findings on demo, style-guide and sandbox files as facts about those files.",
   "**A relative canonical in a framework file.** `canonical-not-absolute` is claimed only for a self-contained document, where the `href` in the file is the `href` that ships. A framework route writes half of one: Next.js's `metadata.alternates.canonical` is resolved against `metadataBase`, Astro's against `site`, and the same relative string that would be a defect in a plain HTML file is the documented, correct form there — hardcoding an absolute URL per route instead breaks every preview deployment. So a genuinely absolute-less canonical in a framework file is not reported, and the base it resolves against is not checked either.",
+  "**A second `<h1>` in a different component of the same module.** `multiple-h1` and `heading-order-skipped` count per rendered page, and in a `.tsx`/`.ts` module that means per top-level component — a story file with one `<h1>` per story, an `errors.tsx` holding `NotFound` and `ServerError`, or a page beside its `ErrorBoundary` is not a page with three H1s, because only one of those components is ever on screen. The cost is the other direction: if a route really does render two components from one module into one page, the second `<h1>` is not reported. Two `<h1>`s inside a single component still are, as does everything in a `.vue`, `.svelte`, `.astro` or `.html` file, which hold one page each.",
   "**Whether the content deserves to rank.** Nothing here reads the writing: this checks that a description exists and is roughly the right length, never that it is worth clicking, answers the question, or says anything a reader wanted. `audit_ux_copy` grades the prose, and `get_design_doc(\"on-page-seo\")` covers the judgement.",
 ];
 

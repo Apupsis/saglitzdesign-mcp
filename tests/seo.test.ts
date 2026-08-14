@@ -1655,3 +1655,87 @@ export default function Page() {
       .toContain("canonical-points-elsewhere");
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// "A component file is not a page" was applied rigorously to metadata and not
+// at all to headings, so a module holding several components was graded as
+// though a visitor received all of them at once. `.stories.tsx` matters most
+// of the four: a design-system repository is this package's own audience.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("headings — counted per rendered page, which in a JS module is per component", () => {
+  it("says nothing about a story file with one <h1> per story", () => {
+    const code = `export const Default = () => <h1>Section title</h1>;
+export const Long = () => <h1>A considerably longer section title</h1>;
+export const Short = () => <h1>Short</h1>;`;
+    expect(ids(code, "src/components/Heading.stories.tsx")).toEqual([]);
+  });
+
+  it("says nothing about two error routes in one module", () => {
+    const code = `export function NotFound() {
+  return <h1>Page not found</h1>;
+}
+
+export function ServerError() {
+  return <h1>Something went wrong</h1>;
+}`;
+    expect(ids(code, "app/routes/errors.tsx")).toEqual([]);
+  });
+
+  it("says nothing about a page and its error boundary", () => {
+    const code = `export default function Page() {
+  return <main><h1>Dashboard</h1></main>;
+}
+
+export function ErrorBoundary() {
+  return <h1>This dashboard could not load</h1>;
+}`;
+    expect(ids(code, "app/dashboard/page.tsx")).toEqual([]);
+  });
+
+  it("does not read an h1 in one component and an h3 in the next as a skipped level", () => {
+    const code = `export const Intro = () => <h1>Overview</h1>;
+
+export const Detail = () => <h3>The fine print</h3>;`;
+    expect(ids(code, "src/panels.tsx")).toEqual([]);
+  });
+
+  it("still fires on two <h1>s inside one component, which is the case the rule is for", () => {
+    const code = `export default function Page() {
+  return (
+    <main>
+      <h1>Website redesign pricing</h1>
+      <h1>What changes the price</h1>
+    </main>
+  );
+}`;
+    expect(ids(code, "app/pricing/page.tsx")).toContain("multiple-h1");
+  });
+
+  it("still fires on a skipped level inside one component", () => {
+    const code = `export default function Page() {
+  return (
+    <main>
+      <h1>Website redesign pricing</h1>
+      <h4>What changes the price</h4>
+    </main>
+  );
+}`;
+    expect(ids(code, "app/pricing/page.tsx")).toContain("heading-order-skipped");
+  });
+
+  it("treats a single-file component as one page, not several", () => {
+    // `.vue`, `.svelte` and `.astro` hold one component per file; a
+    // capitalised top-level const in the script block must not split them.
+    const code = `<script setup lang="ts">
+const Props = defineProps<{ title: string }>();
+</script>
+
+<template>
+  <main>
+    <h1>Website redesign pricing</h1>
+    <h1>What changes the price</h1>
+  </main>
+</template>`;
+    expect(ids(code, "pages/pricing.vue")).toContain("multiple-h1");
+  });
+});
