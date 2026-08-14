@@ -80,60 +80,49 @@
 // so rather than let a silent run read as a clean one.
 
 import { type LintFinding, type AuditReport, assembleAuditReport } from "./lint.js";
-import { scanTags, type Tag, maskComments, elementSpan, flattenTags } from "./scan.js";
+import {
+  scanTags, type Tag, maskComments, elementSpan, flattenTags,
+  findAttr, hasAttr as sharedHasAttr, hasSpread as sharedHasSpread,
+} from "./scan.js";
 import { scanProject, MAX_FILES } from "./project.js";
 
 const lineOf = (src: string, index: number): number =>
   src.slice(0, index).split("\n").length;
 
-// An attribute name may only begin where a *name* can begin, and the two
-// earlier modules' idiom — allow a quote character before the name, so that a
-// name following the previous value's closing quote is found — cannot tell a
-// closing quote from an opening one, and a space inside a quoted value
-// qualifies too. So `alt="Priority support illustration"` read as the
-// `priority` attribute, and `<img alt="Full width photo">` read as an image
-// declaring a `width`.
-//
-// The consequences ran both ways and both were serious: a plain HTML image
-// with no priority marking anywhere was reported at this module's highest
-// severity describing markup that is not in the file, and a genuinely
-// dimensionless image went silent because the word "width" appeared in its
-// alt text.
-//
-// The fix is to look for names only where values are not. `bareAttrs` blanks
-// every quoted or braced value — length-preserving, so offsets still line up
-// with the original — and both readers below work from that.
-const bareAttrs = (attrs: string): string =>
-  attrs.replace(/=\s*("[^"]*"|'[^']*'|\{[^}]*\})/g, (m) => m.replace(/\S/g, " "));
-
-const attrStart = (name: string): RegExp =>
-  new RegExp(`(?:^|\\s)${name}(?=[\\s=/>]|$)`, "i");
-
-const hasAttr = (tag: Tag, name: string): boolean =>
-  attrStart(name).test(bareAttrs(tag.attrs));
-
-/** `{...props}` — the attribute may well be forwarded; don't guess. */
-const hasSpread = (tag: Tag): boolean => /\{\s*\.\.\./.test(tag.attrs);
+// Attribute reading — the boundary rules, the framework binding forms and the
+// spread convention — is `scan.ts`'s job, and this module's private copy of it
+// is what taught this codebase that it should be. See the note there.
+const hasAttr = (tag: Tag, name: string): boolean => sharedHasAttr(tag.attrs, name);
+const hasSpread = (tag: Tag): boolean => sharedHasSpread(tag.attrs);
 
 /**
  * An attribute's value, and whether it is *readable*. `loading={eager ?
  * "eager" : "lazy"}` is a declaration whose value only exists at render time;
  * reading one of its branches would be inventing a finding, so it comes back
  * as `{ present: true, value: undefined }` — enough to suppress an absence
- * claim, never enough to grade.
+ * claim, never enough to grade. A framework binding (`:loading="lazy"`,
+ * `[width]="w"`) is the same case in another syntax: in Vue, `:loading="lazy"`
+ * names a variable, and reading it as the literal string would grade a value
+ * that is not in the file.
  */
 interface AttrValue { present: boolean; value?: string }
 
 const attrValue = (tag: Tag, name: string): AttrValue => {
   // Locate the name in the blanked copy, then read its value from the
-  // original at the same offset — `bareAttrs` preserves length, so the two
+  // original at the same offset — the blanking preserves length, so the two
   // stay aligned.
-  const at = attrStart(name).exec(bareAttrs(tag.attrs));
+  const at = findAttr(tag.attrs, name);
   if (!at) return { present: false };
-  const after = tag.attrs.slice(at.index + at[0].length);
-  const m = /^\s*=\s*("([^"]*)"|'([^']*)'|\{[^}]*\})/.exec(after);
-  if (!m) return { present: true };                           // valueless, or unquoted
-  const raw = m[2] ?? m[3];
+  if (at.bound) return { present: true };                     // an expression, not a value
+  const after = tag.attrs.slice(at.index + at.length);
+  // Quoted, braced, or a bare token. `<img loading=lazy fetchpriority=high>`
+  // is valid HTML and is what a minifier emits; not reading it turned this
+  // module's only `error` into an `info` telling the author to add the
+  // attribute their image already carries. `security.ts` grew the same branch
+  // first, and the character class is its.
+  const m = /^\s*=\s*("([^"]*)"|'([^']*)'|(\{[^}]*\})|([^\s"'`=<>\\]+))/.exec(after);
+  if (!m) return { present: true };                           // valueless
+  const raw = m[2] ?? m[3] ?? m[5];
   if (raw === undefined) return { present: true };            // a JSX expression
   if (/\$\{|\{[^}]*\}/.test(raw)) return { present: true };   // interpolated literal
   return { present: true, value: raw };

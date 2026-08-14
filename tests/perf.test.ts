@@ -1053,3 +1053,53 @@ describe("the counterexamples that priced the recipes/ guard", () => {
     expect(ids(MINIMAL_404, "public/404.html")).toEqual([]);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The same binding forms `alt-missing` was blind to, on the four attributes
+// this module reads: width, height, loading and fetchpriority.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("bound attributes — present, and never readable as a literal", () => {
+  it("does not report a Vue image sized by binding as having no dimensions", () => {
+    expect(ids(`<template><main><img :src="s" :alt="c" :width="w" :height="h"></main></template>`, "pages/index.vue"))
+      .not.toContain("image-without-dimensions");
+  });
+
+  it("does not report an Angular image sized by binding as having no dimensions", () => {
+    expect(ids(`<main><img [ngSrc]="s" [alt]="c" [width]="w" [height]="h"></main>`, "src/app/page.component.html"))
+      .not.toContain("image-without-dimensions");
+  });
+
+  it("treats v-bind=\"…\" the way it treats {...props} — an unreadable declaration", () => {
+    expect(ids(`<template><main><img v-bind="attrs" src="/a.png" alt="A"></main></template>`, "pages/index.vue"))
+      .toEqual([]);
+  });
+
+  it("does not read a bound loading value as the literal string it names", () => {
+    // In Vue, `:loading="lazy"` names a variable. Grading it as loading="lazy"
+    // would report a contradiction that is not in the file.
+    expect(ids(`<template><main><img src="/hero.avif" alt="H" width="1600" height="900" :loading="lazy" fetchpriority="high"></main></template>`, "pages/index.vue"))
+      .not.toContain("lazy-hero");
+  });
+
+  it("still fires on an image that declares no dimensions at all", () => {
+    expect(ids(`<main><img [ngSrc]="s" [alt]="c"></main>`, "src/app/page.component.html"))
+      .toContain("image-without-dimensions");
+  });
+});
+
+describe("unquoted attribute values — valid HTML, and standard in minified output", () => {
+  it("reads an unquoted fetchpriority rather than telling the author to add it", () => {
+    const code = `<html><head></head><body><main><img src=/hero.avif alt=Hero width=1600 height=900 fetchpriority=high></main></body></html>`;
+    expect(ids(code, "index.html")).not.toContain("hero-no-fetchpriority");
+  });
+
+  it("reads an unquoted loading=lazy beside an unquoted fetchpriority=high as the contradiction it is", () => {
+    const code = `<html><head></head><body><main><img src=/hero.avif alt=Hero width=1600 height=900 loading=lazy fetchpriority=high></main></body></html>`;
+    expect(ids(code, "index.html")).toContain("lazy-hero");
+  });
+
+  it("does not read a spread written inside someone else's value as a forwarded attribute", () => {
+    expect(ids(`<main><img src="/hero.avif" alt="we pass {...props} down"></main>`, "index.html"))
+      .toContain("image-without-dimensions");
+  });
+});

@@ -59,46 +59,20 @@
 // A framework component on its own gets silence, which is the honest answer.
 
 import { type LintFinding, type AuditReport, assembleAuditReport } from "./lint.js";
-import { scanTags, type Tag, maskComments, elementSpan, flattenTags } from "./scan.js";
+import {
+  scanTags, type Tag, maskComments, elementSpan, flattenTags,
+  bareAttrs, findAttr, hasAttr as sharedHasAttr, hasSpread as sharedHasSpread,
+} from "./scan.js";
 import { scanProject, MAX_FILES } from "./project.js";
 
 const lineOf = (src: string, index: number): number =>
   src.slice(0, index).split("\n").length;
 
-// Same attribute-boundary reasoning as security.ts: `\b` matches inside
-// `data-href`, so an attribute name may only start at the beginning of the
-// attribute chunk or after whitespace / the previous value's closing quote.
-const ATTR_START = `(?:^|[\\s"'])`;
-
-/**
- * Attribute *values* blanked to spaces, names and `=` left in place.
- *
- * `ATTR_START` allows a name to begin after a quote, which is how it survives
- * `class="x"alt=""` — and also how `title="alt text here"` came to satisfy a
- * test for a bare `alt` attribute, silencing a real `alt-missing` on an image
- * that has no alt at all. A word inside someone else's value is not an
- * attribute. The replacement is length-preserving, so an offset taken from the
- * bare string still reads the right characters out of the real one.
- *
- * Found by a sibling task, which hit the identical defect in `src/perf.ts`.
- * One deliberate difference from the version proven there: the `=` survives,
- * because this module locates `name=` in the bare string and then reads the
- * value from the real one at that offset. An `=` *inside* a value is still
- * blanked, which is the case that matters — `title="see href=x"` must not
- * look like an href declaration.
- */
-const bareAttrs = (attrs: string): string =>
-  attrs.replace(/=(\s*)("[^"]*"|'[^']*'|\{[^}]*\})/g, (m) => `=${m.slice(1).replace(/\S/g, " ")}`);
-
-const hasAttr = (tag: Tag, name: string): boolean =>
-  new RegExp(`${ATTR_START}${name}(?=[\\s=/>]|$)`, "i").test(bareAttrs(tag.attrs));
-
-/**
- * `{...props}` — the attribute may well be forwarded; don't guess. Read from
- * the bare string for the same reason as `hasAttr`: a spread written inside a
- * string value is text, not a forwarded attribute.
- */
-const hasSpread = (tag: Tag): boolean => /\{\s*\.\.\./.test(bareAttrs(tag.attrs));
+// Attribute reading — the boundary rules, the framework binding forms and the
+// spread convention — is `scan.ts`'s job. See the note there for why five
+// scanners share one reader.
+const hasAttr = (tag: Tag, name: string): boolean => sharedHasAttr(tag.attrs, name);
+const hasSpread = (tag: Tag): boolean => sharedHasSpread(tag.attrs);
 
 /**
  * An attribute's value, and whether it is *readable*. `content={description}`
@@ -125,18 +99,23 @@ const UNREADABLE_VALUE = /\$\{|\{[^}]*\}|<%|%>|<\?/;
 
 const attrValue = (tag: Tag, name: string): AttrValue => {
   // The name is located in the *bare* string, so a name mentioned inside
-  // another attribute's value can never be mistaken for a real attribute — the
-  // same defect `hasAttr` had, and `perf.ts` had, in the reading direction:
+  // another attribute's value can never be mistaken for a real attribute:
   // `<link rel="canonical" title="see href=x">` would otherwise hand back
   // "x" as this link's href. The value is then read out of the real string at
   // the offset the bare match gives, which lines up because blanking preserves
   // length.
-  const m = new RegExp(`${ATTR_START}${name}\\s*=`, "i").exec(bareAttrs(tag.attrs));
-  if (!m) return { present: hasAttr(tag, name) };
-  const rest = tag.attrs.slice(m.index + m[0].length).replace(/^\s+/, "");
-  const v = /^("([^"]*)"|'([^']*)'|\{[^}]*\})/.exec(rest);
-  if (!v) return { present: true };                            // unquoted or empty
-  const raw = v[2] ?? v[3];
+  const at = findAttr(tag.attrs, name);
+  if (!at) return { present: false };
+  if (at.bound) return { present: true };                      // an expression, not a value
+  const rest = tag.attrs.slice(at.index + at.length);
+  // Quoted, braced, or a bare token. `<meta name=description content="...">`
+  // and `<link rel=canonical href=https://example.com/x>` are valid HTML and
+  // are what a minifier emits; not reading them reported a present description
+  // and a present canonical as absent. `security.ts` grew the same branch
+  // first, and the character class is its.
+  const v = /^\s*=\s*("([^"]*)"|'([^']*)'|(\{[^}]*\})|([^\s"'`=<>\\]+))/.exec(rest);
+  if (!v) return { present: true };                            // valueless, or empty
+  const raw = v[2] ?? v[3] ?? v[5];
   if (raw === undefined) return { present: true };             // a JSX expression
   if (UNREADABLE_VALUE.test(raw)) return { present: true };    // produced, not written
   return { present: true, value: raw };
@@ -743,7 +722,11 @@ const CONDITIONAL_ATTR = /(?:^|\s)(?:v-if|v-else|v-else-if|v-show|x-if|x-show|\*
 const CONDITIONAL_BLOCK = /\?|&&|\|\||\.map\s*\(|\{\s*#(?:if|each|await)|\{\s*:(?:else|then|catch)|@(?:if|for|else)\b/;
 
 function conditionallyRendered(masked: string, tag: Tag): boolean {
-  if (CONDITIONAL_ATTR.test(tag.attrs)) return true;
+  // Read at a name position, like every other attribute in this module:
+  // `<h1 title="in Vue use v-if here">A</h1><h1>B</h1>` is two unconditional
+  // H1s, and reading the words in that title as directives silenced a real
+  // `multiple-h1`.
+  if (CONDITIONAL_ATTR.test(bareAttrs(tag.attrs))) return true;
   const open = masked.lastIndexOf("{", tag.index);
   if (open === -1 || tag.index - open > 400) return false;
   return CONDITIONAL_BLOCK.test(masked.slice(open, tag.index));

@@ -10,6 +10,8 @@
 //     never decides whether a finding fires.
 // Not a full parser — a fast, high-signal design-time check.
 
+import { scanTags, findAttr, hasAttr, hasSpread, type Tag } from "./scan.js";
+
 export interface LintFinding {
   line: number;
   severity: "error" | "warning" | "info";
@@ -72,48 +74,19 @@ interface LineRule {
 }
 
 // ── tag scanner ──────────────────────────────────────────────────────────────
+//
+// The scanner and the attribute readers live in `scan.ts`, which is where every
+// module that parses markup gets them. They are re-exported here because
+// several modules have imported them from `./lint.js` since before that shared
+// home existed.
 
-export interface Tag {
-  name: string;
-  attrs: string;
-  index: number;
-  /** offset just past the opening tag's `>` */
-  end: number;
-  selfClosing: boolean;
-}
-
-// Attribute chunk allows newlines, quoted strings and one level of JSX braces.
-const TAG_RE = /<([A-Za-z][A-Za-z0-9._-]*)((?:"[^"]*"|'[^']*'|\{(?:[^{}]|\{[^{}]*\})*\}|[^>"'{])*?)(\/?)>/g;
-
-export function scanTags(src: string): Tag[] {
-  const tags: Tag[] = [];
-  TAG_RE.lastIndex = 0;
-  let m: RegExpExecArray | null;
-  while ((m = TAG_RE.exec(src)) !== null) {
-    tags.push({
-      name: m[1],
-      attrs: m[2] ?? "",
-      index: m.index,
-      end: m.index + m[0].length,
-      selfClosing: m[3] === "/",
-    });
-  }
-  return tags;
-}
+export { scanTags, hasAttr, hasSpread };
+export type { Tag };
 
 function lineOf(src: string, index: number): number {
   let line = 1;
   for (let i = 0; i < index && i < src.length; i++) if (src[i] === "\n") line++;
   return line;
-}
-
-function hasAttr(attrs: string, name: string): boolean {
-  return new RegExp(`(^|[\\s{])${name}\\s*=`, "i").test(attrs);
-}
-
-/** `{...props}` / `{...rest}` — the attribute may well be forwarded; don't guess. */
-function hasSpread(attrs: string): boolean {
-  return /\{\s*\.\.\./.test(attrs);
 }
 
 /** Inner text of an element, with nested tags and JSX expressions removed. */
@@ -242,7 +215,7 @@ function sourceFindings(src: string): LintFinding[] {
 
     if (
       CLICKABLE_CONTAINERS.has(name) &&
-      /(^|\s)on[Cc]lick\s*=/.test(attrs) &&
+      hasAttr(attrs, "onClick") &&
       !hasAttr(attrs, "role") &&
       !hasSpread(attrs)
     ) {
@@ -270,7 +243,12 @@ function sourceFindings(src: string): LintFinding[] {
     }
 
     if (LABELLED_CONTROLS.has(name) && !hasSpread(attrs)) {
-      const type = attrs.match(/\btype\s*=\s*["']?([a-z]+)/i)?.[1]?.toLowerCase() ?? "text";
+      // Read at a name position, like everything else here: a `type=` written
+      // inside a placeholder or a title is text, not this control's type.
+      const at = findAttr(attrs, "type");
+      const type = (at && !at.bound
+        ? /^\s*=\s*["']?([a-z]+)/i.exec(attrs.slice(at.index + at.length))?.[1]
+        : undefined)?.toLowerCase() ?? "text";
       const labelled =
         hasAttr(attrs, "aria-label") ||
         hasAttr(attrs, "aria-labelledby") ||

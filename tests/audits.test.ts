@@ -205,3 +205,44 @@ describe("create_design_system hands its palette to the recipes", () => {
     expect(ds()).toMatch(/miss every shade a dark theme uses/);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Four false negatives, all from reading raw attribute text.
+//
+// `design_lint` located an attribute name with `(^|[\s{])name\s*=`, and
+// whitespace inside *another* attribute's value satisfies that. Every instance
+// silenced a real a11y finding — a report that reads clean when it is not,
+// which is the one direction these modules refuse.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("design_lint — an attribute name is only a name where a name can appear", () => {
+  const ruleIds = (code: string) => designLint(code).map((f) => f.rule);
+
+  it("still flags an image with no alt when another value merely says alt=", () => {
+    expect(ruleIds(`<img src="hero.jpg" title="see alt=foo">`)).toContain("img-no-alt");
+  });
+
+  it("still flags an unlabelled control when a placeholder merely says id=", () => {
+    expect(ruleIds(`<input type="text" placeholder="e.g. id=1234">`)).toContain("control-no-label");
+  });
+
+  it("still flags an icon button when a data attribute merely says aria-label=", () => {
+    expect(ruleIds(`<button data-hint="add aria-label=Close"><svg /></button>`)).toContain("icon-button-no-label");
+  });
+
+  it("still flags a clickable div when a data attribute merely says role=", () => {
+    expect(ruleIds(`<div onClick={go} data-hint="add role=button">x</div>`)).toContain("clickable-div");
+  });
+
+  it("reads an input's type at a name position, not from a placeholder", () => {
+    // `type=hidden` inside the placeholder must not exempt a real text input.
+    expect(ruleIds(`<input type="text" placeholder="e.g. type=hidden">`)).toContain("control-no-label");
+  });
+
+  it("keeps every genuine suppression: a real alt, a real role, a real label, a spread", () => {
+    expect(ruleIds(`<img src="a.png" alt="">`)).not.toContain("img-no-alt");
+    expect(ruleIds(`<img {...props} />`)).not.toContain("img-no-alt");
+    expect(ruleIds(`<div onClick={go} role="button" tabIndex={0}>x</div>`)).not.toContain("clickable-div");
+    expect(ruleIds(`<button aria-label="Close"><svg /></button>`)).not.toContain("icon-button-no-label");
+    expect(ruleIds(`<input type="text" id="email">`)).not.toContain("control-no-label");
+  });
+});

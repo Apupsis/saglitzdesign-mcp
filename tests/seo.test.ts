@@ -1544,3 +1544,61 @@ describe("pages that match the proposed component-demo signal but are real pages
     ]);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Vue and Angular bind attributes rather than writing literals, and `.vue` is
+// in SEO_EXTENSIONS while `RECOGNISED_METADATA` names Nuxt's `useHead` — both
+// are advertised stacks. `alt-missing` claimed "has no alt attribute at all"
+// on every bound alt in both of them; JSX's `alt={caption}` happened to satisfy
+// a bare-name test, which is why ten React-family fixtures never caught it.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("alt-missing — a bound alt is an alt", () => {
+  const BOUND: Array<[string, string]> = [
+    [`<img :src="s" :alt="caption">`, "src/components/Card.vue"],
+    [`<img v-bind:alt="caption">`, "src/components/Card.vue"],
+    [`<img v-bind="imgAttrs">`, "src/components/Card.vue"],
+    [`<img [src]="s" [alt]="caption">`, "src/app/card.component.html"],
+    [`<img [ngSrc]="s" [alt]="caption">`, "src/app/card.component.html"],
+    [`<img x-bind:alt="caption">`, "public/page.html"],
+    [`<img src="a.png" alt={caption} />`, "src/Card.tsx"],
+  ];
+
+  it.each(BOUND)("says nothing about %s", (code, path) => {
+    expect(ids(code, path)).not.toContain("alt-missing");
+  });
+
+  it("still fires on an image that really has no alt, in the same file shapes", () => {
+    expect(ids(`<img :src="s">`, "src/components/Card.vue")).toContain("alt-missing");
+    expect(ids(`<img [src]="s">`, "src/app/card.component.html")).toContain("alt-missing");
+  });
+});
+
+describe("multiple-h1 — a conditional marker is read at a name position", () => {
+  it("fires on two unconditional H1s even when one names v-if in its title", () => {
+    expect(ids(`<h1 title="in Vue use v-if here">A</h1><h1>B</h1>`, "public/page.html"))
+      .toContain("multiple-h1");
+  });
+
+  it("still stands down for a real v-if / v-else pair", () => {
+    expect(ids(`<h1 v-if="q">Results</h1><h1 v-else>Search</h1>`, "pages/search.vue"))
+      .not.toContain("multiple-h1");
+  });
+});
+
+describe("unquoted attribute values — valid HTML, and standard in minified output", () => {
+  it("reads an unquoted meta description and canonical rather than reporting them absent", () => {
+    const code = `<!doctype html>
+<html lang=en>
+<head>
+  <title>Website Redesign Pricing for UK Startups | Saglitz</title>
+  <meta name=description content="What a website redesign costs in 2026, broken down by scope, with real line-item numbers from twelve recent studio projects and a four-week timeline.">
+  <link rel=canonical href=https://saglitz.com/pricing/>
+</head>
+<body><main><h1>Pricing</h1></main></body>
+</html>`;
+    const fired = ids(code, "public/pricing/index.html");
+    expect(fired).not.toContain("meta-description-missing");
+    expect(fired).not.toContain("canonical-missing");
+    expect(fired).toEqual([]);
+  });
+});

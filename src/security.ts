@@ -10,7 +10,9 @@
 // with the rest.
 
 import { type LintFinding } from "./lint.js";
-import { scanTags, type Tag, maskComments } from "./scan.js";
+import {
+  scanTags, type Tag, maskComments, bareAttrs, findAttr, hasAttr as sharedHasAttr,
+} from "./scan.js";
 import { scanProject, MAX_FILES } from "./project.js";
 
 const lineOf = (src: string, index: number): number =>
@@ -41,26 +43,16 @@ const lineOf = (src: string, index: number): number =>
 //   <a href="…" target="_blank" title="rel='noopener' explained">
 //       → blank-without-noopener silenced by a rel= inside a title
 //
-// The fix is to look for names only where values are not. `bareAttrs` blanks
-// every quoted or braced value; it is length-preserving, so `attr` can locate
-// the name in the blanked copy and then read the real value from the original
-// at the same offset.
-const bareAttrs = (attrs: string): string =>
-  attrs.replace(/=\s*("[^"]*"|'[^']*'|\{[^}]*\})/g, (m) => m.replace(/\S/g, " "));
-
-// Valueless attributes are real (`<iframe sandbox>`), so the name may be
-// followed by `=`, whitespace, the tag's own end, or nothing — but not by a
-// further name character, which is what keeps `nonce` out of `nonce-value`.
-const attrStart = (name: string): RegExp =>
-  new RegExp(`(?:^|\\s)${name}(?=[\\s=/>]|$)`, "i");
-
-const hasAttr = (tag: Tag, name: string): boolean =>
-  attrStart(name).test(bareAttrs(tag.attrs));
+// The fix is to look for names only where values are not, and it now lives in
+// `scan.ts` — every module here that parses markup reads attributes through the
+// one reader, because "which modules read attributes?" is a question about the
+// codebase and not about a list somebody remembered to keep.
+const hasAttr = (tag: Tag, name: string): boolean => sharedHasAttr(tag.attrs, name);
 
 const attr = (tag: Tag, name: string): string | undefined => {
-  const at = attrStart(name).exec(bareAttrs(tag.attrs));
-  if (!at) return undefined;
-  const after = tag.attrs.slice(at.index + at[0].length);
+  const at = findAttr(tag.attrs, name);
+  if (!at || at.bound) return undefined;
+  const after = tag.attrs.slice(at.index + at.length);
   // Quoted, braced, or a bare token — `<a target=_blank>` is valid HTML, and
   // the two rules that used to sniff for it with their own regex now come
   // through here instead.
@@ -73,6 +65,26 @@ const attr = (tag: Tag, name: string): string | undefined => {
   const m = /^\s*=\s*("([^"]*)"|'([^']*)'|(\{[^}]*\})|([^\s"'`=<>\\]+))/.exec(after);
   if (!m) return undefined;
   return m[2] ?? m[3] ?? m[4] ?? m[5];
+};
+
+/**
+ * An `on*="…"` handler written in the markup — the only shape that is actually
+ * an inline handler, since a JSX `onClick={fn}` is not one.
+ *
+ * The name is found in the blanked copy and the quote that opens its value is
+ * then checked in the original, because neither half is sufficient alone:
+ * reading the raw chunk let `<button data-onclick="go">` pass for a handler
+ * (`\b` matches after the hyphen), and reading the blanked chunk alone loses
+ * the quote that distinguishes `onclick="go()"` from JSX.
+ */
+const hasInlineHandler = (attrs: string): boolean => {
+  const re = /(?:^|\s)on[a-z]+(?=\s*=)/gi;
+  const bare = bareAttrs(attrs);
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(bare)) !== null) {
+    if (/^\s*=\s*["']/.test(attrs.slice(m.index + m[0].length))) return true;
+  }
+  return false;
 };
 
 const isCrossOrigin = (url: string): boolean =>
@@ -354,14 +366,14 @@ export function securitySourceRules(code: string, filename?: string): LintFindin
     // and flagging it would be exactly the false positive this module refuses
     // to ship. `on[a-z]+="..."` (a quoted string, not a JSX expression) is the
     // only shape that is actually an inline handler.
-    if (MARKUP_FILE.test(filename ?? "") && /\bon[a-z]+\s*=\s*["']/i.test(tag.attrs)) {
+    if (MARKUP_FILE.test(filename ?? "") && hasInlineHandler(tag.attrs)) {
       push(tag.index, "warning", "inline-event-handler",
         `Inline event handler blocks a strict Content-Security-Policy — it cannot be allowed without 'unsafe-inline'.`,
         `Attach the handler with addEventListener from a script file.`,
         "web-security-headers");
     }
 
-    if (/\bdangerouslySetInnerHTML\b/.test(tag.attrs) && !hasSanitiserImport(masked)) {
+    if (hasAttr(tag, "dangerouslySetInnerHTML") && !hasSanitiserImport(masked)) {
       push(tag.index, "warning", "dangerous-html",
         `dangerouslySetInnerHTML with no sanitiser imported in this file renders untrusted markup as live HTML.`,
         `Sanitise the value first (DOMPurify), or render it as text.`,

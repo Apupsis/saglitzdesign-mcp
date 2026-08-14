@@ -23,15 +23,31 @@
 // its place; see the task report for the two rejected alternatives.
 
 import { type LintFinding, type Tag } from "./lint.js";
-import { scanTags, maskComments, elementSpan, flattenTags } from "./scan.js";
+import { scanTags, maskComments, elementSpan, flattenTags, findAttr } from "./scan.js";
 import { scanProject, MAX_FILES } from "./project.js";
 
 const lineOf = (src: string, index: number): number =>
   src.slice(0, index).split("\n").length;
 
+/**
+ * The classes this element carries.
+ *
+ * `\b` matched inside `data-class` and inside another attribute's *value*, so
+ * `<div data-example='class="from-indigo-500 to-purple-600"'>` and
+ * `<div data-class="from-indigo-500 to-purple-600">` both drew
+ * `ai-default-gradient` — a rule firing on markup that declares no classes at
+ * all. The name is now found where a name can appear, through the shared
+ * reader in scan.ts; the value is still read with this module's own pattern,
+ * which accepts the `{\`…\`}` template-literal form the others do not.
+ */
 const classesOf = (tag: Tag): string => {
-  const m = /\b(?:class|className)\s*=\s*("([^"]*)"|'([^']*)'|\{`([^`]*)`\})/i.exec(tag.attrs);
-  return m ? (m[2] ?? m[3] ?? m[4] ?? "") : "";
+  for (const name of ["class", "className"]) {
+    const at = findAttr(tag.attrs, name);
+    if (!at || at.bound) continue;
+    const m = /^\s*=\s*("([^"]*)"|'([^']*)'|\{`([^`]*)`\})/.exec(tag.attrs.slice(at.index + at.length));
+    if (m) return m[2] ?? m[3] ?? m[4] ?? "";
+  }
+  return "";
 };
 
 // Tailwind's indigo / violet / purple ramps sit adjacent on its scale, so the

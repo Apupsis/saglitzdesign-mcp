@@ -1490,3 +1490,33 @@ describe("HSTS states the thresholds its cited document actually gives", () => {
     expect(f!.fix).toContain("63072000"); // the value the document recommends
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The two rules in this module that still read the raw attribute chunk after
+// the rest of it moved to a name-position reader. Both were false positives:
+// a rule firing on prose that merely names the thing it looks for.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("source rules — prose that names a sink is not a sink", () => {
+  it("does not report dangerous-html for the word inside a title", () => {
+    expect(ids(`<div title="we removed dangerouslySetInnerHTML from this file">x</div>`, "page.html"))
+      .not.toContain("dangerous-html");
+  });
+
+  it("still reports a real dangerouslySetInnerHTML", () => {
+    expect(ids(`<div dangerouslySetInnerHTML={{ __html: body }} />`, "page.tsx"))
+      .toContain("dangerous-html");
+  });
+
+  it("does not report an inline handler for a data- attribute that merely starts with on", () => {
+    expect(ids(`<button data-onclick="go">x</button>`, "page.html")).not.toContain("inline-event-handler");
+  });
+
+  it("does not report an inline handler for the word inside another value", () => {
+    expect(ids(`<button title="attach onclick='go()' in JS instead">x</button>`, "page.html"))
+      .not.toContain("inline-event-handler");
+  });
+
+  it("still reports a real inline handler", () => {
+    expect(ids(`<button onclick="go()">x</button>`, "page.html")).toContain("inline-event-handler");
+  });
+});

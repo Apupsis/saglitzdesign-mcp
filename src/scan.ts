@@ -6,13 +6,17 @@
 // instead of a third copy or a second one-way import — the SEO and
 // performance auditors are that third consumer, so this module exists now.
 //
-// `scanTags` and `Tag` are re-exported from lint.ts here too, so a consumer
-// of the scanning primitives needs one import rather than two.
-
-import { scanTags, type Tag } from "./lint.js";
-
-export { scanTags };
-export type { Tag };
+// `scanTags` and `Tag` live here rather than in lint.ts, and the attribute
+// readers below live here rather than in perf.ts, for one reason: **reading an
+// attribute is a property of this codebase, not of three named modules.** Five
+// scanners parse markup — lint.ts, generic.ts, security.ts, seo.ts and perf.ts
+// — and the same defect was found and fixed in three of them separately while
+// the other two kept shipping it, because the question asked each time was
+// "which modules were listed?" rather than "which modules read attributes?".
+// A primitive with one home makes the wrong version unaskable.
+//
+// lint.ts re-exports `scanTags` and `Tag` so that existing importers of
+// `./lint.js` keep working.
 
 /**
  * Replace comment text with spaces (preserving length and line numbers) so
@@ -142,6 +146,112 @@ export function maskComments(source: string, path: string): string {
   }
   return out;
 }
+
+// ── the tag scanner ──────────────────────────────────────────────────────────
+
+export interface Tag {
+  name: string;
+  attrs: string;
+  index: number;
+  /** offset just past the opening tag's `>` */
+  end: number;
+  selfClosing: boolean;
+}
+
+// Attribute chunk allows newlines, quoted strings and one level of JSX braces.
+const TAG_RE = /<([A-Za-z][A-Za-z0-9._-]*)((?:"[^"]*"|'[^']*'|\{(?:[^{}]|\{[^{}]*\})*\}|[^>"'{])*?)(\/?)>/g;
+
+export function scanTags(src: string): Tag[] {
+  const tags: Tag[] = [];
+  TAG_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = TAG_RE.exec(src)) !== null) {
+    tags.push({
+      name: m[1],
+      attrs: m[2] ?? "",
+      index: m.index,
+      end: m.index + m[0].length,
+      selfClosing: m[3] === "/",
+    });
+  }
+  return tags;
+}
+
+// ── attributes ───────────────────────────────────────────────────────────────
+//
+// An attribute name has to be found where a *name* can appear, and every
+// scanner in this codebase got that wrong at least once. The history is worth
+// keeping because it is the same bug four times over:
+//
+//   • `\b` matches inside `data-src`, `data-href`, `data-nonce`. Every
+//     instance was a false negative — a real finding silenced by a data
+//     attribute that merely contains the name.
+//   • Allowing a name to begin after a quote (`[\s"']`) fixed the prefix case
+//     and not the general one: a quote opening a value cannot be told from one
+//     closing it, and **whitespace inside another attribute's value qualifies
+//     too**. So `title="see alt=foo"` satisfied a test for a bare `alt`,
+//     `<img alt="Full width photo">` looked like an image declaring a `width`,
+//     and `<h1 title="in Vue use v-if here">` looked conditionally rendered.
+//
+// The fix is to look for names only where values are not: `bareAttrs` blanks
+// every quoted or braced value, length-preserving, so a caller can locate the
+// name in the blanked copy and then read the real value out of the original at
+// the same offset. The `=` of a declaration survives the blanking (an `=`
+// *inside* a value does not), because two of the four callers locate `name=`
+// rather than the bare name.
+
+export const bareAttrs = (attrs: string): string =>
+  attrs.replace(/=(\s*)("[^"]*"|'[^']*'|\{[^}]*\})/g, (m) => `=${m.slice(1).replace(/\S/g, " ")}`);
+
+/**
+ * The prefixes a framework puts in front of an attribute name when the value
+ * is an expression rather than a literal: Vue's `:alt` and `v-bind:alt`,
+ * Angular's `[alt]` and `[ngSrc]`, Alpine's `x-bind:alt`, and the `@` event
+ * shorthand. `<img :alt="caption">` **has** an alt attribute; a reader that
+ * only accepts the bare name reports every Vue and Angular image as having no
+ * alt at all — which is what this codebase did on two advertised stacks until
+ * somebody wrote a `.vue` fixture.
+ */
+const BOUND_PREFIX = "(?:v-bind:|x-bind:|[:@\\[])";
+
+export interface AttrMatch {
+  /** Offset of the match in the attribute chunk, leading space and prefix included. */
+  index: number;
+  /** Match length, so `index + length` is the offset just past the name. */
+  length: number;
+  /**
+   * The declaration binds an expression, so the attribute is *present* and its
+   * value is not in this file. Enough to suppress an absence claim, never
+   * enough to grade — the same contract a JSX `{expression}` value has.
+   */
+  bound: boolean;
+}
+
+/**
+ * Where `name` is declared in this attribute chunk, or null when it is not.
+ * Valueless attributes are real (`<iframe sandbox>`), so the name may be
+ * followed by `=`, whitespace, `]` (Angular's binding bracket), the tag's own
+ * end, or nothing — but never by a further name character, which is what keeps
+ * `nonce` out of `nonce-value`.
+ */
+export function findAttr(attrs: string, name: string): AttrMatch | null {
+  const re = new RegExp(`(?:^|\\s)(${BOUND_PREFIX})?${name}(?=[\\s=/>\\]]|$)`, "i");
+  const m = re.exec(bareAttrs(attrs));
+  return m ? { index: m.index, length: m[0].length, bound: m[1] !== undefined } : null;
+}
+
+export const hasAttr = (attrs: string, name: string): boolean => findAttr(attrs, name) !== null;
+
+/**
+ * A declaration that may be carrying attributes this scan cannot enumerate:
+ * JSX's `{...props}` and Vue's object form of `v-bind="attrs"` — the same
+ * thing said twice in two languages. Read from the blanked copy, because a
+ * spread written inside a string value is text, not a forwarded attribute.
+ */
+export const hasSpread = (attrs: string): boolean => {
+  const bare = bareAttrs(attrs);
+  return /\{\s*\.\.\./.test(bare) || /(?:^|\s)(?:v-bind|x-bind)\s*=/i.test(bare);
+};
 
 /** `[start, end)` of one element's content, `end` exclusive of its own closing tag. */
 export function elementSpan(masked: string, tag: Tag): [number, number] | null {

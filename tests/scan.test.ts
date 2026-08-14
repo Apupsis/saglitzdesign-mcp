@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { maskComments } from "../dist/scan.js";
+import { maskComments, findAttr, hasAttr, hasSpread, bareAttrs } from "../dist/scan.js";
 
 // `maskComments` is length-preserving by construction — every branch either
 // copies a character through unchanged or replaces it with a same-width
@@ -80,5 +80,68 @@ describe("maskComments — length-preserving for every syntax it handles", () =>
       `</script>`,
     ].join("\n");
     expect(maskComments(source, "page.vue").length).toBe(source.length);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The attribute reader.
+//
+// This lived privately in perf.ts, and separately (in a weaker form) in
+// security.ts, seo.ts, generic.ts and lint.ts. The same defect was found and
+// fixed in three of them while the other two kept shipping it, because the
+// question asked each time was "which modules were listed?" rather than "which
+// modules read attributes?". These are the properties every scanner now gets
+// from one place.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("findAttr — a name is only a name where a name can appear", () => {
+  it("blanks a quoted value, so a name inside one is not an attribute", () => {
+    expect(hasAttr(` src="hero.jpg" title="see alt=foo"`, "alt")).toBe(false);
+    expect(hasAttr(` type="text" placeholder="e.g. id=1234"`, "id")).toBe(false);
+    expect(hasAttr(` data-example='class="from-indigo-500"'`, "class")).toBe(false);
+  });
+
+  it("does not match inside a longer name, in either direction", () => {
+    expect(hasAttr(` data-alt="x"`, "alt")).toBe(false);
+    expect(hasAttr(` data-nonce="later"`, "nonce")).toBe(false);
+    expect(hasAttr(` nonce-value="x"`, "nonce")).toBe(false);
+  });
+
+  it("finds a plain name, a valueless one, and one after the previous value", () => {
+    expect(hasAttr(` src="a.png" alt="A cat"`, "alt")).toBe(true);
+    expect(hasAttr(` sandbox`, "sandbox")).toBe(true);
+    expect(hasAttr(` class="x"alt=""`, "alt")).toBe(true);
+  });
+
+  it("finds every framework binding form, and marks the value unreadable", () => {
+    for (const attrs of [` :alt="caption"`, ` v-bind:alt="caption"`, ` x-bind:alt="caption"`, ` [alt]="caption"`]) {
+      const at = findAttr(attrs, "alt");
+      expect(at, attrs).not.toBeNull();
+      expect(at!.bound, attrs).toBe(true);
+    }
+    // A bound value names a variable; reading it as a literal would grade a
+    // string that is not in the file.
+    expect(findAttr(` :loading="lazy"`, "loading")!.bound).toBe(true);
+  });
+
+  it("reads Angular's ngSrc binding without confusing it for src", () => {
+    expect(hasAttr(` [ngSrc]="s" [alt]="c"`, "alt")).toBe(true);
+    expect(hasAttr(` [ngSrc]="s"`, "src")).toBe(false);
+  });
+
+  it("treats v-bind=\"…\" and {...spread} alike — an unreadable declaration", () => {
+    expect(hasSpread(` {...props}`)).toBe(true);
+    expect(hasSpread(` v-bind="imgAttrs"`)).toBe(true);
+    expect(hasSpread(` x-bind="attrs"`)).toBe(true);
+    // …but a spread written inside someone else's value is text.
+    expect(hasSpread(` alt="we pass {...props} down"`)).toBe(false);
+    // and `v-bind:alt` is a bound attribute, not an object spread.
+    expect(hasSpread(` v-bind:alt="caption"`)).toBe(false);
+  });
+
+  it("blanking is length-preserving, so an offset from the bare copy reads the real one", () => {
+    const attrs = ` rel="canonical" href="https://example.com/x"`;
+    expect(bareAttrs(attrs).length).toBe(attrs.length);
+    const at = findAttr(attrs, "href")!;
+    expect(attrs.slice(at.index + at.length)).toBe(`="https://example.com/x"`);
   });
 });

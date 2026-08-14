@@ -1555,3 +1555,28 @@ describe("the distinctive-page matrix — pages with a point of view score zero"
     expect(pageFindings(GENERIC_LANDING, "app/(marketing)/page.tsx")).not.toContain("uniform-card-grid");
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// `classesOf` read `\b(?:class|className)\s*=` out of the raw attribute chunk,
+// so `data-class` and a `class="…"` written inside another attribute's value
+// both counted as classes on the element. Two shipped auditors disagreed about
+// the same markup: `perf.ts`'s reader got it right.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("visual rules — a class list is only what the element declares", () => {
+  it("does not read a class attribute written inside another attribute's value", () => {
+    expect(ids(`<div data-example='class="from-indigo-500 to-purple-600"'>x</div>`))
+      .not.toContain("ai-default-gradient");
+  });
+
+  it("does not read data-class as class", () => {
+    expect(ids(`<div data-class="from-indigo-500 to-purple-600">x</div>`))
+      .not.toContain("ai-default-gradient");
+  });
+
+  it("still reads a real class and a real className", () => {
+    expect(ids(`<div class="bg-linear-to-r from-indigo-500 to-purple-600">x</div>`))
+      .toContain("ai-default-gradient");
+    expect(ids(`<div className="bg-gradient-to-r from-indigo-500 to-purple-600">x</div>`))
+      .toContain("ai-default-gradient");
+  });
+});
