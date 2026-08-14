@@ -343,7 +343,7 @@ const visibleText = (masked: string): string =>
  * nothing in the source establishes one. See the module header for why the
  * answer is so often null and why that is the right trade.
  */
-function lcpCandidate(masked: string, tags: Tag[], css: SizedCss): Tag | null {
+function lcpCandidate(masked: string, tags: Tag[], css: SizedCss, path: string): Tag | null {
   const main = firstSpan(masked, tags, "main");
   if (!main) return null;
 
@@ -351,7 +351,7 @@ function lcpCandidate(masked: string, tags: Tag[], css: SizedCss): Tag | null {
     ...elementRanges(masked, "header"),
     ...elementRanges(masked, "nav"),
     ...elementRanges(masked, "footer"),
-    ...inertRanges(masked),
+    ...inertRanges(masked, path),
   ];
 
   const images = tags.filter((t) => isImageTag(t.name) && !inRanges(t.index, excluded));
@@ -406,11 +406,32 @@ function lcpCandidate(masked: string, tags: Tag[], css: SizedCss): Tag | null {
  * is not displayed until it is opened. None of them can hold the LCP element
  * or shift the layout on load.
  */
-const inertRanges = (masked: string): Array<[number, number]> => [
-  ...elementRanges(masked, "template"),
-  ...elementRanges(masked, "noscript"),
-  ...elementRanges(masked, "dialog"),
-];
+const inertRanges = (masked: string, path: string): Array<[number, number]> => {
+  const templates = elementRanges(masked, "template");
+  // …with one exception, and it is the whole markup of an advertised stack: a
+  // Vue SFC's **outermost** `<template>` is the component body, not an inert
+  // fragment. Treating it as inert made this module blind inside every `.vue`
+  // file — every image in one was exempt from `image-without-dimensions`, and
+  // the LCP candidate could never be found there at all. seo.ts has always
+  // dropped it (`inertTemplateSpans`); this did not, because it never had the
+  // path to decide with.
+  //
+  // Nested templates (`<template #header>`, `<template v-if>`) keep the guard.
+  // `elementRanges` reports ranges in *closing* order, so the outermost one is
+  // the one that opened first rather than the one at the front of the list.
+  if (/\.vue$/i.test(path) && templates.length) {
+    let outermost = 0;
+    for (let i = 1; i < templates.length; i++) {
+      if (templates[i][0] < templates[outermost][0]) outermost = i;
+    }
+    templates.splice(outermost, 1);
+  }
+  return [
+    ...templates,
+    ...elementRanges(masked, "noscript"),
+    ...elementRanges(masked, "dialog"),
+  ];
+};
 
 /** What the author called it. A logo or an avatar is not a hero, whatever its position. */
 const DECORATIVE_NAME =
@@ -478,7 +499,7 @@ export function perfRules(code: string, filename?: string): LintFinding[] {
 
   const headSpan = firstSpan(masked, tags, "head");
   const css = sizedSelectors(regions);
-  const candidate = lcpCandidate(masked, tags, css);
+  const candidate = lcpCandidate(masked, tags, css, path);
 
   // ── the LCP candidate image ────────────────────────────────────────────────
 
@@ -608,7 +629,7 @@ export function perfRules(code: string, filename?: string): LintFinding[] {
     return classes.split(/\s+/).some((c) => c && css.classes.has(c));
   };
 
-  const inert = inertRanges(masked);
+  const inert = inertRanges(masked, path);
 
   for (const tag of tags) {
     if (tag.name !== "img") continue;

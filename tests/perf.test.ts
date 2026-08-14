@@ -422,8 +422,7 @@ describe("lazy-hero's scope, which is narrower than \"first image on the page\""
   // Found by running a correct Nuxt page. `<NuxtImg>` was not recognised as
   // an image, so the below-the-fold chart beneath it — correctly lazy-loaded —
   // was promoted to LCP candidate and reported at error severity.
-  it("recognises a framework image component rather than promoting the one below it", () => {
-    const code = `<template>
+  const NUXT_PAGE = `<template>
   <main>
     <NuxtImg src="/hero.avif" alt="Studio" width="1600" height="900" fetchpriority="high" />
     <h1>Website redesign pricing</h1>
@@ -431,7 +430,38 @@ describe("lazy-hero's scope, which is narrower than \"first image on the page\""
     <img src="/chart.avif" alt="Cost by template" width="800" height="500" loading="lazy" />
   </main>
 </template>`;
-    expect(ids(code, "pages/index.vue")).toEqual([]);
+
+  it("recognises a framework image component rather than promoting the one below it", () => {
+    expect(ids(NUXT_PAGE, "pages/index.vue")).toEqual([]);
+  });
+
+  // The assertion above was unfalsifiable for as long as it existed: a Vue
+  // SFC's root `<template>` was treated as an inert fragment, so *nothing*
+  // inside one was ever graded, and the cell passed with every width, height
+  // and fetchpriority stripped out of it. These are the mutations that must
+  // now be caught. A probe that goes silent means the rules stopped reading
+  // this file shape again.
+  it("grades the inside of a Vue SFC — the root <template> is the component body", () => {
+    const unsized = NUXT_PAGE.replace(/ width="800" height="500"/, "");
+    expect(ids(unsized, "pages/index.vue")).toContain("image-without-dimensions");
+
+    const unmarked = NUXT_PAGE.replace(' fetchpriority="high"', "");
+    expect(ids(unmarked, "pages/index.vue")).toContain("hero-no-fetchpriority");
+  });
+
+  it("keeps the guard on a nested <template>, which really is inert", () => {
+    const code = `<template>
+  <main>
+    <h1>Rows</h1>
+    <template #row><img src="/row.avif" alt="A row"></template>
+  </main>
+</template>`;
+    expect(ids(code, "components/Table.vue")).toEqual([]);
+  });
+
+  it("still treats a <template> in a plain document as inert", () => {
+    const code = `<main><h1>Rows</h1><template id="row"><img src="/row.avif" alt="A row"></template></main>`;
+    expect(ids(code, "index.html")).toEqual([]);
   });
 
   it("withdraws the candidate when an unresolved component sits above it", () => {
@@ -1083,6 +1113,8 @@ describe("bound attributes — present, and never readable as a literal", () => 
 
   it("still fires on an image that declares no dimensions at all", () => {
     expect(ids(`<main><img [ngSrc]="s" [alt]="c"></main>`, "src/app/page.component.html"))
+      .toContain("image-without-dimensions");
+    expect(ids(`<template><main><img :src="s" :alt="c"></main></template>`, "pages/index.vue"))
       .toContain("image-without-dimensions");
   });
 });
