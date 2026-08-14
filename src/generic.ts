@@ -22,16 +22,52 @@
 // test against its own module's ubiquitous, deliberate patterns doesn't earn
 // its place; see the task report for the two rejected alternatives.
 
-import { scanTags, type LintFinding, type Tag } from "./lint.js";
-import { maskComments } from "./security.js";
+import { type LintFinding, type Tag } from "./lint.js";
+import { scanTags, maskComments, elementSpan, flattenTags, findAttr, attrValueText } from "./scan.js";
 import { scanProject, MAX_FILES } from "./project.js";
 
 const lineOf = (src: string, index: number): number =>
   src.slice(0, index).split("\n").length;
 
+/**
+ * The classes this element carries.
+ *
+ * `\b` matched inside `data-class` and inside another attribute's *value*, so
+ * `<div data-example='class="from-indigo-500 to-purple-600"'>` and
+ * `<div data-class="from-indigo-500 to-purple-600">` both drew
+ * `ai-default-gradient` — a rule firing on markup that declares no classes at
+ * all. The name is now found where a name can appear, through the shared
+ * reader in scan.ts.
+ *
+ * `class` is read even when it is bound (`:class`, `v-bind:class`, Angular's
+ * `[class]`) — deliberately unlike every other attribute this codebase reads
+ * through `findAttr`. A bound `alt` or `width` is unreadable because the
+ * *value the browser ends up with* is unknown, and claiming it absent would
+ * be a claim about something not in the file. A bound `class` is different in
+ * kind: Vue's array (`:class="['a','b']"`), string (`:class="'a b'"`) and
+ * object (`:class="{'a': cond}"`) syntaxes, and Angular's `[class]`
+ * equivalent, all write the class names themselves as literal text in the
+ * file — `attrValueText` reads that text the same way it reads a plain
+ * `class="…"`, and every rule below matches literal substrings, so array
+ * brackets, quotes and object-key colons riding along are inert punctuation
+ * to them. A binding that holds only an identifier (`:class="theme"`) still
+ * returns literal text — just text ("theme") that matches no rule, which is
+ * harmless and needs no special handling.
+ *
+ * `className` is not given the same treatment: JSX has no equivalent bound
+ * syntax (`className={expr}` is a plain attribute whose value happens to be
+ * an expression, not a `findAttr`-recognised binding prefix), so this never
+ * meaningfully applies to it.
+ */
 const classesOf = (tag: Tag): string => {
-  const m = /\b(?:class|className)\s*=\s*("([^"]*)"|'([^']*)'|\{`([^`]*)`\})/i.exec(tag.attrs);
-  return m ? (m[2] ?? m[3] ?? m[4] ?? "") : "";
+  for (const name of ["class", "className"]) {
+    const at = findAttr(tag.attrs, name);
+    if (!at) continue;
+    if (at.bound && name !== "class") continue;
+    const value = attrValueText(tag.attrs, at);
+    if (value !== null) return value;
+  }
+  return "";
 };
 
 // Tailwind's indigo / violet / purple ramps sit adjacent on its scale, so the
@@ -552,23 +588,8 @@ function blankSkippedContent(masked: string, tags: Tag[]): string {
   return chars.join("");
 }
 
-/**
- * Blanks every tag's own markup to spaces, length-preserving, leaving only
- * visible text at its original offsets — an attribute like `data-cta="Get
- * Started"` or a class named `learn-more` never survives into this string,
- * so copy rules can only ever match what a reader would actually see.
- */
-function flattenTags(src: string): string {
-  return src.replace(/<[^>]*>/g, (m) => m.replace(/[^\n]/g, " "));
-}
-
-/** `[start, end)` of one element's content, `end` exclusive of its own closing tag. */
-function elementSpan(masked: string, tag: Tag): [number, number] | null {
-  if (tag.selfClosing) return null;
-  const name = tag.name.toLowerCase();
-  const closeIdx = masked.toLowerCase().indexOf(`</${name}`, tag.end);
-  return [tag.end, closeIdx === -1 ? masked.length : closeIdx];
-}
+// `flattenTags` and `elementSpan` moved to scan.ts — imported above, shared
+// now with security.ts and (soon) the SEO/performance auditors.
 
 /** Index just past an element's own closing tag's `>` — `contentEnd` is `elementSpan`'s `end`. */
 function closingTagEnd(masked: string, contentEnd: number): number {

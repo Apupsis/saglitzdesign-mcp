@@ -24,7 +24,7 @@ const TOOL_NAMES = new Set([
   "suggest_icon_library", "generate_type_scale", "generate_elevation_system", "generate_motion",
   "design_lint", "audit_ux_copy", "create_design_system", "audit_design_system",
   "generate_layout_system", "compare_design_languages", "measure_screenshot", "import_design_tokens", "audit_project",
-  "audit_security", "audit_generic_design",
+  "audit_security", "audit_generic_design", "audit_seo_geo", "audit_performance",
 ]);
 
 describe("knowledge base metadata", () => {

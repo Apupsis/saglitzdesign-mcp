@@ -33,6 +33,8 @@ import { importTokensReport } from "./importtokens.js";
 import { projectAuditReport } from "./project.js";
 import { securityReport, HEADER_SOURCES_SENTENCE } from "./security.js";
 import { genericReport } from "./generic.js";
+import { seoReport, SEO_CAPABILITIES } from "./seo.js";
+import { perfReport, PERF_CAPABILITIES } from "./perf.js";
 import { createDesignSystem, type DSPlatform } from "./designsystem.js";
 import { normalizeHex } from "./tokens.js";
 
@@ -113,11 +115,23 @@ const READONLY_ANNOTATIONS = {
   openWorldHint: false,
 } as const;
 
-function tool(name: string, description: string, schema: Record<string, unknown>, cb: (args: any) => unknown) {
+function tool(
+  name: string,
+  description: string,
+  schema: Record<string, unknown>,
+  cb: (args: any) => unknown,
+  outputSchema?: Record<string, unknown>,
+) {
   const title = name.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
   return (server.registerTool as (n: string, c: unknown, cb: unknown) => unknown)(
     name,
-    { title, description, inputSchema: schema, annotations: { title, ...READONLY_ANNOTATIONS } },
+    {
+      title,
+      description,
+      inputSchema: schema,
+      ...(outputSchema ? { outputSchema } : {}),
+      annotations: { title, ...READONLY_ANNOTATIONS },
+    },
     cb,
   );
 }
@@ -879,6 +893,151 @@ tool(
     }
     return text(genericReport({ source: code, filename }));
   },
+);
+
+// ── Tools 32 & 33: audit SEO/GEO and performance ─────────────────────────────
+//
+// The first two tools here to return structured output. Everything else in this
+// server answers a person reading markdown; these two also answer an agent
+// chaining `audit → fix`, which needs the findings as fields and — just as
+// much — needs `notVisible`, the machine-readable account of what was never
+// checked. A caller that reads silence as a clean bill is the failure both
+// modules were written against, and prose alone cannot stop it.
+
+/**
+ * The shape both auditors declare and return. One constant, because two tools
+ * describing the same structure twice is two things to keep in step; and the
+ * descriptions matter — an `outputSchema` is documentation an agent reads
+ * before it ever calls the tool.
+ */
+/**
+ * A tool description's list of what it checks, built from the auditor's own
+ * capability table rather than written beside it.
+ *
+ * Both audit descriptions once advertised checks that did not exist and omitted
+ * rules that did. A caller reads a tool description the way they read the
+ * `notVisible` list — as a statement of reach — so "it looked and found
+ * nothing" and "it never looked" have to be distinguishable from the blurb too.
+ * Composing the sentence from the table makes an unbacked claim a compile
+ * error's worth of impossible, and the suites assert the mapping both ways.
+ */
+const advertised = (capabilities: Array<{ text: string }>): string => {
+  const items = capabilities.map((c) => c.text);
+  // Semicolons, not commas: several entries carry commas of their own, and a
+  // comma-joined list of them reads as one run-on sentence in which no reader
+  // can tell where one check ends and the next begins.
+  return items.length > 1
+    ? `${items.slice(0, -1).join("; ")}; and ${items[items.length - 1]}`
+    : items.join("");
+};
+
+const AUDIT_OUTPUT_SCHEMA = {
+  findings: z
+    .array(
+      z.object({
+        rule: z.string().describe("Stable rule id, e.g. 'canonical-not-absolute' or 'lazy-hero'."),
+        severity: z.enum(["error", "warning", "info"]).describe("How the rule grades this finding."),
+        message: z.string().describe("The fact about the source that made the rule fire."),
+        fix: z.string().describe("What to change, specifically."),
+        doc: z.string().describe("Knowledge-base id backing the claim — read it with get_design_doc."),
+        file: z.string().optional().describe("Path relative to the audited directory, when a directory was audited."),
+        line: z.number().int().optional().describe("1-based line within that file."),
+      }),
+    )
+    .describe("Every finding, in the order the markdown report lists them."),
+  summary: z
+    .object({
+      error: z.number().int(),
+      warning: z.number().int(),
+      info: z.number().int(),
+    })
+    .describe("Counts by severity. Always agrees with `findings` — it is derived from the same list."),
+  notVisible: z
+    .array(z.string())
+    .describe(
+      "What this audit structurally could not check, one limitation per entry. Read it as a peer of `findings`: "
+      + "silence on a subject named here is this tool's reach, not a clean result. Nothing in either tool is measured.",
+    ),
+};
+
+tool(
+  "audit_seo_geo",
+  `Audit a page, a component or a whole web project for the SEO and GEO signals that are actually in the source: ${advertised(SEO_CAPABILITIES)}. `
+    + "It reads source and does not measure anything: no request is made to your site, nothing is rendered, and no finding is or can be a Core Web Vitals result, an indexing status or a ranking outcome — so do not call it expecting a vitals or ranking report. "
+    + "Absence is only ever claimed where it can be proven — a self-contained HTML document, or a whole directory — and a scan that hits its cap downgrades every absence claim to an unconfirmed note. "
+    + "Returns markdown plus structured output: findings (rule, severity, message, fix, doc, file, line), a severity summary, and a machine-readable `notVisible` list of what it could not check. "
+    + "A missing or non-directory path is returned as an error result, not as an empty audit. "
+    + "Pair with audit_performance for the delivery signals, audit_ux_copy for whether the writing earns the click, and seo_geo_guide for the guidance behind the rules.",
+  {
+    path: z.string().optional().describe("Directory to audit. Absolute paths are strongly preferred. This is the useful mode — robots.txt, llms.txt, sitemap and project-wide metadata rules all need a directory."),
+    code: z.string().optional().describe("A single snippet to audit instead of a directory. Page rules only."),
+    filename: z.string().optional().describe("Filename for the snippet, e.g. 'index.html' or 'page.tsx'. Load-bearing: a plain HTML file carries its whole <head> and can prove metadata absent, a framework component cannot."),
+  },
+  async ({ path, code, filename }) => {
+    if (!path && !code) {
+      return {
+        ...text("Pass `path` for a project audit, or `code` for a single snippet. A project audit is the useful one — robots.txt, llms.txt, sitemap and project-wide metadata rules all need a directory."),
+        isError: true,
+      };
+    }
+    if (path) {
+      const abs = isAbsolute(path) ? path : resolve(process.cwd(), path);
+      let stat;
+      try {
+        stat = statSync(abs);
+      } catch {
+        return { ...text(`There is no directory at \`${abs}\`. Pass an absolute path to the folder you want audited.`), isError: true };
+      }
+      if (!stat.isDirectory()) {
+        return { ...text(`\`${abs}\` is a file, not a directory. Pass its parent folder, or use \`code\` for a single snippet.`), isError: true };
+      }
+      const { text: body, structured } = seoReport({ root: abs });
+      return { ...text(body), structuredContent: structured };
+    }
+    const { text: body, structured } = seoReport({ source: code, filename });
+    return { ...text(body), structuredContent: structured };
+  },
+  AUDIT_OUTPUT_SCHEMA,
+);
+
+tool(
+  "audit_performance",
+  `Audit a page, a component or a whole web project for the performance signals that are actually in the source: ${advertised(PERF_CAPABILITIES)}. `
+    + "It reads source and does not measure anything: Core Web Vitals are 75th-percentile field data from real devices, this loads nothing and times nothing, and no finding is or can be an LCP, INP or CLS verdict — so do not call it expecting a vitals report. "
+    + "Its hero rules are deliberately narrow (the first image inside <main>, with the header logo and the mid-article diagram structurally excluded), which means some pages get no hero finding at all; that limitation and the others are returned explicitly rather than left to read as a clean result. "
+    + "Returns markdown plus structured output: findings (rule, severity, message, fix, doc, file, line), a severity summary, and a machine-readable `notVisible` list of what it could not check. "
+    + "A missing or non-directory path is returned as an error result, not as an empty audit. "
+    + "Pair with audit_seo_geo for the crawl and answer-engine signals, and measure_screenshot for the rendered result.",
+  {
+    path: z.string().optional().describe("Directory to audit. Absolute paths are strongly preferred. Every file is audited on its own — a stylesheet in another file does not size an image in this one, even when both are scanned."),
+    code: z.string().optional().describe("A single snippet to audit instead of a directory."),
+    filename: z.string().optional().describe("Filename for the snippet, e.g. 'index.html', 'Page.tsx' or 'styles.css'. Some rules depend on it: a stylesheet and a component are read differently."),
+  },
+  async ({ path, code, filename }) => {
+    if (!path && !code) {
+      return {
+        ...text("Pass `path` for a project audit, or `code` for a single snippet. A project audit reads the stylesheets beside your markup, which a snippet cannot show."),
+        isError: true,
+      };
+    }
+    if (path) {
+      const abs = isAbsolute(path) ? path : resolve(process.cwd(), path);
+      let stat;
+      try {
+        stat = statSync(abs);
+      } catch {
+        return { ...text(`There is no directory at \`${abs}\`. Pass an absolute path to the folder you want audited.`), isError: true };
+      }
+      if (!stat.isDirectory()) {
+        return { ...text(`\`${abs}\` is a file, not a directory. Pass its parent folder, or use \`code\` for a single snippet.`), isError: true };
+      }
+      const { text: body, structured } = perfReport({ root: abs });
+      return { ...text(body), structuredContent: structured };
+    }
+    const { text: body, structured } = perfReport({ source: code, filename });
+    return { ...text(body), structuredContent: structured };
+  },
+  AUDIT_OUTPUT_SCHEMA,
 );
 
 // ── resources ────────────────────────────────────────────────────────────────

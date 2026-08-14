@@ -10,6 +10,8 @@
 //     never decides whether a finding fires.
 // Not a full parser — a fast, high-signal design-time check.
 
+import { scanTags, findAttr, hasAttr, hasSpread, type Tag } from "./scan.js";
+
 export interface LintFinding {
   line: number;
   severity: "error" | "warning" | "info";
@@ -17,6 +19,49 @@ export interface LintFinding {
   message: string;
   fix: string;
   doc?: string;
+}
+
+/**
+ * One finding as an MCP client receives it in `structuredContent`.
+ *
+ * A `LintFinding` is what a rule produces; this is what leaves the process, and
+ * the two differ in exactly two ways. `file` is lifted out of the message — the
+ * prose report folds the path in ("`app/page.tsx`: …") because a human reads
+ * one line, and an agent chaining audit → fix needs it as a field. And `doc` is
+ * required rather than optional: every rule in `seo.ts` and `perf.ts` cites a
+ * document, and both suites fail if one does not.
+ */
+export interface AuditFinding {
+  rule: string;
+  severity: LintFinding["severity"];
+  message: string;
+  fix: string;
+  doc: string;
+  file?: string;
+  line?: number;
+}
+
+/**
+ * The structured half of an audit, declared as an `outputSchema` and returned
+ * as `structuredContent` beside the markdown.
+ *
+ * `notVisible` is the load-bearing member and it is deliberately an array of
+ * strings rather than a paragraph of prose. What an audit did *not* check is as
+ * consequential to the agent acting on it as what it did: a caller that treats
+ * silence as a clean bill will ship the defect this tool never looked for. The
+ * same array is rendered as the report's "Not visible to this audit" section,
+ * so the two can never drift apart.
+ */
+export interface AuditStructured {
+  findings: AuditFinding[];
+  summary: { error: number; warning: number; info: number };
+  notVisible: string[];
+}
+
+/** A report in both registers: markdown for a person, structure for a machine. */
+export interface AuditReport {
+  text: string;
+  structured: AuditStructured;
 }
 
 interface LineRule {
@@ -29,48 +74,19 @@ interface LineRule {
 }
 
 // ── tag scanner ──────────────────────────────────────────────────────────────
+//
+// The scanner and the attribute readers live in `scan.ts`, which is where every
+// module that parses markup gets them. They are re-exported here because
+// several modules have imported them from `./lint.js` since before that shared
+// home existed.
 
-export interface Tag {
-  name: string;
-  attrs: string;
-  index: number;
-  /** offset just past the opening tag's `>` */
-  end: number;
-  selfClosing: boolean;
-}
-
-// Attribute chunk allows newlines, quoted strings and one level of JSX braces.
-const TAG_RE = /<([A-Za-z][A-Za-z0-9._-]*)((?:"[^"]*"|'[^']*'|\{(?:[^{}]|\{[^{}]*\})*\}|[^>"'{])*?)(\/?)>/g;
-
-export function scanTags(src: string): Tag[] {
-  const tags: Tag[] = [];
-  TAG_RE.lastIndex = 0;
-  let m: RegExpExecArray | null;
-  while ((m = TAG_RE.exec(src)) !== null) {
-    tags.push({
-      name: m[1],
-      attrs: m[2] ?? "",
-      index: m.index,
-      end: m.index + m[0].length,
-      selfClosing: m[3] === "/",
-    });
-  }
-  return tags;
-}
+export { scanTags, hasAttr, hasSpread };
+export type { Tag };
 
 function lineOf(src: string, index: number): number {
   let line = 1;
   for (let i = 0; i < index && i < src.length; i++) if (src[i] === "\n") line++;
   return line;
-}
-
-function hasAttr(attrs: string, name: string): boolean {
-  return new RegExp(`(^|[\\s{])${name}\\s*=`, "i").test(attrs);
-}
-
-/** `{...props}` / `{...rest}` — the attribute may well be forwarded; don't guess. */
-function hasSpread(attrs: string): boolean {
-  return /\{\s*\.\.\./.test(attrs);
 }
 
 /** Inner text of an element, with nested tags and JSX expressions removed. */
@@ -199,7 +215,7 @@ function sourceFindings(src: string): LintFinding[] {
 
     if (
       CLICKABLE_CONTAINERS.has(name) &&
-      /(^|\s)on[Cc]lick\s*=/.test(attrs) &&
+      hasAttr(attrs, "onClick") &&
       !hasAttr(attrs, "role") &&
       !hasSpread(attrs)
     ) {
@@ -227,7 +243,12 @@ function sourceFindings(src: string): LintFinding[] {
     }
 
     if (LABELLED_CONTROLS.has(name) && !hasSpread(attrs)) {
-      const type = attrs.match(/\btype\s*=\s*["']?([a-z]+)/i)?.[1]?.toLowerCase() ?? "text";
+      // Read at a name position, like everything else here: a `type=` written
+      // inside a placeholder or a title is text, not this control's type.
+      const at = findAttr(attrs, "type");
+      const type = (at && !at.bound
+        ? /^\s*=\s*["']?([a-z]+)/i.exec(attrs.slice(at.index + at.length))?.[1]
+        : undefined)?.toLowerCase() ?? "text";
       const labelled =
         hasAttr(attrs, "aria-label") ||
         hasAttr(attrs, "aria-labelledby") ||
@@ -333,4 +354,104 @@ export function designLintReport(code: string): string {
     "_Regex/tag-scanner based — high-signal but not exhaustive, and it cannot see values that arrive via props or a spread. A fast design-time pass, not a replacement for a full review or a real a11y audit (axe/keyboard/screen-reader)._",
   ];
   return out.join("\n");
+}
+
+// ── audit reports ────────────────────────────────────────────────────────────
+
+/**
+ * Assemble one audit into its two registers at once.
+ *
+ * `securityReport` and `genericReport` each build their markdown by hand, and
+ * that was fine while markdown was all they returned. The two auditors that
+ * declare an `outputSchema` return a second representation of the *same*
+ * findings, and two hand-built representations of one thing drift — a summary
+ * that disagrees with its own findings, or a "Not visible" section that lists
+ * one limitation in prose and another in the array, is precisely the silent
+ * wrongness these tools exist to catch in other people's code. So both come out
+ * of one function, counted once and rendered twice.
+ *
+ * The path travels as data and is folded into the prose here, never recovered
+ * from it. An earlier version did the reverse — the callers prefixed the
+ * message with `path: ` for the prose and this function split it back out on
+ * the first `": "` — and a file legitimately named `chapter 2: the fall.html`
+ * broke the split, silently dropping `file` from every finding in that file.
+ * The prose still reads the way `securityReport`'s does, with the path folded
+ * into the message (a reader takes one line in at a glance, and `(line 12)`
+ * beside `app/page.tsx:12` puts the same number in their eye twice), but that
+ * is now a rendering decision rather than a channel.
+ *
+ * Findings whose path is already inside their message — `seoConfigRules` writes
+ * `robots.txt: …` itself, and a project-wide claim is attributed to
+ * `configuration:` rather than to any file — simply arrive with no `file`, and
+ * nothing here goes looking for one.
+ */
+export function assembleAuditReport(input: {
+  heading: string;
+  /** What was read — the file count, the caps, the skips. */
+  scanned: string;
+  /** Anything else that belongs above the counts, e.g. coverage. */
+  notes?: string[];
+  /** Each finding, carrying its own path where the caller knows one. */
+  findings: Array<LintFinding & { file?: string }>;
+  /** The opening sentence of the "Not visible to this audit" section. */
+  preamble: string;
+  notVisible: string[];
+  /** The closing sentence, which must never imply a measurement or a ranking. */
+  closing: string;
+  /** Snippet mode: the filename the caller named, if any. */
+  file?: string;
+}): AuditReport {
+  const { findings, notVisible } = input;
+
+  const summary = {
+    error: findings.filter((f) => f.severity === "error").length,
+    warning: findings.filter((f) => f.severity === "warning").length,
+    info: findings.filter((f) => f.severity === "info").length,
+  };
+
+  const lines: string[] = [`# ${input.heading}`, "", input.scanned, ""];
+  for (const note of input.notes ?? []) lines.push(note, "");
+  lines.push(`**${summary.error} error · ${summary.warning} warning · ${summary.info} info**`, "");
+
+  if (!findings.length) {
+    lines.push("No findings in what was read.", "");
+  } else {
+    for (const group of [
+      { title: "Errors", items: findings.filter((f) => f.severity === "error") },
+      { title: "Warnings", items: findings.filter((f) => f.severity === "warning") },
+      { title: "Notes", items: findings.filter((f) => f.severity === "info") },
+    ]) {
+      if (!group.items.length) continue;
+      lines.push(`## ${group.title}`, "");
+      for (const f of group.items) {
+        lines.push(`- **${f.rule}** (line ${f.line}) — ${f.file ? `${f.file}: ` : ""}${f.message}`);
+        lines.push(`  - Fix: ${f.fix}`);
+        if (f.doc) lines.push(`  - Read: \`get_design_doc("${f.doc}")\``);
+      }
+      lines.push("");
+    }
+  }
+
+  lines.push("## Not visible to this audit", "", input.preamble, "");
+  for (const entry of notVisible) lines.push(`- ${entry}`);
+  lines.push("", input.closing);
+
+  const structured: AuditStructured = {
+    findings: findings.map((f): AuditFinding => {
+      const file = f.file ?? input.file;
+      return {
+        rule: f.rule,
+        severity: f.severity,
+        message: f.message,
+        fix: f.fix,
+        doc: f.doc ?? "",
+        ...(file ? { file } : {}),
+        line: f.line,
+      };
+    }),
+    summary,
+    notVisible,
+  };
+
+  return { text: lines.join("\n"), structured };
 }

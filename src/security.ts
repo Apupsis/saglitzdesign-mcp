@@ -9,32 +9,83 @@
 // output is unreliable, and the true finding in the next run gets skimmed past
 // with the rest.
 
-import { scanTags, type LintFinding, type Tag } from "./lint.js";
+import { type LintFinding } from "./lint.js";
+import {
+  scanTags, type Tag, maskComments, bareAttrs, findAttr, hasAttr as sharedHasAttr,
+} from "./scan.js";
 import { scanProject, MAX_FILES } from "./project.js";
 
 const lineOf = (src: string, index: number): number =>
   src.slice(0, index).split("\n").length;
 
-// `\b` is the wrong boundary for an attribute name: `-` is a non-word
-// character, so `\bsrc` matches inside `data-src`, `\bhref` inside
-// `data-href`, and — the dangerous one — `\bnonce` inside `data-nonce`, which
-// silently *suppressed* a real inline-script finding. An attribute name can
-// only begin at the start of the attribute chunk or after whitespace (or the
-// closing quote of the previous attribute's value), and never after a `-`.
-const ATTR_START = `(?:^|[\\s"'])`;
+// An attribute name has to be found where a *name* can appear, and getting
+// that boundary right took two goes.
+//
+// `\b` was the first mistake: `-` is a non-word character, so `\bsrc` matched
+// inside `data-src`, `\bhref` inside `data-href`, and — the dangerous one —
+// `\bnonce` inside `data-nonce`, silently suppressing a real inline-script
+// finding. Allowing a name to begin only at the start of the chunk, after
+// whitespace, or after a quote fixed that *prefix* case.
+//
+// It did not fix the general one, and the comment here used to claim it had.
+// A quote before the name cannot be told from the quote *opening* a value,
+// and whitespace inside a quoted value qualifies too — so an attribute name
+// occurring inside another attribute's **value** still counted as that
+// attribute. Every instance was a false negative, which is the direction that
+// makes a report read clean when it is not:
+//
+//   <script data-n="add nonce later">var x=1</script>
+//       → inline-script-no-nonce silenced by the word "nonce" in a data value
+//   <iframe src="https://ads.example.com/x" title="sandbox demo">
+//       → iframe-no-sandbox silenced by the word "sandbox" in a title
+//   <script src="https://cdn.x/a.js" data-note="add integrity later">
+//       → external-script-no-sri silenced by the word "integrity"
+//   <a href="…" target="_blank" title="rel='noopener' explained">
+//       → blank-without-noopener silenced by a rel= inside a title
+//
+// The fix is to look for names only where values are not, and it now lives in
+// `scan.ts` — every module here that parses markup reads attributes through the
+// one reader, because "which modules read attributes?" is a question about the
+// codebase and not about a list somebody remembered to keep.
+const hasAttr = (tag: Tag, name: string): boolean => sharedHasAttr(tag.attrs, name);
 
 const attr = (tag: Tag, name: string): string | undefined => {
-  const re = new RegExp(`${ATTR_START}${name}\\s*=\\s*("([^"]*)"|'([^']*)'|\\{[^}]*\\})`, "i");
-  const m = re.exec(tag.attrs);
+  const at = findAttr(tag.attrs, name);
+  if (!at || at.bound) return undefined;
+  const after = tag.attrs.slice(at.index + at.length);
+  // Quoted, braced, or a bare token — `<a target=_blank>` is valid HTML, and
+  // the two rules that used to sniff for it with their own regex now come
+  // through here instead.
+  //
+  // A backslash cannot begin an unquoted value, and excluding it keeps this
+  // reader off `<script type=\"module\">` — markup that only ever occurs
+  // inside a JavaScript string literal, which this module scans as text.
+  // Without the exclusion the bare-token branch matched the lone backslash
+  // and read it as the type.
+  const m = /^\s*=\s*("([^"]*)"|'([^']*)'|(\{[^}]*\})|([^\s"'`=<>\\]+))/.exec(after);
   if (!m) return undefined;
-  return m[2] ?? m[3] ?? m[1];
+  return m[2] ?? m[3] ?? m[4] ?? m[5];
 };
 
-// Valueless attributes are real (`<iframe sandbox>`), so the name may be
-// followed by `=`, whitespace, the tag's own end, or nothing — but not by a
-// further name character, which is what keeps `nonce` out of `nonce-value`.
-const hasAttr = (tag: Tag, name: string): boolean =>
-  new RegExp(`${ATTR_START}${name}(?=[\\s=/>]|$)`, "i").test(tag.attrs);
+/**
+ * An `on*="…"` handler written in the markup — the only shape that is actually
+ * an inline handler, since a JSX `onClick={fn}` is not one.
+ *
+ * The name is found in the blanked copy and the quote that opens its value is
+ * then checked in the original, because neither half is sufficient alone:
+ * reading the raw chunk let `<button data-onclick="go">` pass for a handler
+ * (`\b` matches after the hyphen), and reading the blanked chunk alone loses
+ * the quote that distinguishes `onclick="go()"` from JSX.
+ */
+const hasInlineHandler = (attrs: string): boolean => {
+  const re = /(?:^|\s)on[a-z]+(?=\s*=)/gi;
+  const bare = bareAttrs(attrs);
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(bare)) !== null) {
+    if (/^\s*=\s*["']/.test(attrs.slice(m.index + m[0].length))) return true;
+  }
+  return false;
+};
 
 const isCrossOrigin = (url: string): boolean =>
   /^https?:\/\//i.test(url) || url.startsWith("//");
@@ -228,7 +279,9 @@ export function securitySourceRules(code: string, filename?: string): LintFindin
   for (const tag of scanTags(masked)) {
     const name = tag.name.toLowerCase();
 
-    if (name === "a" && /target\s*=\s*["']?_blank/i.test(tag.attrs)) {
+    // Read through `attr` rather than sniffing the raw chunk: a link whose
+    // title *described* `target="_blank"` was reported as being one.
+    if (name === "a" && /^_blank$/i.test((attr(tag, "target") ?? "").trim())) {
       const rel = attr(tag, "rel") ?? "";
       if (!/\bnoopener\b/i.test(rel)) {
         // Modern browsers (95.58%, caniuse mdn-html_elements_a_implicit_noopener)
@@ -295,7 +348,10 @@ export function securitySourceRules(code: string, filename?: string): LintFindin
       }
     }
 
-    if (name === "input" && /type\s*=\s*["']?password/i.test(tag.attrs)) {
+    // Same correction as the anchor above: `<input type="text"
+    // title='type="password" field'>` is a text input, and was reported as a
+    // password field with no autocomplete hint.
+    if (name === "input" && /^password$/i.test((attr(tag, "type") ?? "").trim())) {
       const ac = attr(tag, "autocomplete");
       if (!ac || /^off$/i.test(ac)) {
         push(tag.index, "warning", "password-autocomplete",
@@ -310,14 +366,14 @@ export function securitySourceRules(code: string, filename?: string): LintFindin
     // and flagging it would be exactly the false positive this module refuses
     // to ship. `on[a-z]+="..."` (a quoted string, not a JSX expression) is the
     // only shape that is actually an inline handler.
-    if (MARKUP_FILE.test(filename ?? "") && /\bon[a-z]+\s*=\s*["']/i.test(tag.attrs)) {
+    if (MARKUP_FILE.test(filename ?? "") && hasInlineHandler(tag.attrs)) {
       push(tag.index, "warning", "inline-event-handler",
         `Inline event handler blocks a strict Content-Security-Policy — it cannot be allowed without 'unsafe-inline'.`,
         `Attach the handler with addEventListener from a script file.`,
         "web-security-headers");
     }
 
-    if (/\bdangerouslySetInnerHTML\b/.test(tag.attrs) && !hasSanitiserImport(masked)) {
+    if (hasAttr(tag, "dangerouslySetInnerHTML") && !hasSanitiserImport(masked)) {
       push(tag.index, "warning", "dangerous-html",
         `dangerouslySetInnerHTML with no sanitiser imported in this file renders untrusted markup as live HTML.`,
         `Sanitise the value first (DOMPurify), or render it as text.`,
@@ -490,133 +546,11 @@ export interface HeaderHit {
 }
 
 /**
- * Replace comment text with spaces (preserving length and line numbers) so
- * neither `extractHeaders` nor `securitySourceRules` treats commented-out
- * text — a header mention, or a code example in a doc comment — as real.
- * Comment styles are gated by file shape rather than applied blindly:
- *   - line comments and block comments in JS/TS-like files (`.js`, `.jsx`,
- *     `.ts`, `.tsx`, `.mjs`, `.cjs`) and in `.vue`/`.svelte`, which embed a
- *     real `<script>` block using the same syntax alongside their markup.
- *     A `_headers` file's route selector line legitimately starts with the
- *     two characters that open a block comment (meaning "all paths") —
- *     treating that as an unterminated block comment would blank out every
- *     header declaration that follows it in the file, so `_headers` is
- *     deliberately excluded from this group.
- *   - `#` only in `.toml` and `_headers` files, where it is their actual
- *     comment syntax. JSON has no comment syntax, so nothing is masked
- *     there — a `//` inside a URL string in vercel.json must survive.
- *   - `<!-- -->` universally; its four-character open and explicit close
- *     make it unambiguous wherever it appears — this is what covers
- *     `.html`/`.astro` templates, and the markup half of `.vue`/`.svelte`.
- *
- * In JS/TS-like files, a `'`/`"`/`` ` `` opens a string, tracked per line
- * (reset at each newline — this is not a tokenizer, and a template literal
- * that spans multiple lines is out of scope), and nothing inside that
- * string can open a comment; an escaped quote does not close it. This
- * replaced an earlier guard of "`//` not immediately preceded by `:`",
- * which approximated "inside a URL" when the real predicate is "inside a
- * string literal" — it missed `"//cdn.example.com"` (a protocol-relative
- * URL with nothing before the `//` on the line), which masked a real CSP
- * declaration on the rest of that line as `csp-missing`: a false negative
- * on correct configuration, the one direction this module refuses to ship.
- * Between under-masking a real comment (at worst reproduces the
- * commented-out-header case, which just stays a live finding) and
- * over-masking real code (fabricates `csp-missing` on a correct policy),
- * this errs toward the former wherever the two heuristics would disagree.
- *
- * Exported because `generic.ts` needs the same "don't flag commented-out
- * markup" guarantee for its visual rules — the same judgement Task 6 of the
- * security plan made for `scanTags`. Two consumers is a coincidence; three
- * would make this a shared module instead of a security.ts export.
+ * @deprecated import from scan.js. `maskComments` moved to scan.ts so the SEO
+ * and performance auditors could share it without a second one-way import;
+ * this re-export stays for one release so nothing outside this repo breaks.
  */
-export function maskComments(source: string, path: string): string {
-  // `.astro` is two languages in one file with a hard, unambiguous boundary:
-  // the frontmatter fence. Inside it the content is TypeScript, where `//`
-  // opens a comment; outside it the content is markup, where it does not.
-  // Adding `.astro` to `isJsLike` wholesale would mask real template text
-  // after any `//` — the over-masking the note above warns about, which
-  // fabricates absence. Splitting on the fence gets both halves right, and
-  // because `maskComments` is length-preserving the two masked halves
-  // concatenate back to the original offsets.
-  if (/\.astro$/i.test(path)) {
-    const open = /^---[ \t]*\r?\n/.exec(source);
-    const close = open ? source.indexOf("\n---", open[0].length - 1) : -1;
-    if (open && close !== -1) {
-      return maskComments(source.slice(0, close + 1), "frontmatter.ts")
-        + maskComments(source.slice(close + 1), "template.html");
-    }
-    return maskComments(source, "template.html");
-  }
-
-  const isHeadersFile = /(^|\/)_headers$/.test(path);
-  const isJsLike = /\.(?:jsx?|tsx?|mjs|cjs|mts|cts|vue|svelte)$/i.test(path);
-  const isHashComment = isHeadersFile || /\.toml$/i.test(path);
-
-  let out = "";
-  let i = 0;
-  const n = source.length;
-  let quote: string | null = null; // the open quote char, or null when not inside a string
-
-  while (i < n) {
-    const ch = source[i];
-
-    if (ch === "\n") {
-      quote = null;
-      out += ch;
-      i++;
-      continue;
-    }
-
-    if (isJsLike) {
-      if (quote) {
-        // Inside a string literal: nothing here can open a comment, and an
-        // escaped quote does not close it.
-        if (ch === "\\" && i + 1 < n) {
-          out += ch + source[i + 1];
-          i += 2;
-          continue;
-        }
-        if (ch === quote) quote = null;
-        out += ch;
-        i++;
-        continue;
-      }
-      if (ch === '"' || ch === "'" || ch === "`") {
-        quote = ch;
-        out += ch;
-        i++;
-        continue;
-      }
-    }
-
-    const two = source.slice(i, i + 2);
-    if (isJsLike && two === "/*") {
-      const end = source.indexOf("*/", i + 2);
-      const stop = end === -1 ? n : end + 2;
-      for (let j = i; j < stop; j++) out += source[j] === "\n" ? "\n" : " ";
-      i = stop;
-    } else if (isJsLike && two === "//") {
-      const end = source.indexOf("\n", i);
-      const stop = end === -1 ? n : end;
-      out += " ".repeat(stop - i);
-      i = stop;
-    } else if (isHashComment && ch === "#") {
-      const end = source.indexOf("\n", i);
-      const stop = end === -1 ? n : end;
-      out += " ".repeat(stop - i);
-      i = stop;
-    } else if (source.slice(i, i + 4) === "<!--") {
-      const end = source.indexOf("-->", i + 4);
-      const stop = end === -1 ? n : end + 3;
-      for (let j = i; j < stop; j++) out += source[j] === "\n" ? "\n" : " ";
-      i = stop;
-    } else {
-      out += ch;
-      i++;
-    }
-  }
-  return out;
-}
+export { maskComments };
 
 // The method names that actually set a response header, across the runtimes
 // this tool is likely to see: the fetch-standard Headers/Response `.set()`/
