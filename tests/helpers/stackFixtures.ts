@@ -32,7 +32,7 @@ import Image from "next/image";
 import Script from "next/script";
 import Link from "next/link";
 import { Inter } from "next/font/google";
-import studio from "@/public/studio.avif";
+import studio from "@/assets/studio.avif";
 
 const inter = Inter({ subsets: ["latin"], display: "swap" });
 
@@ -250,7 +250,6 @@ const schema = {
 
 /** SvelteKit route, `src/routes/pricing/+page.svelte`. */
 export const SVELTEKIT_PAGE = `<script lang="ts">
-  import { page } from "$app/stores";
   export let data;
 
   const title = "Website Redesign Pricing for UK Startups | Saglitz";

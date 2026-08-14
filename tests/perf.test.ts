@@ -924,6 +924,36 @@ describe("perfReport — what it discloses it cannot see", () => {
     expect(notVisible).toMatch(/judgement/i);
   });
 
+  // Two misses the fixture matrix surfaced. Neither rule was changed — both
+  // are silences rather than false positives — but a user on either stack
+  // gets a clean report with no way to know the rule never looked, and that
+  // is what this list is for.
+  it("discloses that font-display-missing cannot see a framework font loader", () => {
+    expect(notVisible).toContain("font-display-missing");
+    expect(notVisible).toMatch(/next\/font/i);
+    expect(notVisible).toMatch(/build time/i);
+  });
+
+  it("is right about that: a next/font call without display draws nothing", () => {
+    const withDisplay = NEXT_APP_ROUTER;
+    const withoutDisplay = withDisplay.replace(' display: "swap" ', " ");
+    expect(withoutDisplay).not.toContain('display: "swap"');
+    expect(ids(withoutDisplay, "app/pricing/page.tsx")).toEqual([]);
+  });
+
+  it("discloses that nothing inside <svelte:head> is read", () => {
+    expect(notVisible).toContain("<svelte:head>");
+    expect(notVisible).toContain("render-blocking-script");
+    expect(notVisible).toMatch(/tag-name character/i);
+  });
+
+  it("is right about that: an undeferred script in <svelte:head> draws nothing, and the same tag elsewhere fires", () => {
+    const undefer = (s: string) => s.replace("<script defer data-domain", "<script data-domain");
+    expect(ids(undefer(SVELTEKIT_PAGE), "src/routes/pricing/+page.svelte")).toEqual([]);
+    expect(ids(undefer(ASTRO_PAGE), "src/pages/pricing.astro")).toContain("render-blocking-script");
+    expect(ids(undefer(STATIC_HTML), "public/pricing/index.html")).toContain("render-blocking-script");
+  });
+
   it("never claims a vitals verdict or a ranking outcome anywhere in the report", () => {
     const { text } = perfReport({ source: "<p>hello</p>", filename: "index.html" });
     const forbidden = new RegExp([
