@@ -4,6 +4,98 @@ All notable changes to SaglitzDesign MCP are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.22.0] — 2026-08-14
+
+`seo_geo_guide` has returned this server's SEO and GEO guides since v0.9.0,
+and nothing ever checked a page against them. A team could read every word
+of `technical-seo` and `geo-fundamentals` and still ship three `<h1>`s, a
+canonical pointing at staging, a hero image carrying `loading="lazy"`, and no
+`llms.txt`. This release adds two auditors that read the page instead of
+trusting the reader remembered the document.
+
+### Added
+
+- **`audit_seo_geo` and `audit_performance` — the 32nd and 33rd tools, and
+  the first two here to return structured output.** Every other tool in this
+  server answers a person reading markdown; these two also declare an
+  `outputSchema` and return `structuredContent` — findings as fields, a
+  severity summary, and a machine-readable `notVisible` array. An agent
+  chaining `audit → fix` needs to know what was never checked as much as
+  what was found; prose alone cannot stop a caller from reading silence as a
+  clean bill.
+  - `audit_seo_geo` reads title and meta-description presence and length,
+    multiple `<h1>`s and skipped heading levels, canonical shape and
+    self-reference, hreflang reciprocity, JSON-LD that parses and declares
+    `@context`/`@type`, missing alt text, robots.txt crawl rules — including
+    the AI crawlers behind ChatGPT, Claude, Perplexity and Google's AI
+    surfaces — sitemap references, `llms.txt`, and content that exists only
+    once a script has run.
+  - `audit_performance` reads a hero image held back by `loading="lazy"` or
+    contradicting its own `fetchpriority`, images with no `width`/`height`
+    or `aspect-ratio` to reserve their box, render-blocking scripts and
+    stylesheets in `<head>`, `@font-face` without `font-display`,
+    third-party font hosts, unsized embeds, and eagerly loaded offscreen
+    media.
+  - **The governing rule both modules were written against: these audit what
+    is authored, not what is measured.** A finding may state a fact about
+    the source and pair it with a documented causal link — "the hero image
+    carries `loading="lazy"`, which holds its request back until layout has
+    run." No finding is or can be a Core Web Vitals verdict, an indexing
+    status or a ranking outcome, because vitals are 75th-percentile field
+    data from real devices and this reads source. Telling a team their
+    vitals are fine from a static read would stop them measuring, which is
+    worse than telling them nothing.
+- **Five fixture pages, one per stack — Next.js App Router, Astro,
+  SvelteKit, plain static HTML and a built Docusaurus page — each assert
+  zero findings from both tools**, written and saved before either module
+  was reopened; all ten cells passed on the first run. Two counterexamples
+  ship beside them — an image-only splash page and a minimal 404, both real
+  pages a visitor actually reaches, both missing the landmark signal a
+  naive "is this a real page" guard would have keyed on — plus a
+  deliberately broken page where every defect is one somebody has actually
+  shipped.
+
+### Fixed
+
+- **A shipped defect in `audit_security`, found while building these two
+  modules and fixed on the way.** `hasAttr`/`attrValue` and their
+  equivalents let an attribute name match inside another attribute's
+  *value* — `alt="Priority support illustration"` read as a declared
+  `priority` prop, `title="rel='noopener' explained"` satisfied the check
+  for a real `rel=noopener`. Seven defects in total, five of them false
+  negatives that silence a real finding rather than invent one: five in
+  `src/security.ts` (a `nonce` named inside a `data-` value, `sandbox`
+  inside an iframe's `title`, `integrity` inside a `data-note`, `noopener`
+  inside a link's `title`, and an inline script misread as the ld+json
+  block CSP does not gate), and two in the new modules — one in `seo.ts`
+  (a bare `alt` swallowed by `title="alt text here"`), one in `perf.ts`
+  (the LCP candidate walking past an image an author had already marked
+  with its own `priority`). Both readers now work from a copy with every
+  quoted or braced value blanked before a name or value is located. No
+  rule id, severity or doc changed; `audit_security` over this repository
+  returns the same findings as before, line numbers aside.
+
+### Notes
+
+- **Two specified rules were cut for want of a document that makes their
+  claim**, on the same ground `generic.ts` and `security.ts` already
+  learned the expensive way: a rule cites a document that exists *and*
+  makes the rule's claim, or it does not ship.
+  - `og-incomplete` was specified against `on-page-seo`. That document
+    never mentions Open Graph, and neither does any other document in
+    `knowledge/` — "Open Graph", "og:title" and "og:image" return nothing
+    across the whole base.
+  - `font-host-not-preconnected` was specified against `technical-seo`.
+    Nothing in `knowledge/` recommends preconnecting to a font host —
+    "preconnect" appears four times, in two unrelated documents, and never
+    in an SEO or performance one. The remedy the knowledge base actually
+    documents is the opposite: `seo-for-designers` says "Self-host WOFF2.
+    Third-party font CDNs add a connection." That claim ships as
+    `third-party-font-host` instead.
+- 94 knowledge documents, unchanged by this release — no new document was
+  needed, which after two releases that each added one is itself worth a
+  line.
+
 ## [0.21.0] — 2026-08-13
 
 The knowledge base already said what gives a generated page away.
