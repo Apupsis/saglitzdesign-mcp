@@ -1154,3 +1154,44 @@ describe("unquoted attribute values — valid HTML, and standard in minified out
       .toContain("image-without-dimensions");
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// `css-hero-not-preloaded` stated one mechanism for two different inputs, and
+// it was wrong for one of them: a `style="background-image:url(…)"` attribute
+// has no stylesheet to wait for and puts the URL literally in the HTML. The
+// performance point survives; the causal chain had to be told separately.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("css-hero-not-preloaded — the mechanism matches the input", () => {
+  const message = (code: string) =>
+    perfRules(code, "index.html").find((f) => f.rule === "css-hero-not-preloaded")?.message ?? "";
+
+  it("says the stylesheet has to arrive first, for a background declared in CSS", () => {
+    const code = GOOD_HTML.replace("@font-face {", `.hero { background-image: url("/hero-wide.avif"); }\n    @font-face {`);
+    expect(message(code)).toMatch(/once the stylesheet has downloaded and parsed/);
+  });
+
+  it("does not claim a stylesheet, or that the URL is absent from the HTML, for a style attribute", () => {
+    const code = GOOD_HTML.replace("<main>", `<main>\n    <section class="hero" style="background-image: url('/hero-wide.avif')"></section>`);
+    const m = message(code);
+    expect(m).not.toMatch(/stylesheet/);
+    expect(m).toMatch(/The URL is in the HTML/);
+  });
+});
+
+describe("PERF_NOT_VISIBLE — the lazy-hero entry says what the rule does", () => {
+  const joined = PERF_NOT_VISIBLE.join("\n");
+
+  it("names every condition that withdraws the candidate", () => {
+    for (const phrase of [
+      /no `<main>`/, /priority marking/, /above `<main>`/, /unresolved component/,
+      /width under 100px/, /decorative/, /200 characters/,
+    ]) expect(joined, String(phrase)).toMatch(phrase);
+  });
+
+  it("says the self-contradiction path fires with no candidate at all", () => {
+    expect(joined).toMatch(/contradiction the author wrote themselves/);
+    // …and it does. No <main>, no candidate, and the finding still fires.
+    expect(ids(`<div><img src="/hero.avif" alt="H" width="1600" height="900" loading="lazy" fetchpriority="high"></div>`, "component.html"))
+      .toContain("lazy-hero");
+  });
+});

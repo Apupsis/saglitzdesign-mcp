@@ -1739,3 +1739,72 @@ const Props = defineProps<{ title: string }>();
     expect(ids(code, "pages/pricing.vue")).toContain("multiple-h1");
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Four `notVisible` entries were factually wrong or missing. Each assertion
+// below is the behaviour its entry now describes — an entry that drifts from
+// the code is worse than no entry, because a reader acts on it.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("the disclosures, measured against what the rules actually do", () => {
+  const EMAIL = `<!doctype html>
+<html>
+<head><meta charset="utf-8"></head>
+<body>
+  <table role="presentation" cellpadding="0" cellspacing="0">
+    <tr><td><h1>Your invoice is ready</h1><p>The February invoice for your retainer is attached.</p></td></tr>
+  </table>
+</body>
+</html>`;
+
+  it("exempts an email in a mail path from the head-absence rules", () => {
+    expect(ids(EMAIL, "emails/invoice.html")).toEqual([]);
+  });
+
+  it("grades that same email as a page the moment it links a stylesheet", () => {
+    const withCss = EMAIL.replace("</head>", `  <link rel="stylesheet" href="/email.css">\n</head>`);
+    const fired = ids(withCss, "emails/invoice.html");
+    expect(fired).toContain("title-missing");
+    expect(fired).toContain("meta-description-missing");
+    expect(fired).toContain("canonical-missing");
+  });
+
+  it("grades that same email as a page the moment it uses a <nav>", () => {
+    const withNav = EMAIL.replace("</body>", `  <nav><a href="https://example.com/">Home</a></nav>\n</body>`);
+    expect(ids(withNav, "emails/invoice.html")).toContain("canonical-missing");
+  });
+
+  it("still grades a recognised email with the rules the exemption does not cover", () => {
+    const twoH1s = EMAIL.replace("<p>The February", "<h1>Second heading</h1><p>The February");
+    const fired = ids(twoH1s, "emails/invoice.html");
+    expect(fired).toContain("multiple-h1");
+    expect(fired).not.toContain("canonical-missing");
+  });
+
+  it("reads a Next.js app/robots.ts without parsing it, so it reports no robots findings", () => {
+    const fired = configIds([
+      { path: "app/robots.ts", source: `export default function robots() {\n  return { rules: { userAgent: "*", disallow: "/" } };\n}` },
+      { path: "app/page.tsx", source: `export const metadata = { title: "Home" };` },
+    ]);
+    expect(fired).not.toContain("robots-blocks-everything");
+    expect(fired).not.toContain("llms-txt-absent");
+  });
+
+  it("switches the whole project-metadata block off for one plain HTML file", () => {
+    const framework = { path: "pages/index.vue", source: `<template><main><h1>Home</h1></main></template>\n<script setup>useHead({ title: "Home" });</script>` };
+    const withoutHtml = configIds([framework]);
+    const withHtml = configIds([
+      framework,
+      { path: "public/404.html", source: `<!doctype html><html lang="en"><head><title>Not found — this page has moved on</title></head><body><p>Not found.</p></body></html>` },
+    ]);
+    expect(withoutHtml).toContain("meta-description-missing");
+    expect(withHtml).not.toContain("meta-description-missing");
+  });
+
+  it("names each of those in the report's notVisible list", () => {
+    const joined = SEO_NOT_VISIBLE.join("\n");
+    expect(joined).toMatch(/app\/robots\.ts/);
+    expect(joined).toMatch(/rel=\\?"stylesheet\\?"/);
+    expect(joined).toMatch(/404\.html/);
+    expect(joined).toMatch(/metadataBase/);
+  });
+});

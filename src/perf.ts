@@ -62,14 +62,18 @@
 //      of the primary content. `<main>` is the anchor because it is the one
 //      landmark that means "this document's own content", which structurally
 //      excludes a header logo and a nav icon without guessing at either.
-//      Four further conditions keep it honest: the image must not sit inside
-//      a `<header>`, `<nav>` or `<footer>` nested within main (an article
-//      byline avatar); it must not declare a width under 100px (an inline
-//      badge or icon); the visible copy preceding it inside `<main>` must be
+//      Further conditions keep it honest, and PERF_NOT_VISIBLE lists all of
+//      them because a reader acting on silence needs them: the image must not
+//      sit inside a `<header>`, `<nav>` or `<footer>` nested within main (an
+//      article byline avatar), nor in a `<template>`, `<noscript>` or
+//      `<dialog>`; no other image in the document may carry the author's own
+//      priority marking, and none may sit above `<main>`; no unresolved
+//      component may sit above it, because `<Hero />` is almost certainly
+//      rendering the image that really comes first; it must not declare a
+//      width under 100px (an inline badge or icon) or be *named* as something
+//      decorative; and the visible copy preceding it inside `<main>` must be
 //      under HERO_TEXT_BUDGET characters, so a documentation page's
-//      mid-article diagram — correctly lazy-loaded — is never read as a hero;
-//      and no unresolved component may sit above it, because `<Hero />` is
-//      almost certainly rendering the image that really comes first.
+//      mid-article diagram — correctly lazy-loaded — is never read as a hero.
 //
 // The cost of that scoping is stated plainly rather than hidden: **a file with
 // no `<main>`, or with a component wrapping the top of it, gets no candidate
@@ -549,10 +553,18 @@ export function perfRules(code: string, filename?: string): LintFinding[] {
     const unreadablePreload = preloads.some((t) => attrValue(t, "href").value === undefined);
     const preloaded = new Set(preloads.map((t) => basenameOf(attrValue(t, "href").value ?? "")));
 
-    for (const { index, url, name } of backgroundImages(masked, tags, regions)) {
+    for (const { index, url, name, origin } of backgroundImages(masked, tags, regions)) {
       if (unreadablePreload || preloaded.has(basenameOf(url))) continue;
+      // The performance point is the same for both origins; the mechanism is
+      // not, and the message used to state the stylesheet one for both. For a
+      // `style="background-image:url(…)"` attribute there is no stylesheet to
+      // wait for and the URL is literally in the HTML — "the preload scanner
+      // never sees it" is false of that input. What is true of both is that
+      // the preload scanner does not read CSS values at all.
       push(index, "info", "css-hero-not-preloaded",
-        `The hero background ${url} is declared in CSS (${name}), so the browser only discovers it once the stylesheet has downloaded and parsed — the preload scanner never sees it in the HTML.`,
+        origin === "stylesheet"
+          ? `The hero background ${url} is declared in CSS (${name}), so the browser only discovers it once the stylesheet has downloaded and parsed — the preload scanner never reads CSS, so it never sees this URL.`
+          : `The hero background ${url} is declared in a style attribute on ${name}. The URL is in the HTML, but the preload scanner does not read CSS values out of one: a background image is requested only once that element has been built and styled, behind everything the scanner did find.`,
         `Add <link rel="preload" as="image" href="${url}" fetchpriority="high"> to the head, or move the hero to an <img>, which the preload scanner finds on its own.`,
         "technical-seo");
     }
@@ -745,17 +757,17 @@ const HERO_NAME = /(?:^|[^a-z])(?:hero|banner|masthead|jumbotron|splash|cover)(?
 /** A URL a browser actually fetches as an image — not a gradient, not a data URI. */
 const RASTER_URL = /\.(?:jpe?g|png|webp|avif|gif)(?:[?#]|$)/i;
 
-interface BackgroundImage { index: number; url: string; name: string }
+interface BackgroundImage { index: number; url: string; name: string; origin: "stylesheet" | "inline" }
 
 function backgroundImages(masked: string, tags: Tag[], regions: CssRegion[]): BackgroundImage[] {
   const out: BackgroundImage[] = [];
   const seen = new Set<string>();
 
-  const note = (index: number, url: string, name: string) => {
+  const note = (index: number, url: string, name: string, origin: BackgroundImage["origin"]) => {
     if (!RASTER_URL.test(url) || url.startsWith("data:")) return;
     if (seen.has(url)) return;
     seen.add(url);
-    out.push({ index, url, name });
+    out.push({ index, url, name, origin });
   };
 
   const urlRe = /background(?:-image)?\s*:\s*[^;{}]*?url\(\s*(['"]?)([^'")]+)\1\s*\)/gi;
@@ -769,7 +781,7 @@ function backgroundImages(masked: string, tags: Tag[], regions: CssRegion[]): Ba
       const selector = region.text.slice(region.text.lastIndexOf("}", brace) + 1, brace).trim();
       const url = m[2].trim();
       if (!HERO_NAME.test(selector) && !HERO_NAME.test(basenameOf(url))) continue;
-      note(region.start + m.index, url, selector.split(/\s*,\s*/)[0]);
+      note(region.start + m.index, url, selector.split(/\s*,\s*/)[0], "stylesheet");
     }
   }
 
@@ -782,7 +794,7 @@ function backgroundImages(masked: string, tags: Tag[], regions: CssRegion[]): Ba
     const url = m[2].trim();
     const named = `${attrValue(tag, "class").value ?? ""} ${attrValue(tag, "id").value ?? ""}`;
     if (!HERO_NAME.test(named) && !HERO_NAME.test(basenameOf(url))) continue;
-    note(tag.index, url, `<${tag.name}>`);
+    note(tag.index, url, `<${tag.name}>`, "inline");
   }
 
   return out;
@@ -943,7 +955,8 @@ export const PERF_NOT_VISIBLE: string[] = [
   "**Anything a framework or a server adds at build or request time.** A bundler that splits, preloads or inlines; an image component that generates `srcset` and dimensions; a font a plugin subsets and self-hosts; caching, compression and `Priority` hints set on the response. None of it is in the files that were read.",
   "**Anything that needs the whole site graph.** Broken links, orphan pages, redirect chains, how many bytes a route really ships, and what a third-party script pulls in after it loads. Every finding above is scoped to the file it names.",
   "**Whether an image is above the fold.** Nothing in a source file says which element the browser painted largest, or what fell inside the first viewport — that depends on a viewport, a device and a scroll position this audit never sees. `lazy-hero` and `hero-no-fetchpriority` report the first image inside `<main>` as a *candidate*; whether it is really the one that matters is a judgement the reader has to make.",
-  "**`lazy-hero` and `hero-no-fetchpriority` on a page whose hero cannot be located.** They say nothing at all when the file has no `<main>` (a Next.js page whose `<main>` lives in `layout.tsx`), when an unresolved component sits above the first image (`<Hero />` is very likely rendering the image that really comes first), or when more than 200 characters of visible copy precede it inside `<main>` (a mid-article diagram, correctly lazy). Silence from these two rules usually means no candidate could be identified — it is not a verdict on the hero.",
+  "**`lazy-hero` and `hero-no-fetchpriority` on a page whose hero cannot be located.** Both need an *LCP candidate* — the first image inside `<main>` — and seven separate conditions withdraw one. There is none when the file has no `<main>` at all (a Next.js page whose `<main>` lives in `layout.tsx`); when some other image in the document carries the author's own priority marking, since they have named the element they want painted first and it is not this one; when an image sits above `<main>` outside any header, nav or footer (a full-bleed hero section); when an unresolved component sits above the first image (`<Hero />` is very likely rendering the image that really comes first); when the image declares a width under 100px in markup, in an inline style or through a class this file's own CSS sizes; when the image or its nearest wrapper is *named* as something decorative (avatar, logo, badge, icon, thumb, byline, sponsor); or when more than 200 characters of visible copy precede it inside `<main>` (a mid-article diagram, correctly lazy). Images inside a nested `<header>`, `<nav>` or `<footer>`, or inside a `<template>`, `<noscript>` or `<dialog>`, are passed over rather than counted. Silence from `hero-no-fetchpriority` therefore usually means no candidate could be identified — it is not a verdict on the hero.",
+  "**…with one deliberate exception, which is why `lazy-hero` is not simply silent on those pages.** Its first emission path consults no candidate at all: an image carrying `loading=\"lazy\"` *and* `fetchpriority=\"high\"` (or next/image's `priority`) is a contradiction the author wrote themselves, one of the two instructions is wrong whatever the render looks like, and that fires anywhere in the file — with no `<main>`, behind a component, past the text budget, inside a header. So a `lazy-hero` finding on a page with no `<main>` is that self-contradiction and not a position claim.",
   "**A font loaded through a framework's font loader rather than an `@font-face` block.** `font-display-missing` reads `@font-face` declarations in the file it was given. `next/font`'s `Inter({ subsets: [\"latin\"], display: \"swap\" })`, and the equivalent loaders in other frameworks, generate that block at build time and write none into the source — so this rule never sees them, and a loader call that sets `display` and one that omits it are equally silent here. Check the `display` option on the call itself; a clean run says nothing about it.",
   "**Anything inside `<svelte:head>`.** Every rule that asks whether a tag is in the document head — `render-blocking-script` above all — finds that head by scanning for a `<head>` element, and `<svelte:head>` is not one: `:` is not a tag-name character, so the whole block is invisible to the scanner. A `<script src>` there carrying neither `defer` nor `async` nor `type=\"module\"` draws nothing, while the identical tag in an `.astro`, `.html` or built page fires. On a Svelte or SvelteKit component, read the `<svelte:head>` block by eye.",
   "**Sizing that lives outside the file being read.** `image-without-dimensions` reads `width`/`height` attributes, inline styles, Tailwind sizing utilities, and CSS in the *same* file — a `<style>` block beside the markup, or the stylesheet itself when a `.css` file is what was read. Every file is audited on its own, so an external stylesheet does not size an image even when that stylesheet was scanned in the same run: a `.cover` class sized in `styles.css` still draws the finding on `index.html`. A CSS module reached through `className={styles.cover}` goes the other way — the class is unreadable, so the rule stays silent rather than invent a finding. It errs in both directions here, and the file it names is the one to check.",
